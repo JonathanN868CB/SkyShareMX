@@ -86,7 +86,7 @@ export function AppSidebar() {
                 <img 
                   src="/src/assets/skyshare-logo.png" 
                   alt="SkyShare" 
-                  className="h-8 w-auto filter brightness-0 invert"
+                  className="h-6 w-auto filter brightness-0 invert object-contain"
                 />
                 <p className="text-xs text-sidebar-foreground/60 font-medium mt-2">Maintenance Portal</p>
               </>
