@@ -34,14 +34,15 @@ export default function Login() {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: window.location.origin + "/",
+        redirectTo: window.location.origin + "/auth/callback",
         skipBrowserRedirect: true,
       },
     });
 
     if (error) {
       console.error("OAuth error:", error);
-      setErrMsg(error.message || "Login failed");
+      const errorMsg = error.code ? `${error.message} (${error.code})` : error.message || "Login failed";
+      setErrMsg(errorMsg);
       setRedirecting(false);
       popup?.close();
       return;
@@ -130,7 +131,19 @@ export default function Login() {
             <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
           </button>
           
-          {errMsg && <div className="mt-2 text-sm text-destructive">{errMsg}</div>}
+          {errMsg && (
+            <div className="mt-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+              <div className="text-sm text-destructive">{errMsg}</div>
+              {errMsg.includes("iframe") || errMsg.includes("blocked") ? (
+                <button
+                  onClick={() => window.open(window.location.href, '_blank')}
+                  className="mt-2 text-xs text-primary hover:underline"
+                >
+                  Try opening in a new tab
+                </button>
+              ) : null}
+            </div>
+          )}
 
           <div className="mt-6 text-center">
             <p className="text-xs text-muted-foreground">
