@@ -6,7 +6,13 @@ const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL") || "",
-  Deno.env.get("SUPABASE_ANON_KEY") || ""
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }
 );
 
 const corsHeaders = {
@@ -41,7 +47,8 @@ const handler = async (req: Request): Promise<Response> => {
         first_name: firstName,
         last_name: lastName,
         role,
-        status: 'Pending'
+        status: 'Pending',
+        invited_by: null // Service role can bypass RLS
       })
       .select()
       .single();
