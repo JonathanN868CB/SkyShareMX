@@ -43,99 +43,31 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
   const onSubmit = async (data: AddUserFormData) => {
     setIsLoading(true);
     try {
-      // First, create the user invite in our system
-      const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
-        email: data.email,
-        email_confirm: false,
-        user_metadata: {
-          first_name: data.firstName,
-          last_name: data.lastName,
+      // Send invitation email directly instead of creating user first
+      // The user will be created when they accept the invitation
+      const { error: emailError } = await supabase.functions.invoke('send-user-invitation', {
+        body: {
+          email: data.email,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          role: data.role,
         }
       });
 
-      if (authError) {
-        throw authError;
-      }
-
-      if (!authUser.user) {
-        throw new Error("Failed to create user");
-      }
-
-      // Update the profile with the selected role
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ 
-          role: data.role,
-          first_name: data.firstName,
-          last_name: data.lastName,
-          status: 'Pending'
-        })
-        .eq('user_id', authUser.user.id);
-
-      if (profileError) {
-        console.error('Profile update error:', profileError);
-      }
-
-      // Set default permissions based on role
-      const permissions = [];
-      if (data.role === 'Read-Only') {
-        permissions.push('Overview');
-      } else if (data.role === 'Technician') {
-        permissions.push('Overview', 'Operations');
-      } else if (data.role === 'Manager') {
-        permissions.push('Overview', 'Operations', 'Administration');
-      } else if (data.role === 'Admin') {
-        permissions.push('Overview', 'Operations', 'Administration', 'Development');
-      }
-
-      // Add permissions
-      if (permissions.length > 0) {
-        const permissionInserts = permissions.map(section => ({
-          user_id: authUser.user.id,
-          section: section
-        }));
-
-        const { error: permissionError } = await supabase
-          .from('user_permissions')
-          .insert(permissionInserts);
-
-        if (permissionError) {
-          console.error('Permission error:', permissionError);
-        }
-      }
-
-      // Send invitation email
-      try {
-        const { error: emailError } = await supabase.functions.invoke('send-user-invitation', {
-          body: {
-            email: data.email,
-            firstName: data.firstName,
-            lastName: data.lastName,
-            role: data.role,
-          }
-        });
-
-        if (emailError) {
-          console.error('Email error:', emailError);
-          toast({
-            title: "User created but email failed",
-            description: "The user was added but the invitation email could not be sent.",
-            variant: "destructive",
-          });
-        } else {
-          toast({
-            title: "User invited successfully",
-            description: `Invitation sent to ${data.email}`,
-          });
-        }
-      } catch (emailError) {
+      if (emailError) {
         console.error('Email error:', emailError);
         toast({
-          title: "User created but email failed",
-          description: "The user was added but the invitation email could not be sent.",
+          title: "Failed to send invitation",
+          description: emailError.message || "Could not send invitation email.",
           variant: "destructive",
         });
+        return;
       }
+
+      toast({
+        title: "Invitation sent successfully",
+        description: `Invitation sent to ${data.email}. They will be able to sign up using the link in the email.`,
+      });
 
       form.reset();
       setOpen(false);
