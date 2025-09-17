@@ -3,7 +3,7 @@ import UserMenu from "@/components/auth/UserMenu";
 
 export function Topbar() {
   return (
-    <header className="h-16 bg-topbar-bg border-b border-topbar-border flex items-center justify-between px-6">
+    <div className="flex items-center justify-between flex-1">
       <div className="flex-1">
         {/* Breadcrumb or page title could go here */}
       </div>
@@ -16,6 +16,6 @@ export function Topbar() {
         
         <UserMenu />
       </div>
-    </header>
+    </div>
   );
 }
