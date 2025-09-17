@@ -3,8 +3,11 @@ import { Navigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 export default function ProtectedRoute({ children }: { children: JSX.Element }) {
-  const [loading, setLoading] = useState(true);
-  const [hasSession, setHasSession] = useState(false);
+  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
+  const initialBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+
+  const [loading, setLoading] = useState(!initialBypass);
+  const [hasSession, setHasSession] = useState(initialBypass);
 
   useEffect(() => {
     // Check if we're in development mode with multiple fallbacks (same logic as Login)
