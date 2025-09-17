@@ -9,6 +9,17 @@ export default function Login() {
   const [devBypass, setDevBypass] = useState(false);
   const navigate = useNavigate();
 
+  // Check if we're in development mode with multiple fallbacks
+  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost';
+  
+  // Log environment info for debugging
+  console.log("🔧 Login: Environment check", {
+    DEV: import.meta.env.DEV,
+    MODE: import.meta.env.MODE,
+    hostname: window.location.hostname,
+    isDev
+  });
+
   useEffect(() => {
     let mounted = true;
 
@@ -132,14 +143,22 @@ export default function Login() {
             <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
           </button>
 
-          {/* Development bypass button - only in development */}
-          {import.meta.env.DEV && (
+          {/* Development bypass button - enhanced visibility */}
+          {isDev && (
             <button
               onClick={handleDevBypass}
-              className="w-full bg-muted hover:bg-muted/80 text-muted-foreground font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
+              className="w-full bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/50 text-yellow-400 font-medium py-3 px-4 rounded-lg transition-colors duration-200 text-sm flex items-center justify-center space-x-2"
             >
-              Skip Login (Development)
+              <span>🚧</span>
+              <span>Skip Login (Development)</span>
             </button>
+          )}
+          
+          {/* Manual bypass info for debugging */}
+          {isDev && (
+            <div className="mt-2 text-xs text-muted-foreground text-center">
+              Console bypass: <code>localStorage.setItem('dev-bypass', 'true')</code>
+            </div>
           )}
           
           {errMsg && (
