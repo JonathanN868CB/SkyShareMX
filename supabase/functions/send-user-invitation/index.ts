@@ -39,6 +39,11 @@ const handler = async (req: Request): Promise<Response> => {
   try {
     const { email, firstName, lastName, role }: UserInvitationRequest = await req.json();
 
+    console.log("send-user-invitation envs", {
+      url: !!Deno.env.get("SUPABASE_URL"),
+      serviceRole: !!Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+      resend: !!Deno.env.get("RESEND_API_KEY")
+    });
     // First, create an invitation record in the database
     const { data: invitation, error: inviteError } = await supabase
       .from('user_invitations')
@@ -174,7 +179,16 @@ const handler = async (req: Request): Promise<Response> => {
         })
         .eq('id', invitationId);
 
-      throw emailError;
+      // Return 200 so UI can proceed; surface that email didn't send
+      return new Response(JSON.stringify({
+        success: true,
+        invitation_id: invitationId,
+        email_sent: false,
+        error: emailError.message
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
     }
 
     // If we have an error in the response, handle it
@@ -190,7 +204,16 @@ const handler = async (req: Request): Promise<Response> => {
         })
         .eq('id', invitationId);
 
-      throw new Error(emailResponse.error.message);
+      // Return 200 so UI can proceed; surface that email didn't send
+      return new Response(JSON.stringify({
+        success: true,
+        invitation_id: invitationId,
+        email_sent: false,
+        error: emailResponse.error.message
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
     }
 
     // Update invitation status to Sent
