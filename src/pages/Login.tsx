@@ -10,7 +10,7 @@ export default function Login() {
   const navigate = useNavigate();
 
   // Check if we're in development mode with multiple fallbacks
-  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost';
+  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
   
   // Log environment info for debugging
   console.log("🔧 Login: Environment check", {
