@@ -21,8 +21,20 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
     }
 
     supabase.auth.getSession().then(({ data }) => {
-      setHasSession(!!data.session);
-      setLoading(false);
+      if (data.session) {
+        setHasSession(true);
+        setLoading(false);
+      } else {
+        if (isDev) {
+          console.log("🚧 ProtectedRoute: No session in preview/dev, enabling dev bypass automatically");
+          localStorage.setItem('dev-bypass', 'true');
+          setHasSession(true);
+          setLoading(false);
+        } else {
+          setHasSession(false);
+          setLoading(false);
+        }
+      }
     });
   }, []);
 
