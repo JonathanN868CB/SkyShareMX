@@ -53,6 +53,45 @@ export type Database = {
         }
         Relationships: []
       }
+      user_invitations: {
+        Row: {
+          created_at: string
+          email: string
+          error_message: string | null
+          first_name: string | null
+          id: string
+          invited_by: string | null
+          last_name: string | null
+          role: Database["public"]["Enums"]["app_role"]
+          sent_at: string | null
+          status: Database["public"]["Enums"]["invite_status"]
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          error_message?: string | null
+          first_name?: string | null
+          id?: string
+          invited_by?: string | null
+          last_name?: string | null
+          role?: Database["public"]["Enums"]["app_role"]
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["invite_status"]
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          error_message?: string | null
+          first_name?: string | null
+          id?: string
+          invited_by?: string | null
+          last_name?: string | null
+          role?: Database["public"]["Enums"]["app_role"]
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["invite_status"]
+        }
+        Relationships: []
+      }
       user_permissions: {
         Row: {
           granted_at: string
@@ -105,6 +144,7 @@ export type Database = {
     Enums: {
       app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Read-Only"
       app_section: "Overview" | "Operations" | "Administration" | "Development"
+      invite_status: "Pending" | "Sent" | "Failed" | "Accepted" | "Expired"
       user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
@@ -235,6 +275,7 @@ export const Constants = {
     Enums: {
       app_role: ["Super Admin", "Admin", "Manager", "Technician", "Read-Only"],
       app_section: ["Overview", "Operations", "Administration", "Development"],
+      invite_status: ["Pending", "Sent", "Failed", "Accepted", "Expired"],
       user_status: ["Active", "Inactive", "Suspended", "Pending"],
     },
   },
