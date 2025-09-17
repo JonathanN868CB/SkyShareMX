@@ -24,14 +24,24 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setErrMsg(null);
     setRedirecting(true);
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin + "/" }
+      options: { 
+        redirectTo: window.location.origin + "/",
+        skipBrowserRedirect: true 
+      }
     });
     if (error) {
       console.error("OAuth error:", error);
       setErrMsg(error.message || "Login failed");
       setRedirecting(false);
+    } else if (data?.url) {
+      // Force top-level navigation to break out of iframe
+      if (window.top && window.top !== window.self) {
+        window.top.location.href = data.url;
+      } else {
+        window.location.href = data.url;
+      }
     }
   };
 
