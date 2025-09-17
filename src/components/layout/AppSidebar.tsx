@@ -80,21 +80,19 @@ export function AppSidebar() {
       <SidebarContent>
         {/* Logo Area */}
         <div className="p-6 border-b border-sidebar-hover">
-          <div className="flex items-center">
+          <div className="flex flex-col">
             {state !== "collapsed" ? (
-              <img 
-                src="/src/assets/skyshare-logo.png" 
-                alt="SkyShare" 
-                className="h-8 w-auto filter brightness-0 invert"
-              />
+              <>
+                <img 
+                  src="/src/assets/skyshare-logo.png" 
+                  alt="SkyShare" 
+                  className="h-8 w-auto filter brightness-0 invert"
+                />
+                <p className="text-xs text-sidebar-foreground/60 font-medium mt-2">Maintenance Portal</p>
+              </>
             ) : (
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <span className="text-primary-foreground font-bold text-sm">S</span>
-              </div>
-            )}
-            {state !== "collapsed" && (
-              <div className="ml-3">
-                <p className="text-xs text-sidebar-foreground/60 font-medium">Maintenance Portal</p>
               </div>
             )}
           </div>
