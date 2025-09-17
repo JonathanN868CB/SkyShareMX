@@ -1,7 +1,35 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+
 export default function Login() {
-  const handleGoogleLogin = () => {
-    // No-op for now as specified
-    console.log("Google login clicked - no-op for now");
+  const [redirecting, setRedirecting] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const e = data.session?.user?.email ?? null;
+      setEmail(e);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      setEmail(session?.user?.email ?? null);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    setRedirecting(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin + "/" }
+    });
+    if (error) {
+      console.error(error);
+      setRedirecting(false);
+    }
   };
 
   return (
@@ -21,10 +49,26 @@ export default function Login() {
             </p>
           </div>
 
+          {/* Already signed in state */}
+          {email && (
+            <div className="mb-4 p-3 bg-muted rounded-lg text-center">
+              <p className="text-sm text-muted-foreground mb-2">
+                You're already signed in as <span className="font-medium">{email}</span>
+              </p>
+              <button
+                onClick={() => navigate("/")}
+                className="text-primary hover:underline text-sm font-medium"
+              >
+                Go to Dashboard
+              </button>
+            </div>
+          )}
+
           {/* Google login button */}
           <button
             onClick={handleGoogleLogin}
-            className="w-full bg-google-red hover:bg-google-red-hover text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3"
+            disabled={redirecting}
+            className="w-full bg-google-red hover:bg-google-red-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -44,7 +88,7 @@ export default function Login() {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
               />
             </svg>
-            <span>Continue with Google</span>
+            <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
           </button>
 
           <div className="mt-6 text-center">

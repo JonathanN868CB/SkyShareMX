@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import UnderConstructionPage from "./pages/UnderConstructionPage";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/auth/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -23,8 +24,8 @@ const App = () => (
           
           {/* Main app routes with layout */}
           <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="under-construction" element={<UnderConstructionPage />} />
+            <Route index element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="under-construction" element={<ProtectedRoute><UnderConstructionPage /></ProtectedRoute>} />
           </Route>
           
           {/* 404 catch-all */}

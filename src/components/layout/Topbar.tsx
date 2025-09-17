@@ -1,4 +1,5 @@
-import { Bell, User } from "lucide-react";
+import { Bell } from "lucide-react";
+import UserMenu from "@/components/auth/UserMenu";
 
 export function Topbar() {
   return (
@@ -13,15 +14,7 @@ export function Topbar() {
           <Bell className="w-5 h-5" />
         </button>
         
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center">
-            <User className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <div className="text-sm">
-            <p className="font-medium">SkyShare Maintenance Portal</p>
-            <p className="text-muted-foreground">Engineer</p>
-          </div>
-        </div>
+        <UserMenu />
       </div>
     </header>
   );
