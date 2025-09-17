@@ -6,6 +6,7 @@ export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [devBypass, setDevBypass] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -67,6 +68,8 @@ export default function Login() {
 
   const handleDevBypass = () => {
     console.log("🚧 Login: Development bypass - navigating to dashboard");
+    setDevBypass(true);
+    localStorage.setItem('dev-bypass', 'true');
     navigate('/', { replace: true });
   };
 
@@ -129,13 +132,15 @@ export default function Login() {
             <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
           </button>
 
-          {/* Development bypass button */}
-          <button
-            onClick={handleDevBypass}
-            className="w-full bg-muted hover:bg-muted/80 text-muted-foreground font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
-          >
-            Skip Login (Development)
-          </button>
+          {/* Development bypass button - only in development */}
+          {import.meta.env.DEV && (
+            <button
+              onClick={handleDevBypass}
+              className="w-full bg-muted hover:bg-muted/80 text-muted-foreground font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
+            >
+              Skip Login (Development)
+            </button>
+          )}
           
           {errMsg && (
             <div className="mt-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">

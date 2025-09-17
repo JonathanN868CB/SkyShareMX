@@ -7,6 +7,15 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
+    // Check for development bypass
+    const devBypass = import.meta.env.DEV && localStorage.getItem('dev-bypass') === 'true';
+    
+    if (devBypass) {
+      setHasSession(true);
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       setHasSession(!!data.session);
       setLoading(false);
