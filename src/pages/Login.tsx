@@ -24,23 +24,49 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setErrMsg(null);
     setRedirecting(true);
+
+    // Pre-open a popup to avoid blockers when running in an iframe
+    let popup: Window | null = null;
+    try {
+      popup = window.open('', '_blank', 'noopener,noreferrer');
+    } catch {}
+
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { 
+      options: {
         redirectTo: window.location.origin + "/",
-        skipBrowserRedirect: true 
-      }
+        skipBrowserRedirect: true,
+      },
     });
+
     if (error) {
       console.error("OAuth error:", error);
       setErrMsg(error.message || "Login failed");
       setRedirecting(false);
-    } else if (data?.url) {
-      // Force top-level navigation to break out of iframe
+      popup?.close();
+      return;
+    }
+
+    const url = data?.url;
+    if (!url) {
+      setErrMsg("Unable to start Google sign-in (no redirect URL). Check provider configuration.");
+      setRedirecting(false);
+      popup?.close();
+      return;
+    }
+
+    // Prefer top-level navigation; fallback to the popup if blocked
+    try {
       if (window.top && window.top !== window.self) {
-        window.top.location.href = data.url;
+        (window.top as Window).location.href = url;
       } else {
-        window.location.href = data.url;
+        window.location.href = url;
+      }
+    } catch {
+      if (popup) {
+        popup.location.href = url;
+      } else {
+        window.location.href = url; // last resort
       }
     }
   };
