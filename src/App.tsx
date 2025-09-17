@@ -1,7 +1,6 @@
 import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Layout } from "./components/layout/Layout";
 import { PermissionProvider } from "./hooks/useUserPermissions";
@@ -13,11 +12,10 @@ import UnderConstructionPage from "./pages/UnderConstructionPage";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
-const queryClient = new QueryClient();
+
 
 const App = () => {
   return (
-    <QueryClientProvider client={queryClient}>
       <PermissionProvider>
         <Toaster />
         <Sonner />
@@ -39,7 +37,6 @@ const App = () => {
           </Routes>
         </BrowserRouter>
       </PermissionProvider>
-    </QueryClientProvider>
   );
 };
 
