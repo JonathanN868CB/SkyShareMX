@@ -1,4 +1,4 @@
-# SkyShare Maintenance Portal (Shell)
+# SkyShare Maintenance Portal
 
 A React-based maintenance portal shell for SkyShare aircraft operations.
 

@@ -18,7 +18,7 @@ export function Topbar() {
             <User className="w-4 h-4 text-muted-foreground" />
           </div>
           <div className="text-sm">
-            <p className="font-medium">Maintenance User</p>
+            <p className="font-medium">SkyShare Maintenance Portal</p>
             <p className="text-muted-foreground">Engineer</p>
           </div>
         </div>
