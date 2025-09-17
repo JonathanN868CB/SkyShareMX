@@ -79,16 +79,17 @@ export function AppSidebar() {
     <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
       <SidebarContent>
         {/* Logo Area */}
-        <div className="p-6 border-b border-sidebar-hover">
-          <div className="flex flex-col">
+        <div className="px-4 py-4 border-b border-sidebar-hover">
+          <div className="flex items-center">
             {state !== "collapsed" ? (
               <>
                 <img 
                   src="/src/assets/skyshare-logo.png" 
-                  alt="SkyShare" 
-                  className="h-6 w-auto filter brightness-0 invert object-contain"
+                  alt="SkyShare Maintenance Portal" 
+                  className="h-6 w-auto object-contain select-none"
+                  draggable={false}
                 />
-                <p className="text-xs text-sidebar-foreground/60 font-medium mt-2">Maintenance Portal</p>
+                <span className="sr-only">SkyShare Maintenance Portal</span>
               </>
             ) : (
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
