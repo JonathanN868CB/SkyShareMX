@@ -18,6 +18,13 @@ export default function AuthCallback() {
 
         if (data.session) {
           // Successful authentication
+          try {
+            if (window.opener && !window.opener.closed) {
+              window.opener.postMessage({ type: 'oauth-success' }, window.location.origin);
+              window.close();
+              return;
+            }
+          } catch {}
           navigate("/", { replace: true });
         } else {
           // No session found

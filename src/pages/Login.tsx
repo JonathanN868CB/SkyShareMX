@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -21,15 +21,30 @@ export default function Login() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Listen for OAuth success messages from popup
+  const popupRef = useRef<Window | null>(null);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'oauth-success') {
+        try { popupRef.current?.close(); } catch {}
+        navigate('/', { replace: true });
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [navigate]);
+
   const handleGoogleLogin = async () => {
     setErrMsg(null);
     setRedirecting(true);
 
     // Pre-open a popup to avoid blockers when running in an iframe
-    let popup: Window | null = null;
     try {
-      popup = window.open('', '_blank', 'noopener,noreferrer');
-    } catch {}
+      popupRef.current = window.open('', 'supabase-oauth', 'width=500,height=650');
+    } catch {
+      popupRef.current = null;
+    }
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -44,7 +59,7 @@ export default function Login() {
       const errorMsg = error.code ? `${error.message} (${error.code})` : error.message || "Login failed";
       setErrMsg(errorMsg);
       setRedirecting(false);
-      popup?.close();
+      popupRef.current?.close();
       return;
     }
 
@@ -52,23 +67,24 @@ export default function Login() {
     if (!url) {
       setErrMsg("Unable to start Google sign-in (no redirect URL). Check provider configuration.");
       setRedirecting(false);
-      popup?.close();
+      popupRef.current?.close();
       return;
     }
 
-    // Prefer top-level navigation; fallback to the popup if blocked
-    try {
-      if (window.top && window.top !== window.self) {
-        (window.top as Window).location.href = url;
+    if (window.top && window.top !== window.self) {
+      // Inside an iframe: use popup to complete OAuth (top navigation may be blocked)
+      if (popupRef.current) {
+        try {
+          popupRef.current.location.href = url;
+        } catch {
+          window.location.href = url; // fallback if popup navigation blocked
+        }
       } else {
-        window.location.href = url;
+        window.location.href = url; // fallback if popup couldn't open
       }
-    } catch {
-      if (popup) {
-        popup.location.href = url;
-      } else {
-        window.location.href = url; // last resort
-      }
+    } else {
+      // Standalone: redirect current window
+      window.location.href = url;
     }
   };
 
