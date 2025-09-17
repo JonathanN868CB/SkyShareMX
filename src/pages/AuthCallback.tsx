@@ -34,7 +34,7 @@ export default function AuthCallback() {
               try {
                 if (window.opener && !window.opener.closed) {
                   console.log("📤 AuthCallback: Posting success message to parent");
-                  window.opener.postMessage({ type: 'oauth-success' }, window.location.origin);
+                  window.opener.postMessage({ type: 'oauth-success' }, "*");
                   window.close();
                   return;
                 }
@@ -63,7 +63,7 @@ export default function AuthCallback() {
                 try {
                   if (window.opener && !window.opener.closed) {
                     console.log("📤 AuthCallback: Posting success message to parent");
-                    window.opener.postMessage({ type: 'oauth-success' }, window.location.origin);
+                    window.opener.postMessage({ type: 'oauth-success' }, "*");
                     window.close();
                     return;
                   }

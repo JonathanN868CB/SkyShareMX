@@ -10,31 +10,48 @@ export default function Login() {
 
   useEffect(() => {
     let mounted = true;
+
+    // Listen first so we don't miss events
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("🔔 Login: Auth state changed:", event, session?.user?.email || "no user");
+      setEmail(session?.user?.email ?? null);
+      if (event === 'SIGNED_IN' && mounted) {
+        console.log("✅ Login: Detected signed in, navigating to home");
+        navigate('/', { replace: true });
+      }
+    });
+
+    // Then check for existing session
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       const e = data.session?.user?.email ?? null;
       setEmail(e);
+      if (data.session) {
+        console.log("✅ Login: Existing session found, navigating to home");
+        navigate('/', { replace: true });
+      }
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setEmail(session?.user?.email ?? null);
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [navigate]);
 
   // Listen for OAuth success messages from popup
   const popupRef = useRef<Window | null>(null);
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       console.log("📨 Login: Received message:", event.data, "from origin:", event.origin);
-      if (event.origin !== window.location.origin) {
-        console.log("❌ Login: Message origin mismatch");
-        return;
-      }
-      if (event.data?.type === 'oauth-success') {
-        console.log("✅ Login: OAuth success message received, navigating to home");
+      // Accept only from our opened popup
+      const isFromPopup = event.source === popupRef.current;
+      if (event.data?.type === 'oauth-success' && isFromPopup) {
+        console.log("✅ Login: OAuth success message received from popup, navigating to home");
         try { popupRef.current?.close(); } catch {}
         setRedirecting(false);
         navigate('/', { replace: true });
+      } else {
+        console.log("ℹ️ Login: Ignoring message. isFromPopup:", isFromPopup);
       }
     };
     window.addEventListener('message', onMessage);
