@@ -80,7 +80,8 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       console.log("🚧 PermissionProvider: Dev bypass active, setting mock permissions");
       setLoading(false);
       setPermissions(['Overview', 'Operations', 'Administration', 'Development']);
-      return;
+      // Return a cleanup function that does nothing
+      return () => {};
     }
 
     // Set up auth state listener
@@ -112,9 +113,13 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   useEffect(() => {
-    if (user) {
-      refreshPermissions();
-    }
+    // Skip refreshing permissions if dev bypass is active
+    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
+    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+    
+    if (devBypass || !user) return;
+    
+    refreshPermissions();
   }, [user]);
 
   const hasPermission = (section: AppSection) => {
