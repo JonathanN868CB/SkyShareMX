@@ -72,6 +72,17 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   };
 
   useEffect(() => {
+    // Check for dev bypass first
+    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
+    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+    
+    if (devBypass) {
+      console.log("🚧 PermissionProvider: Dev bypass active, setting mock permissions");
+      setLoading(false);
+      setPermissions(['Overview', 'Operations', 'Administration', 'Development']);
+      return;
+    }
+
     // Set up auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
