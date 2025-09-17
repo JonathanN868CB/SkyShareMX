@@ -7,10 +7,14 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
-    // Check for development bypass
-    const devBypass = import.meta.env.DEV && localStorage.getItem('dev-bypass') === 'true';
+    // Check if we're in development mode with multiple fallbacks (same logic as Login)
+    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
+    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+    
+    console.log("🔒 ProtectedRoute: Dev check", { isDev, devBypass, hostname: window.location.hostname });
     
     if (devBypass) {
+      console.log("🚧 ProtectedRoute: Dev bypass active, allowing access");
       setHasSession(true);
       setLoading(false);
       return;
