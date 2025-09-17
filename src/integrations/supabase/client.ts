@@ -2,8 +2,16 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = "https://vmxeiyzqzdursrdgenqa.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZteGVpeXpxemR1cnNyZGdlbnFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwNzE5NDgsImV4cCI6MjA3MzY0Nzk0OH0.ACwRUfyEYMjJLiF5d-6Dzh1docfp7cywcAn8wx3k93A";
+// Prefer Vite vars, fallback to NEXT_PUBLIC_ if present
+const SUPABASE_URL =
+  (import.meta as any).env?.VITE_SUPABASE_URL ||
+  (typeof process !== "undefined" ? (process as any).env?.NEXT_PUBLIC_SUPABASE_URL : undefined) ||
+  "https://vmxeiyzqzdursrdgenqa.supabase.co";
+
+const SUPABASE_PUBLISHABLE_KEY =
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+  (typeof process !== "undefined" ? (process as any).env?.NEXT_PUBLIC_SUPABASE_ANON_KEY : undefined) ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZteGVpeXpxemR1cnNyZGdlbnFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwNzE5NDgsImV4cCI6MjA3MzY0Nzk0OH0.ACwRUfyEYMjJLiF5d-6Dzh1docfp7cywcAn8wx3k93A";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";

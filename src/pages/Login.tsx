@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -21,25 +22,15 @@ export default function Login() {
   }, []);
 
   const handleGoogleLogin = async () => {
-    try {
-      setRedirecting(true);
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: window.location.origin + "/", skipBrowserRedirect: true },
-      });
-      if (error) throw error;
-      if (data?.url) {
-        // If running inside the Lovable preview iframe, break out to top window
-        if (window.top && window.top !== window.self) {
-          window.top.location.href = data.url;
-        } else {
-          window.location.href = data.url;
-        }
-      } else {
-        setRedirecting(false);
-      }
-    } catch (err) {
-      console.error(err);
+    setErrMsg(null);
+    setRedirecting(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin + "/" }
+    });
+    if (error) {
+      console.error("OAuth error:", error);
+      setErrMsg(error.message || "Login failed");
       setRedirecting(false);
     }
   };
@@ -102,6 +93,8 @@ export default function Login() {
             </svg>
             <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
           </button>
+          
+          {errMsg && <div className="mt-2 text-sm text-destructive">{errMsg}</div>}
 
           <div className="mt-6 text-center">
             <p className="text-xs text-muted-foreground">
