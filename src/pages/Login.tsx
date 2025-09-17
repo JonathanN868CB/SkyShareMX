@@ -38,42 +38,10 @@ export default function Login() {
     };
   }, [navigate]);
 
-  // Listen for OAuth success messages from popup
-  const popupRef = useRef<Window | null>(null);
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      console.log("📨 Login: Received message:", event.data, "from origin:", event.origin);
-      // Accept only from our opened popup
-      const isFromPopup = event.source === popupRef.current;
-      if (event.data?.type === 'oauth-success' && isFromPopup) {
-        console.log("✅ Login: OAuth success message received from popup, navigating to home");
-        try { popupRef.current?.close(); } catch {}
-        setRedirecting(false);
-        navigate('/', { replace: true });
-      } else {
-        console.log("ℹ️ Login: Ignoring message. isFromPopup:", isFromPopup);
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [navigate]);
-
   const handleGoogleLogin = async () => {
     console.log("🚀 Login: Starting Google OAuth flow");
     setErrMsg(null);
     setRedirecting(true);
-
-    const isInIframe = window.top && window.top !== window.self;
-    console.log("🖼️ Login: Running in iframe:", isInIframe);
-
-    // Pre-open a popup to avoid blockers when running in an iframe
-    try {
-      popupRef.current = window.open('', 'supabase-oauth', 'width=500,height=650,scrollbars=yes,resizable=yes');
-      console.log("🪟 Login: Popup opened successfully:", !!popupRef.current);
-    } catch (e) {
-      console.log("❌ Login: Failed to open popup:", e);
-      popupRef.current = null;
-    }
 
     const redirectUrl = window.location.origin + "/auth/callback";
     console.log("🔄 Login: Using redirect URL:", redirectUrl);
@@ -82,7 +50,6 @@ export default function Login() {
       provider: "google",
       options: {
         redirectTo: redirectUrl,
-        skipBrowserRedirect: true,
       },
     });
 
@@ -91,38 +58,16 @@ export default function Login() {
       const errorMsg = error.code ? `${error.message} (${error.code})` : error.message || "Login failed";
       setErrMsg(errorMsg);
       setRedirecting(false);
-      popupRef.current?.close();
       return;
     }
 
-    const url = data?.url;
-    console.log("🔗 Login: OAuth URL received:", url ? "✅" : "❌");
-    if (!url) {
-      setErrMsg("Unable to start Google sign-in (no redirect URL). Check provider configuration.");
-      setRedirecting(false);
-      popupRef.current?.close();
-      return;
-    }
+    // Simple redirect approach - works great in new tabs
+    console.log("🔄 Login: Redirecting to Google OAuth");
+  };
 
-    if (isInIframe) {
-      // Inside an iframe: use popup to complete OAuth (top navigation may be blocked)
-      if (popupRef.current) {
-        try {
-          console.log("🪟 Login: Navigating popup to OAuth URL");
-          popupRef.current.location.href = url;
-        } catch (e) {
-          console.log("❌ Login: Popup navigation failed, using fallback:", e);
-          window.location.href = url; // fallback if popup navigation blocked
-        }
-      } else {
-        console.log("🔄 Login: No popup available, using direct navigation");
-        window.location.href = url; // fallback if popup couldn't open
-      }
-    } else {
-      // Standalone: redirect current window
-      console.log("🔄 Login: Standalone mode, redirecting current window");
-      window.location.href = url;
-    }
+  const handleDevBypass = () => {
+    console.log("🚧 Login: Development bypass - navigating to dashboard");
+    navigate('/', { replace: true });
   };
 
   return (
@@ -161,7 +106,7 @@ export default function Login() {
           <button
             onClick={handleGoogleLogin}
             disabled={redirecting}
-            className="w-full bg-google-red hover:bg-google-red-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3"
+            className="w-full bg-google-red hover:bg-google-red-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3 mb-3"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -182,6 +127,14 @@ export default function Login() {
               />
             </svg>
             <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
+          </button>
+
+          {/* Development bypass button */}
+          <button
+            onClick={handleDevBypass}
+            className="w-full bg-muted hover:bg-muted/80 text-muted-foreground font-medium py-2 px-4 rounded-lg transition-colors duration-200 text-sm"
+          >
+            Skip Login (Development)
           </button>
           
           {errMsg && (
