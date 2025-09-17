@@ -25,9 +25,15 @@ export default function Login() {
   const popupRef = useRef<Window | null>(null);
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
+      console.log("📨 Login: Received message:", event.data, "from origin:", event.origin);
+      if (event.origin !== window.location.origin) {
+        console.log("❌ Login: Message origin mismatch");
+        return;
+      }
       if (event.data?.type === 'oauth-success') {
+        console.log("✅ Login: OAuth success message received, navigating to home");
         try { popupRef.current?.close(); } catch {}
+        setRedirecting(false);
         navigate('/', { replace: true });
       }
     };
@@ -36,26 +42,35 @@ export default function Login() {
   }, [navigate]);
 
   const handleGoogleLogin = async () => {
+    console.log("🚀 Login: Starting Google OAuth flow");
     setErrMsg(null);
     setRedirecting(true);
 
+    const isInIframe = window.top && window.top !== window.self;
+    console.log("🖼️ Login: Running in iframe:", isInIframe);
+
     // Pre-open a popup to avoid blockers when running in an iframe
     try {
-      popupRef.current = window.open('', 'supabase-oauth', 'width=500,height=650');
-    } catch {
+      popupRef.current = window.open('', 'supabase-oauth', 'width=500,height=650,scrollbars=yes,resizable=yes');
+      console.log("🪟 Login: Popup opened successfully:", !!popupRef.current);
+    } catch (e) {
+      console.log("❌ Login: Failed to open popup:", e);
       popupRef.current = null;
     }
+
+    const redirectUrl = window.location.origin + "/auth/callback";
+    console.log("🔄 Login: Using redirect URL:", redirectUrl);
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: window.location.origin + "/auth/callback",
+        redirectTo: redirectUrl,
         skipBrowserRedirect: true,
       },
     });
 
     if (error) {
-      console.error("OAuth error:", error);
+      console.error("❌ Login: OAuth error:", error);
       const errorMsg = error.code ? `${error.message} (${error.code})` : error.message || "Login failed";
       setErrMsg(errorMsg);
       setRedirecting(false);
@@ -64,6 +79,7 @@ export default function Login() {
     }
 
     const url = data?.url;
+    console.log("🔗 Login: OAuth URL received:", url ? "✅" : "❌");
     if (!url) {
       setErrMsg("Unable to start Google sign-in (no redirect URL). Check provider configuration.");
       setRedirecting(false);
@@ -71,19 +87,23 @@ export default function Login() {
       return;
     }
 
-    if (window.top && window.top !== window.self) {
+    if (isInIframe) {
       // Inside an iframe: use popup to complete OAuth (top navigation may be blocked)
       if (popupRef.current) {
         try {
+          console.log("🪟 Login: Navigating popup to OAuth URL");
           popupRef.current.location.href = url;
-        } catch {
+        } catch (e) {
+          console.log("❌ Login: Popup navigation failed, using fallback:", e);
           window.location.href = url; // fallback if popup navigation blocked
         }
       } else {
+        console.log("🔄 Login: No popup available, using direct navigation");
         window.location.href = url; // fallback if popup couldn't open
       }
     } else {
       // Standalone: redirect current window
+      console.log("🔄 Login: Standalone mode, redirecting current window");
       window.location.href = url;
     }
   };
