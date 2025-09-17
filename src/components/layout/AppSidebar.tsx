@@ -97,12 +97,17 @@ export function AppSidebar() {
             {state !== "collapsed" ? (
               <>
                 <img 
-                  src="/src/assets/skyshare-logo.png" 
+                  src="/skyshare-logo.png" 
                   alt="SkyShare Maintenance Portal" 
                   className="h-6 w-auto object-contain select-none filter brightness-0 invert"
                   draggable={false}
+                  onError={(e) => {
+                    // Fallback to text if image fails to load
+                    e.currentTarget.style.display = 'none';
+                    e.currentTarget.nextElementSibling!.classList.remove('sr-only');
+                  }}
                 />
-                <span className="sr-only">SkyShare Maintenance Portal</span>
+                <span className="sr-only font-heading font-bold text-sidebar-foreground">SkyShare Maintenance Portal</span>
               </>
             ) : (
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
