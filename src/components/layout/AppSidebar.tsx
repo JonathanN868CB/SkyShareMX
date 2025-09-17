@@ -82,10 +82,12 @@ export function AppSidebar() {
       : "text-sidebar-foreground hover:bg-sidebar-hover";
 
   const shouldShowSection = (section: typeof sidebarSections[0]) => {
-    if (loading) return false;
+    const isDevBypass = typeof window !== 'undefined' && localStorage.getItem('dev-bypass') === 'true';
+    if (loading) return true; // don't hide while loading
+    if (isDevBypass) return true; // show everything when dev bypass is on
+    if (section.permission === 'Overview') return true; // always show Overview
     return hasPermission(section.permission);
   };
-
   return (
     <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
       <SidebarContent>
