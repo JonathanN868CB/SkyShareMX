@@ -21,13 +21,25 @@ export default function Login() {
   }, []);
 
   const handleGoogleLogin = async () => {
-    setRedirecting(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin + "/" }
-    });
-    if (error) {
-      console.error(error);
+    try {
+      setRedirecting(true);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin + "/", skipBrowserRedirect: true },
+      });
+      if (error) throw error;
+      if (data?.url) {
+        // If running inside the Lovable preview iframe, break out to top window
+        if (window.top && window.top !== window.self) {
+          window.top.location.href = data.url;
+        } else {
+          window.location.href = data.url;
+        }
+      } else {
+        setRedirecting(false);
+      }
+    } catch (err) {
+      console.error(err);
       setRedirecting(false);
     }
   };
