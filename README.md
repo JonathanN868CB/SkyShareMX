@@ -1,73 +1,80 @@
-# Welcome to your Lovable project
+# SkyShare Maintenance Portal (Shell)
 
-## Project info
+A React-based maintenance portal shell for SkyShare aircraft operations.
 
-**URL**: https://lovable.dev/projects/2abefa19-d04f-4bb9-ab7b-ad64b5982545
+## Project Structure
 
-## How can I edit this code?
+This is a clean shell implementation built with:
+- **React** + **TypeScript** + **Vite**
+- **React Router** for navigation
+- **Tailwind CSS** for styling
+- **Lucide React** for icons
 
-There are several ways of editing your application.
+## Development Setup
 
-**Use Lovable**
+```bash
+# Install dependencies
+npm install
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/2abefa19-d04f-4bb9-ab7b-ad64b5982545) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
+
+# Build for production
+npm run build
 ```
 
-**Edit a file directly in GitHub**
+## Adding New Components
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### UI Components
+Place reusable UI components in `/src/components/ui/`. These are typically design system components that can be used across pages.
 
-**Use GitHub Codespaces**
+### Page Components
+Add new pages in `/src/pages/` and register them in `/src/App.tsx` routes.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+### Layout Components
+Layout-related components (sidebars, headers, etc.) go in `/src/components/layout/`.
 
-## What technologies are used for this project?
+## Code Integration
 
-This project is built with:
+### From Figma/Builder Tools
+When copying code from design tools:
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+1. **Component code** → `/src/components/ui/[ComponentName].tsx`
+2. **Page layouts** → `/src/pages/[PageName].tsx`
+3. **Update routing** in `/src/App.tsx` if adding new pages
 
-## How can I deploy this project?
+### Design System
+- All colors and design tokens are defined in `/src/index.css`
+- Tailwind configuration in `/tailwind.config.ts`
+- Use semantic color tokens instead of hardcoded values
 
-Simply open [Lovable](https://lovable.dev/projects/2abefa19-d04f-4bb9-ab7b-ad64b5982545) and click on Share -> Publish.
+## Current Routes
 
-## Can I connect a custom domain to my Lovable project?
+- `/` - Dashboard (welcome page)
+- `/login` - Authentication page with Google login placeholder
+- `/under-construction` - Placeholder for incomplete features
 
-Yes, you can!
+## Architecture
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+```
+src/
+├── components/
+│   ├── layout/          # Layout components (Sidebar, Topbar)
+│   ├── ui/              # Reusable UI components
+│   └── UnderConstruction.tsx
+├── pages/               # Page components
+│   ├── Dashboard.tsx
+│   ├── Login.tsx
+│   └── UnderConstructionPage.tsx
+└── App.tsx             # Main routing configuration
+```
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## Sidebar Navigation
+
+The sidebar includes organized sections:
+- **Overview**: Dashboard, Aircraft Info
+- **Operations**: Maintenance tools and planning
+- **Administration**: User and system management  
+- **Development**: Style guide and dev tools
+
+All operations/admin routes currently redirect to the under-construction page.
