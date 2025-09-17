@@ -86,7 +86,7 @@ export function AppSidebar() {
                 <img 
                   src="/src/assets/skyshare-logo.png" 
                   alt="SkyShare Maintenance Portal" 
-                  className="h-6 w-auto object-contain select-none"
+                  className="h-6 w-auto object-contain select-none filter brightness-0 invert"
                   draggable={false}
                 />
                 <span className="sr-only">SkyShare Maintenance Portal</span>
