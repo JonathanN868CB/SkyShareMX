@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { 
   Home, 
   Plane, 
@@ -30,6 +31,7 @@ import {
 const sidebarSections = [
   {
     title: "Overview",
+    permission: "Overview" as const,
     items: [
       { name: "Dashboard", path: "/", icon: Home },
       { name: "Aircraft Info", path: "/under-construction", icon: Plane },
@@ -37,6 +39,7 @@ const sidebarSections = [
   },
   {
     title: "Operations",
+    permission: "Operations" as const,
     items: [
       { name: "Aircraft Conformity", path: "/under-construction", icon: CheckSquare },
       { name: "14-Day Check", path: "/under-construction", icon: Calendar },
@@ -50,14 +53,16 @@ const sidebarSections = [
   },
   {
     title: "Administration",
+    permission: "Administration" as const,
     items: [
       { name: "Alerts & Notifications", path: "/under-construction", icon: Bell },
-      { name: "Users", path: "/under-construction", icon: Users },
+      { name: "Users", path: "/admin/users", icon: Users },
       { name: "Settings", path: "/under-construction", icon: Settings },
     ],
   },
   {
     title: "Development",
+    permission: "Development" as const,
     items: [
       { name: "Style Guide", path: "/under-construction", icon: Palette },
     ],
@@ -68,12 +73,18 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const location = useLocation();
   const currentPath = location.pathname;
+  const { hasPermission, loading } = useUserPermissions();
 
   const isActive = (path: string) => currentPath === path;
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
     isActive 
       ? "bg-sidebar-active text-white font-medium" 
       : "text-sidebar-foreground hover:bg-sidebar-hover";
+
+  const shouldShowSection = (section: typeof sidebarSections[0]) => {
+    if (loading) return false;
+    return hasPermission(section.permission);
+  };
 
   return (
     <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
@@ -101,7 +112,7 @@ export function AppSidebar() {
 
         {/* Navigation */}
         <div className="flex-1 p-4 space-y-6">
-        {sidebarSections.map((section) => {
+        {sidebarSections.filter(shouldShowSection).map((section) => {
             return (
               <SidebarGroup key={section.title}>
                 <SidebarGroupLabel className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wide">

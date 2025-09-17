@@ -14,16 +14,98 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      profiles: {
+        Row: {
+          created_at: string
+          email: string
+          first_name: string | null
+          id: string
+          last_login: string | null
+          last_name: string | null
+          role: Database["public"]["Enums"]["app_role"]
+          status: Database["public"]["Enums"]["user_status"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          first_name?: string | null
+          id?: string
+          last_login?: string | null
+          last_name?: string | null
+          role?: Database["public"]["Enums"]["app_role"]
+          status?: Database["public"]["Enums"]["user_status"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          first_name?: string | null
+          id?: string
+          last_login?: string | null
+          last_name?: string | null
+          role?: Database["public"]["Enums"]["app_role"]
+          status?: Database["public"]["Enums"]["user_status"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_permissions: {
+        Row: {
+          granted_at: string
+          id: string
+          section: Database["public"]["Enums"]["app_section"]
+          user_id: string
+        }
+        Insert: {
+          granted_at?: string
+          id?: string
+          section: Database["public"]["Enums"]["app_section"]
+          user_id: string
+        }
+        Update: {
+          granted_at?: string
+          id?: string
+          section?: Database["public"]["Enums"]["app_section"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_role: {
+        Args: { user_uuid: string }
+        Returns: Database["public"]["Enums"]["app_role"]
+      }
+      has_permission: {
+        Args: {
+          required_section: Database["public"]["Enums"]["app_section"]
+          user_uuid: string
+        }
+        Returns: boolean
+      }
+      has_role: {
+        Args: {
+          required_role: Database["public"]["Enums"]["app_role"]
+          user_uuid: string
+        }
+        Returns: boolean
+      }
+      is_admin_or_super: {
+        Args: { user_uuid: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Read-Only"
+      app_section: "Overview" | "Operations" | "Administration" | "Development"
+      user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +232,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["Super Admin", "Admin", "Manager", "Technician", "Read-Only"],
+      app_section: ["Overview", "Operations", "Administration", "Development"],
+      user_status: ["Active", "Inactive", "Suspended", "Pending"],
+    },
   },
 } as const
