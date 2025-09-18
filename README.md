@@ -89,3 +89,15 @@ authentication redirects in the correct environment:
   preview origin instead of the production domain.
 - **Production builds**: explicitly set `VITE_PUBLIC_SITE_URL` to the canonical
   production domain so Supabase redirects always land back in production.
+
+| Variable                  | Example value (redacted)                | Where to set in Netlify                                    |
+| ------------------------- | --------------------------------------- | ---------------------------------------------------------- |
+| `VITE_PUBLIC_SITE_URL`    | `https://staging--<site>.netlify.app`   | Site settings → Build & deploy → Environment → Environment variables |
+| `VITE_SUPABASE_URL`       | `https://<project>.supabase.co`         | Site settings → Build & deploy → Environment → Environment variables |
+| `VITE_SUPABASE_ANON_KEY`  | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…<redacted>` | Site settings → Build & deploy → Environment → Environment variables |
+
+Secrets can be managed securely either through the Netlify UI (the Environment
+variables panel above) or via the CLI with `netlify env:set <NAME> <VALUE>` so
+they never live in source control. Ensure the Supabase anon key belongs to the
+same Supabase project referenced by `VITE_SUPABASE_URL`; mismatches will break
+Google OAuth redirect flows.
