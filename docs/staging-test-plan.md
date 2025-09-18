@@ -1,19 +1,18 @@
 # Staging launch checklist
 
-Use this runbook to validate the Lovable-hosted staging experience **before** sending any production traffic. Every step should pass in a single test session using a clean browser profile.
+Use this runbook to validate the SkyShare-hosted staging experience **before** sending any production traffic. Every step should pass in a single test session using a clean browser profile.
 
 ## 1. Pre-checks
-1. Confirm the Lovable staging site is deployed and accessible at `https://skyshare-maintenance.lovable.app`.
+1. Confirm the staging site is deployed and accessible at `https://maintenance.skyshare.com`.
 2. Verify you have access to the shared Google Workspace account that can complete an OAuth sign-in in staging.
 3. Open the Supabase project dashboard in a separate tab so you can inspect auth sessions, invitation records, and Edge Function logs without disturbing the test flow.
 
-## 2. Authentication flow inside the Lovable iframe
-1. In Lovable, open the staging site preview and ensure the Maintenance Portal is rendered inside the iframe.
-2. From the iframe navigation, load `/login` (append `#/login` if the iframe uses hash routing).
-3. The iframe should immediately navigate to `/auth/start`. Watch the iframe URL bar (or DevTools Network panel) to confirm the 302 to `/auth/start` fires.
-4. Click **Continue with Google** and complete the Google OAuth flow using the designated staging account.
-5. When Google redirects back to the portal, confirm the iframe resolves to `/` and the authenticated layout loads (header + dashboard tiles). This indicates the Supabase session cookie was stored correctly.
-6. In Supabase → Authentication → Users, confirm the staging user shows a recent sign-in timestamp matching your test.
+## 2. Authentication flow in staging
+1. Load `/login` directly in the staging site.
+2. The app should immediately navigate to `/auth/start`. Watch the browser URL bar (or DevTools Network panel) to confirm the 302 to `/auth/start` fires.
+3. Click **Continue with Google** and complete the Google OAuth flow using the designated staging account.
+4. When Google redirects back to the portal, confirm the app resolves to `/` and the authenticated layout loads (header + dashboard tiles). This indicates the Supabase session cookie was stored correctly.
+5. In Supabase → Authentication → Users, confirm the staging user shows a recent sign-in timestamp matching your test.
 
 ## 3. Invitation email flow
 1. In the portal UI (or via REST call), trigger an invitation for `test@skyshare.com` using the "send invitation" feature. Record the timestamp.
@@ -28,11 +27,11 @@ Use this runbook to validate the Lovable-hosted staging experience **before** se
 - **Resend domain / DNS status**: In Resend → Domains, confirm `skyshare.com` records are verified. If they are `Pending`, re-run DNS validation in Cloudflare/registrar and wait for propagation before retrying the invitation.
 - **Supabase Edge Function logs**: Run `supabase functions logs send-user-invitation --project-ref <project-ref>` from the repo root (requires the Supabase CLI to be logged in) to inspect any runtime errors thrown by the invitation function.
 - **Function replays**: If the function returned `email_sent: false`, use the stored payload in the `user_invitations` row to replay the request via `curl` or the Supabase HTTP tester once DNS is fixed.
-- **Auth redirect issues**: If the iframe never reaches `/`, open the browser DevTools console to check for blocked third-party cookies. Clear storage for `skyshare-maintenance.lovable.app` and try again.
+- **Auth redirect issues**: If the app never reaches `/`, open the browser DevTools console to check for blocked third-party cookies. Clear storage for `maintenance.skyshare.com` and try again.
 
 ## 5. Sign-off
 Capture screenshots of:
-- The iframe showing the authenticated dashboard at `/`.
+- The staging site showing the authenticated dashboard at `/`.
 - The invitation email as received (primary or fallback sender).
 - Relevant Resend or Supabase logs when troubleshooting was required.
 

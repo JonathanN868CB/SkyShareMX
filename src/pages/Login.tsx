@@ -1,23 +1,25 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { DEV_HOSTS, enableDevBypass, isDevBypassActive, isDevEnvironment } from "@/lib/env";
 
 export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  const [devBypass, setDevBypass] = useState(false);
   const navigate = useNavigate();
 
-  // Check if we're in development mode with multiple fallbacks
-  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-  
+  const isDev = isDevEnvironment();
+  const devBypassActive = isDevBypassActive();
+
   // Log environment info for debugging
   console.log("🔧 Login: Environment check", {
     DEV: import.meta.env.DEV,
     MODE: import.meta.env.MODE,
     hostname: window.location.hostname,
-    isDev
+    isDev,
+    devBypassActive,
+    devHosts: DEV_HOSTS,
   });
 
   useEffect(() => {
@@ -79,8 +81,7 @@ export default function Login() {
 
   const handleDevBypass = () => {
     console.log("🚧 Login: Development bypass - navigating to dashboard");
-    setDevBypass(true);
-    localStorage.setItem('dev-bypass', 'true');
+    enableDevBypass();
     navigate('/', { replace: true });
   };
 
@@ -117,11 +118,11 @@ export default function Login() {
           )}
 
           {/* Google login button - hidden in dev bypass */}
-          {!(isDev && localStorage.getItem('dev-bypass') === 'true') && (
+          {!devBypassActive && (
             <button
               onClick={handleGoogleLogin}
               disabled={redirecting}
-              className="w-full bg-google-red hover:bg-google-red-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3 mb-3"
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3 mb-3"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path

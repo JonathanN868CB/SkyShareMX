@@ -99,7 +99,7 @@ const handler = async (req: Request): Promise<Response> => {
             <p>To get started, please visit the portal and use your email address to sign in:</p>
             
             <div style="text-align: center; margin: 30px 0;">
-              <a href="${Deno.env.get("SITE_URL") || "https://skyshare-maintenance.lovable.app"}/login" 
+              <a href="${Deno.env.get("SITE_URL") || "https://maintenance.skyshare.com"}/login"
                  style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
                 Access SkyShare Portal
               </a>
@@ -150,7 +150,7 @@ const handler = async (req: Request): Promise<Response> => {
               <p>To get started, please visit the portal and use your email address to sign in:</p>
               
               <div style="text-align: center; margin: 30px 0;">
-                <a href="${Deno.env.get("SITE_URL") || "https://skyshare-maintenance.lovable.app"}/login" 
+                <a href="${Deno.env.get("SITE_URL") || "https://maintenance.skyshare.com"}/login"
                    style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
                   Access SkyShare Portal
                 </a>

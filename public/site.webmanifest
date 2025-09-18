@@ -1,0 +1,16 @@
+{
+  "name": "SkyShare Maintenance Portal",
+  "short_name": "SkyShare Maint",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/skyshare-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
