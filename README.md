@@ -78,3 +78,14 @@ The sidebar includes organized sections:
 - **Development**: Style guide and dev tools
 
 All operations/admin routes currently redirect to the under-construction page.
+
+## Deployment
+
+When deploying to Netlify, configure environment variables per context to keep
+authentication redirects in the correct environment:
+
+- **Deploy Preview builds**: either leave `VITE_PUBLIC_SITE_URL` unset or set it
+  to Netlify's `${DEPLOY_PRIME_URL}` so `getPublicSiteUrl()` resolves to the
+  preview origin instead of the production domain.
+- **Production builds**: explicitly set `VITE_PUBLIC_SITE_URL` to the canonical
+  production domain so Supabase redirects always land back in production.
