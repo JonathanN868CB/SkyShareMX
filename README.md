@@ -69,6 +69,15 @@ src/
 └── App.tsx             # Main routing configuration
 ```
 
+## Email invitations
+
+- Invitation emails are sent by the Supabase Edge Function at
+  [`supabase/functions/send-user-invitation/index.ts`](supabase/functions/send-user-invitation/index.ts).
+- The function delivers messages through Resend so invites come from the verified
+  `@skyshare.com` domain.
+- See [`docs/email-invites.md`](docs/email-invites.md) for DNS records, Resend domain setup,
+  and the environment variables the function expects.
+
 ## Sidebar Navigation
 
 The sidebar includes organized sections:
