@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { enableDevBypass, isDevBypassActive, isDevEnvironment } from "@/lib/env";
 
 export default function ProtectedRoute({ children }: { children: JSX.Element }) {
-  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-  const initialBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+  const isDev = isDevEnvironment();
+  const initialBypass = isDevBypassActive();
 
   const [loading, setLoading] = useState(!initialBypass);
   const [hasSession, setHasSession] = useState(initialBypass);
 
   useEffect(() => {
     // Check if we're in development mode with multiple fallbacks (same logic as Login)
-    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+    const isDev = isDevEnvironment();
+    const devBypass = isDevBypassActive();
     
     console.log("🔒 ProtectedRoute: Dev check", { isDev, devBypass, hostname: window.location.hostname });
     
@@ -30,7 +31,7 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
       } else {
         if (isDev) {
           console.log("🚧 ProtectedRoute: No session in preview/dev, enabling dev bypass automatically");
-          localStorage.setItem('dev-bypass', 'true');
+          enableDevBypass();
           setHasSession(true);
           setLoading(false);
         } else {

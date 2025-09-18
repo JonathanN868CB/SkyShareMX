@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { User } from "@supabase/supabase-js";
+import { isDevBypassActive } from "@/lib/env";
 
 type AppRole = 'Super Admin' | 'Admin' | 'Manager' | 'Technician' | 'Read-Only';
 type UserStatus = 'Active' | 'Inactive' | 'Suspended' | 'Pending';
@@ -73,8 +74,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     // Check for dev bypass first
-    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+    const devBypass = isDevBypassActive();
     
     if (devBypass) {
       console.log("🚧 PermissionProvider: Dev bypass active, setting mock permissions");
@@ -114,8 +114,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     // Skip refreshing permissions if dev bypass is active
-    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+    const devBypass = isDevBypassActive();
     
     if (devBypass || !user) return;
     

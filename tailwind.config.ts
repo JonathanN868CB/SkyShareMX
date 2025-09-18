@@ -54,10 +54,6 @@ export default {
           bg: "hsl(var(--topbar-bg))",
           border: "hsl(var(--topbar-border))",
         },
-        google: {
-          red: "hsl(var(--google-red))",
-          "red-hover": "hsl(var(--google-red-hover))",
-        },
       },
       fontFamily: {
         heading: "var(--font-heading)",
