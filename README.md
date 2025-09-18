@@ -71,12 +71,10 @@ src/
 
 ## Email invitations
 
-- Invitation emails are sent by the Supabase Edge Function at
-  [`supabase/functions/send-user-invitation/index.ts`](supabase/functions/send-user-invitation/index.ts).
-- The function delivers messages through Resend so invites come from the verified
-  `@skyshare.com` domain.
-- See [`docs/email-invites.md`](docs/email-invites.md) for DNS records, Resend domain setup,
-  and the environment variables the function expects.
+- Invitation emails are sent by the Netlify serverless function at
+  [`netlify/functions/send-user-invitation.ts`](netlify/functions/send-user-invitation.ts).
+- The function uses Nodemailer to send messages through the SkyShare mailbox `jonathan@skyshare.com`.
+- See [`docs/email-invites.md`](docs/email-invites.md) for SMTP configuration details and required environment variables.
 
 ## Sidebar Navigation
 
@@ -90,23 +88,28 @@ All operations/admin routes currently redirect to the under-construction page.
 
 ## Deployment
 
-When deploying to Netlify, configure environment variables per context to keep
-authentication redirects in the correct environment:
+When deploying to Netlify, configure environment variables per context to keep authentication redirects in the correct environment:
 
-- **Deploy Preview builds**: either leave `VITE_PUBLIC_SITE_URL` unset or set it
-  to Netlify's `${DEPLOY_PRIME_URL}` so `getPublicSiteUrl()` resolves to the
-  preview origin instead of the production domain.
-- **Production builds**: explicitly set `VITE_PUBLIC_SITE_URL` to the canonical
-  production domain so Supabase redirects always land back in production.
+- **Deploy Preview builds**: either leave `VITE_PUBLIC_SITE_URL` unset or set it to Netlify's `${DEPLOY_PRIME_URL}` so `getPublicSiteUrl()` resolves to the preview origin instead of the production domain.
+- **Production builds**: explicitly set `VITE_PUBLIC_SITE_URL` to the canonical production domain so Supabase redirects always land back in production.
 
-| Variable                  | Example value (redacted)                | Where to set in Netlify                                    |
-| ------------------------- | --------------------------------------- | ---------------------------------------------------------- |
-| `VITE_PUBLIC_SITE_URL`    | `https://staging--<site>.netlify.app`   | Site settings → Build & deploy → Environment → Environment variables |
-| `VITE_SUPABASE_URL`       | `https://<project>.supabase.co`         | Site settings → Build & deploy → Environment → Environment variables |
-| `VITE_SUPABASE_ANON_KEY`  | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…<redacted>` | Site settings → Build & deploy → Environment → Environment variables |
+| Variable                 | Example value (redacted)                | Where to set in Netlify                        |
+| ------------------------ | -------------------------------------- | ---------------------------------------------- |
+| `VITE_PUBLIC_SITE_URL`   | `https://staging--<site>.netlify.app`  | Site settings → Build & deploy → Environment   |
+| `VITE_SUPABASE_URL`      | `https://<project>.supabase.co`        | Site settings → Build & deploy → Environment   |
+| `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…` | Site settings → Build & deploy → Environment   |
 
-Secrets can be managed securely either through the Netlify UI (the Environment
-variables panel above) or via the CLI with `netlify env:set <NAME> <VALUE>` so
-they never live in source control. Ensure the Supabase anon key belongs to the
-same Supabase project referenced by `VITE_SUPABASE_URL`; mismatches will break
-Google OAuth redirect flows.
+Add the following secrets so the invitation function can reach Supabase and the SMTP relay:
+
+| Variable                     | Example value                                | Where to set in Netlify                        |
+| ---------------------------- | -------------------------------------------- | ---------------------------------------------- |
+| `SUPABASE_URL`               | `https://<project>.supabase.co`              | Site settings → Build & deploy → Environment   |
+| `SUPABASE_SERVICE_ROLE_KEY`  | `<service-role-key>`                         | Site settings → Build & deploy → Environment   |
+| `SITE_URL`                   | `https://maintenance.skyshare.com`           | Site settings → Build & deploy → Environment   |
+| `SMTP_HOST`                  | `smtp.gmail.com`                             | Site settings → Build & deploy → Environment   |
+| `SMTP_PORT`                  | `587`                                        | Site settings → Build & deploy → Environment   |
+| `SMTP_USER`                  | `jonathan@skyshare.com`                      | Site settings → Build & deploy → Environment   |
+| `SMTP_PASS`                  | `<app password>`                             | Site settings → Build & deploy → Environment   |
+| `SMTP_FROM`                  | `SkyShare Maintenance Portal <jonathan@skyshare.com>` | Site settings → Build & deploy → Environment   |
+
+Secrets can be managed securely either through the Netlify UI (the Environment variables panel above) or via the CLI with `netlify env:set <NAME> <VALUE>` so they never live in source control. Ensure the Supabase keys belong to the same project referenced by `SUPABASE_URL`; mismatches will break both invitations and Google OAuth redirect flows.
