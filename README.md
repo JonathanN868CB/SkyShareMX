@@ -2,6 +2,8 @@
 
 A React-based maintenance portal shell for SkyShare aircraft operations.
 
+> **Branding note:** Drop the finalized SkyShare favicon at `public/favicon.ico` when it's ready—the project includes a placeholder SVG fallback until then.
+
 ## Project Structure
 
 This is a clean shell implementation built with:
@@ -91,11 +93,11 @@ All operations/admin routes currently redirect to the under-construction page.
 When deploying to Netlify, configure environment variables per context to keep authentication redirects in the correct environment:
 
 - **Deploy Preview builds**: either leave `VITE_PUBLIC_SITE_URL` unset or set it to Netlify's `${DEPLOY_PRIME_URL}` so `getPublicSiteUrl()` resolves to the preview origin instead of the production domain.
-- **Production builds**: explicitly set `VITE_PUBLIC_SITE_URL` to the canonical production domain so Supabase redirects always land back in production.
+- **Production builds**: explicitly set `VITE_PUBLIC_SITE_URL` to `https://skyshare-maintenance.netlify.app` so Supabase redirects always land back in production.
 
 | Variable                 | Example value (redacted)                | Where to set in Netlify                        |
 | ------------------------ | -------------------------------------- | ---------------------------------------------- |
-| `VITE_PUBLIC_SITE_URL`   | `https://staging--<site>.netlify.app`  | Site settings → Build & deploy → Environment   |
+| `VITE_PUBLIC_SITE_URL`   | `https://skyshare-maintenance.netlify.app` | Site settings → Build & deploy → Environment   |
 | `VITE_SUPABASE_URL`      | `https://<project>.supabase.co`        | Site settings → Build & deploy → Environment   |
 | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…` | Site settings → Build & deploy → Environment   |
 
@@ -105,7 +107,7 @@ Add the following secrets so the invitation function can reach Supabase and the 
 | ---------------------------- | -------------------------------------------- | ---------------------------------------------- |
 | `SUPABASE_URL`               | `https://<project>.supabase.co`              | Site settings → Build & deploy → Environment   |
 | `SUPABASE_SERVICE_ROLE_KEY`  | `<service-role-key>`                         | Site settings → Build & deploy → Environment   |
-| `SITE_URL`                   | `https://maintenance.skyshare.com`           | Site settings → Build & deploy → Environment   |
+| `SITE_URL`                   | `https://skyshare-maintenance.netlify.app`   | Site settings → Build & deploy → Environment   |
 | `SMTP_HOST`                  | `smtp.gmail.com`                             | Site settings → Build & deploy → Environment   |
 | `SMTP_PORT`                  | `587`                                        | Site settings → Build & deploy → Environment   |
 | `SMTP_USER`                  | `jonathan@skyshare.com`                      | Site settings → Build & deploy → Environment   |
