@@ -18,6 +18,30 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const DEFAULT_SITE_URL = "https://skyshare-maintenance.netlify.app";
+
+function normalizeSiteUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.origin.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function resolveSiteUrl() {
+  return (
+    normalizeSiteUrl(process.env.SITE_URL) ??
+    normalizeSiteUrl(process.env.VITE_PUBLIC_SITE_URL) ??
+    normalizeSiteUrl(process.env.URL) ??
+    DEFAULT_SITE_URL
+  );
+}
+
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
     return {
@@ -130,7 +154,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
       },
     });
 
-    const siteUrl = (process.env.SITE_URL || process.env.VITE_PUBLIC_SITE_URL || "https://maintenance.skyshare.com").replace(/\/$/, "");
+    const siteUrl = resolveSiteUrl();
     const inviteLink = `${siteUrl}/login`;
 
     const html = `

@@ -3,7 +3,7 @@
 Use this runbook to validate the SkyShare-hosted staging experience **before** sending any production traffic. Every step should pass in a single test session using a clean browser profile.
 
 ## 1. Pre-checks
-1. Confirm the staging site is deployed and accessible at `https://maintenance.skyshare.com`.
+1. Confirm the staging site is deployed and accessible at `https://skyshare-maintenance.netlify.app`.
 2. Verify you have access to the shared Google Workspace account that can complete an OAuth sign-in in staging.
 3. Open the Supabase project dashboard in a separate tab so you can inspect auth sessions, invitation records, and function logs without disturbing the test flow.
 
@@ -26,7 +26,7 @@ Use this runbook to validate the SkyShare-hosted staging experience **before** s
 - **SMTP credentials**: In Netlify → Site settings → Environment, confirm `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` match the SkyShare mailbox configuration.
 - **Netlify function logs**: Run `netlify functions:tail send-user-invitation` from the repo root (requires the Netlify CLI) to inspect runtime errors. Logs include the Supabase `invitation_id` and SMTP message ID when sends succeed.
 - **Supabase invitation records**: If the function returned `email_sent: false`, use the stored payload in the `user_invitations` row to replay the request once SMTP credentials are corrected.
-- **Auth redirect issues**: If the app never reaches `/`, open the browser DevTools console to check for blocked third-party cookies. Clear storage for `maintenance.skyshare.com` and try again.
+- **Auth redirect issues**: If the app never reaches `/`, open the browser DevTools console to check for blocked third-party cookies. Clear storage for `skyshare-maintenance.netlify.app` and try again.
 
 ## 5. Sign-off
 Capture screenshots of:

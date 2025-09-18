@@ -1,4 +1,6 @@
 const DEFAULT_DEV_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"] as const;
+const DEFAULT_SITE_URL = "https://skyshare-maintenance.netlify.app";
+const RETURN_TO_STORAGE_KEY = "skyshare:returnTo";
 
 const envHosts = (import.meta.env.VITE_DEV_HOSTS ?? "")
   .split(",")
@@ -49,4 +51,77 @@ export function enableDevBypass() {
   }
 
   localStorage.setItem("dev-bypass", "true");
+}
+
+function normalizeOrigin(value?: string | null) {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      return undefined;
+    }
+    return url.origin.replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveEnvPublicSiteUrl() {
+  const browserValue = normalizeOrigin(import.meta.env.VITE_PUBLIC_SITE_URL);
+
+  if (browserValue) {
+    return browserValue;
+  }
+
+  if (typeof process !== "undefined" && process.env) {
+    const envValue =
+      normalizeOrigin(process.env.VITE_PUBLIC_SITE_URL) ??
+      normalizeOrigin(process.env.SITE_URL) ??
+      normalizeOrigin(process.env.URL) ??
+      normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL);
+
+    if (envValue) {
+      return envValue;
+    }
+  }
+
+  return undefined;
+}
+
+export function getPublicSiteUrl() {
+  if (typeof window !== "undefined") {
+    return resolveEnvPublicSiteUrl() ?? window.location.origin;
+  }
+  return resolveEnvPublicSiteUrl() ?? DEFAULT_SITE_URL;
+}
+
+export function sanitizeReturnTo(raw?: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (!decoded.startsWith("/") || decoded.startsWith("//")) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberReturnTo(raw: string | null) {
+  if (typeof window === "undefined") return;
+  const sanitized = sanitizeReturnTo(raw);
+  if (sanitized) {
+    sessionStorage.setItem(RETURN_TO_STORAGE_KEY, sanitized);
+  } else {
+    sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
+  }
+}
+
+export function popReturnToFromStorage(): string | null {
+  if (typeof window === "undefined") return null;
+  const stored = sessionStorage.getItem(RETURN_TO_STORAGE_KEY);
+  if (!stored) return null;
+  sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
+  return sanitizeReturnTo(stored);
 }
