@@ -8,14 +8,18 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
+
+const INVITE_FUNCTION_URL =
+  import.meta.env.VITE_INVITE_FUNCTION_URL ??
+  (typeof process !== "undefined" ? process.env?.VITE_INVITE_FUNCTION_URL : undefined) ??
+  "/.netlify/functions/send-user-invitation";
 
 const addUserSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
-  role: z.enum(['Read-Only', 'Technician', 'Manager', 'Admin'], {
+  role: z.enum(["Read-Only", "Technician", "Manager", "Admin"], {
     required_error: "Please select a role",
   }),
 });
@@ -27,6 +31,7 @@ interface AddUserDialogProps {
 }
 
 type SendInvitationResponse = {
+  success?: boolean;
   email_sent?: boolean;
   error?: string;
 };
@@ -48,31 +53,36 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
   const onSubmit = async (formData: AddUserFormData) => {
     setIsLoading(true);
     try {
-      // Send invitation email directly instead of creating user first
-      // The user will be created when they accept the invitation
-      const { data, error: emailError } = await supabase.functions.invoke<SendInvitationResponse>('send-user-invitation', {
-        body: {
+      const response = await fetch(INVITE_FUNCTION_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           email: formData.email,
           firstName: formData.firstName,
           lastName: formData.lastName,
           role: formData.role,
-        }
+        }),
       });
 
-      if (emailError) {
-        console.error('Email error:', emailError);
-        toast({
-          title: "Failed to send invitation",
-          description: emailError.message || "Could not send invitation email.",
-          variant: "destructive",
-        });
-        return;
+      let data: SendInvitationResponse | undefined;
+
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        console.error("Failed to parse invitation response:", parseError);
       }
 
-      if (data?.email_sent === false) {
+      if (!response.ok || data?.success === false || data?.email_sent === false) {
+        const errorMessage =
+          data?.error || `Could not send invitation email (status ${response.status}).`;
+
+        console.error("Invitation request failed:", errorMessage);
+
         toast({
           title: "Failed to send invitation",
-          description: data.error || "Could not send invitation email.",
+          description: errorMessage,
           variant: "destructive",
         });
         return;
@@ -86,9 +96,8 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
       form.reset();
       setOpen(false);
       onUserAdded();
-
     } catch (error) {
-      console.error('Error adding user:', error);
+      console.error("Error adding user:", error);
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to add user",
