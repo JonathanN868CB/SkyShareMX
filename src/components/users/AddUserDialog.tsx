@@ -26,6 +26,11 @@ interface AddUserDialogProps {
   onUserAdded: () => void;
 }
 
+type SendInvitationResponse = {
+  email_sent?: boolean;
+  error?: string;
+};
+
 export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -40,17 +45,17 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
     },
   });
 
-  const onSubmit = async (data: AddUserFormData) => {
+  const onSubmit = async (formData: AddUserFormData) => {
     setIsLoading(true);
     try {
       // Send invitation email directly instead of creating user first
       // The user will be created when they accept the invitation
-      const { error: emailError } = await supabase.functions.invoke('send-user-invitation', {
+      const { data, error: emailError } = await supabase.functions.invoke<SendInvitationResponse>('send-user-invitation', {
         body: {
-          email: data.email,
-          firstName: data.firstName,
-          lastName: data.lastName,
-          role: data.role,
+          email: formData.email,
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          role: formData.role,
         }
       });
 
@@ -64,9 +69,18 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
         return;
       }
 
+      if (data?.email_sent === false) {
+        toast({
+          title: "Failed to send invitation",
+          description: data.error || "Could not send invitation email.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       toast({
         title: "Invitation sent successfully",
-        description: `Invitation sent to ${data.email}. They will be able to sign up using the link in the email.`,
+        description: `Invitation sent to ${formData.email}. They will be able to sign up using the link in the email.`,
       });
 
       form.reset();
