@@ -1,45 +1,38 @@
-# Email invitations via Resend
+# Email invitations via SMTP
 
-SkyShare Maintenance Portal sends invitation emails from the Supabase Edge Function at [`supabase/functions/send-user-invitation/index.ts`](../supabase/functions/send-user-invitation/index.ts). The function calls Resend's transactional email API so that all invites are delivered from the `@skyshare.com` domain once it is verified.
+SkyShare Maintenance Portal sends invitation emails from the Netlify serverless function at [`netlify/functions/send-user-invitation.ts`](../netlify/functions/send-user-invitation.ts). The function uses Nodemailer to relay messages through `jonathan@skyshare.com`, so every invite originates from the SkyShare-owned mailbox.
 
-## Configure the sender domain in Resend
+## Configure the sender mailbox
 
-1. Sign in to the [Resend dashboard](https://resend.com/).
-2. Navigate to **Domains** and add `skyshare.com` as a new domain.
-3. Add the DNS records shown below to the `skyshare.com` DNS zone. These are the exact records Resend requires to authenticate the domain.
-4. Wait for Resend to report that SPF, DKIM, and Return-Path are verified.
-5. When editing the invitation template or Resend settings, keep the `from` address on a mailbox that exists on the verified `@skyshare.com` domain (the Edge Function currently uses `Jonathan @ SkyShare <jonathan@skyshare.com>`).
+1. Generate an app password for `jonathan@skyshare.com` in the SkyShare mail provider (Google Workspace or Microsoft 365).
+2. Note the SMTP host and port (for example `smtp.gmail.com` with port `587` for STARTTLS).
+3. Verify the credentials can authenticate through the provider’s SMTP endpoint before updating production secrets.
 
-| Purpose      | Type | Name / Host                         | Value / Target                  |
-| ------------ | ---- | ----------------------------------- | ------------------------------- |
-| SPF          | TXT  | `@` (root)                          | `v=spf1 include:resend.com ~all` |
-| DKIM key 1   | CNAME| `resend._domainkey`                 | `resend.dkim.resend.com`        |
-| DKIM key 2   | CNAME| `resend1._domainkey`                | `resend1.dkim.resend.com`       |
-| DKIM key 3   | CNAME| `resend2._domainkey`                | `resend2.dkim.resend.com`       |
-| Return-Path  | CNAME| `pm-bounces`                        | `pm.mtasv.net`                  |
+## Environment variables
 
-> ⚠️ **Important:** The invitation Edge Function falls back to `onboarding@resend.dev` if the `skyshare.com` domain is not yet verified. Confirm that the verified domain stays active so we can keep sending from a recognizable `@skyshare.com` address.
+Set these variables in Netlify (Site settings → Build & deploy → Environment → Environment variables) and in `.env.local` when testing locally:
 
-## Supabase Edge Function environment variables
+- `SUPABASE_URL` – Supabase project REST endpoint.
+- `SUPABASE_SERVICE_ROLE_KEY` – Service role key used to insert invitation rows.
+- `SITE_URL` – Public base URL used in the invitation link (e.g. `https://maintenance.skyshare.com`).
+- `SMTP_HOST` – SMTP host for the SkyShare mailbox.
+- `SMTP_PORT` – Port accepted by the SMTP host (usually `587`).
+- `SMTP_USER` – Authenticated mailbox (`jonathan@skyshare.com`).
+- `SMTP_PASS` – App password for the mailbox.
+- `SMTP_FROM` – Friendly display name, e.g. `SkyShare Maintenance Portal <jonathan@skyshare.com>`.
 
-The invitation Edge Function reads several secrets at runtime. After updating DNS or changing email content, double-check that these environment variables are set for the deployment target (Supabase dashboard → **Project Settings → Functions → Secrets**, or via the Supabase CLI):
+Optional development overrides:
 
-- `RESEND_API_KEY` – Resend API key for the verified `skyshare.com` sender domain.
-- `SITE_URL` – Public base URL used in invitation links (e.g. `https://app.skyshare.com`).
-- `SUPABASE_URL` – Project REST endpoint.
-- `SUPABASE_SERVICE_ROLE_KEY` – Service role key that lets the function insert invitation records.
+- `VITE_INVITE_FUNCTION_URL` – Alternate endpoint for the invite function (set to `http://localhost:8888/.netlify/functions/send-user-invitation` when running `netlify dev`).
 
-Example CLI update:
+## Deploying updates
 
-```bash
-supabase functions secrets set \
-  RESEND_API_KEY="your-resend-api-key" \
-  SITE_URL="https://app.skyshare.com" \
-  SUPABASE_URL="https://your-project.supabase.co" \
-  SUPABASE_SERVICE_ROLE_KEY="service-role-key"
+1. Commit code changes and deploy through Netlify.
+2. Update Netlify environment variables via the UI or `netlify env:set` before promoting to production.
+3. Confirm the Netlify deploy log shows the `send-user-invitation` function was bundled.
 
-# Deploy any pending changes after secrets are updated
-supabase functions deploy send-user-invitation
-```
+## Local testing
 
-> ⚠️ **Before deploying changes:** confirm the `from` field in [`supabase/functions/send-user-invitation/index.ts`](../supabase/functions/send-user-invitation/index.ts) is still scoped to the verified `@skyshare.com` domain. Using an address outside the verified domain will cause Resend to reject the send or fall back to the generic `resend.dev` sender.
+1. Copy `.env.example` to `.env.local` and fill in SMTP and Supabase values.
+2. Run `netlify dev` so requests to `/.netlify/functions/send-user-invitation` proxy to the local function bundle.
+3. Use the “Invite New User” dialog to send a test invite. Verify the email arrives from `jonathan@skyshare.com` and that it ends with the footer “This is an automated email from the SkyShare Maintenance Portal.”
