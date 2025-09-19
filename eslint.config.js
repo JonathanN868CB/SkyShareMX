@@ -84,6 +84,7 @@ export default tseslint.config(
             "@/shared/**",
             "@/entities/**",
             "@/hooks/**",
+            "@/pages/**",
             "@/app/**",
             "@hookform/**",
           ],
