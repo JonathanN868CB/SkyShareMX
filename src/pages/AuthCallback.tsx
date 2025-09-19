@@ -7,16 +7,20 @@ export default function AuthCallback() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const queryReturnTo = useMemo(
-    () => sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo")),
+  const rawQueryReturnTo = useMemo(
+    () => new URLSearchParams(location.search).get("returnTo"),
     [location.search],
+  );
+  const queryReturnTo = useMemo(
+    () => (rawQueryReturnTo ? sanitizeReturnTo(rawQueryReturnTo) : null),
+    [rawQueryReturnTo],
   );
 
   useEffect(() => {
     let mounted = true;
     const storedReturnTo = popReturnToFromStorage();
     const preferredReturnTo = queryReturnTo ?? storedReturnTo;
-    const targetPath = preferredReturnTo && preferredReturnTo.startsWith("/app")
+    const targetPath = preferredReturnTo && preferredReturnTo !== "/"
       ? preferredReturnTo
       : "/app";
 

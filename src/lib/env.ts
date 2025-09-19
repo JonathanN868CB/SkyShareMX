@@ -1,5 +1,5 @@
 const DEFAULT_DEV_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"] as const;
-const DEFAULT_SITE_URL = "https://skysharemx.com";
+const FALLBACK_DEV = "http://localhost:5173";
 const RETURN_TO_STORAGE_KEY = "skyshare:returnTo";
 const DOMAIN_DENIED_MESSAGE_KEY = "auth:domainDeniedMessage";
 
@@ -54,51 +54,59 @@ export function enableDevBypass() {
   localStorage.setItem("dev-bypass", "true");
 }
 
-function normalizeOrigin(value?: string | null) {
-  if (!value) return undefined;
+function normalizeOrigin(u: string) {
   try {
-    const url = new URL(value);
-    if (!["http:", "https:"].includes(url.protocol)) {
-      return undefined;
-    }
-    return url.origin.replace(/\/$/, "");
+    const url = new URL(u);
+    return url.origin;
   } catch {
-    return undefined;
+    return u.trim().replace(/\/+$/, "");
   }
 }
 
-export function sanitizeReturnTo(raw?: string | null): string | null {
-  if (!raw) return null;
-  try {
-    const decoded = decodeURIComponent(raw);
-    if (!decoded.startsWith("/") || decoded.startsWith("//")) {
-      return null;
-    }
-    return decoded;
-  } catch {
-    return null;
+export function sanitizeReturnTo(input?: string | null): string {
+  if (!input) return "/";
+  if (input.startsWith("/")) {
+    return input;
   }
+
+  try {
+    const candidate = new URL(input);
+    const siteOrigin = normalizeOrigin(getPublicSiteUrl());
+    if (normalizeOrigin(candidate.origin) === siteOrigin) {
+      return (candidate.pathname || "/") + (candidate.search || "") + (candidate.hash || "");
+    }
+  } catch {
+    // Ignore errors and fall through to default
+  }
+  return "/";
 }
 
-export function rememberReturnTo(raw: string | null) {
+export function rememberReturnTo(raw?: string | null) {
   if (typeof window === "undefined") return;
-  const sanitized = sanitizeReturnTo(raw);
-  if (sanitized && sanitized.startsWith("/app")) {
+  try {
+    if (!raw) {
+      sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
+      return;
+    }
+    const sanitized = sanitizeReturnTo(raw);
     sessionStorage.setItem(RETURN_TO_STORAGE_KEY, sanitized);
-  } else {
-    sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors (e.g., disabled cookies)
   }
 }
 
 export function popReturnToFromStorage(): string | null {
   if (typeof window === "undefined") return null;
-  const stored = sessionStorage.getItem(RETURN_TO_STORAGE_KEY);
-  sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
-  const sanitized = sanitizeReturnTo(stored);
-  if (sanitized && sanitized.startsWith("/app")) {
-    return sanitized;
+  try {
+    const stored = sessionStorage.getItem(RETURN_TO_STORAGE_KEY);
+    sessionStorage.removeItem(RETURN_TO_STORAGE_KEY);
+    if (!stored) {
+      return null;
+    }
+    return sanitizeReturnTo(stored);
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function readEnvValue(key: string): string | undefined {
@@ -129,33 +137,24 @@ function resolveEnvSiteUrl() {
   ];
 
   for (const candidate of candidates) {
-    const normalized = normalizeOrigin(candidate);
-    if (normalized) {
-      return normalized;
+    if (candidate) {
+      return normalizeOrigin(candidate);
     }
   }
 
-  return undefined;
+  return normalizeOrigin(FALLBACK_DEV);
 }
 
-export const SITE_URL =
-  resolveEnvSiteUrl() ??
-  (typeof window !== "undefined" ? window.location.origin : undefined) ??
-  DEFAULT_SITE_URL;
+const SITE_URL_FROM_ENV = resolveEnvSiteUrl();
 
-export const LOVABLE_EDIT_ENABLED =
-  String(readEnvValue("VITE_LOVABLE_EDIT_ENABLED") ?? "false").toLowerCase() === "true";
-
-export const IS_LOVABLE_HOST =
-  typeof window !== "undefined" && /\.lovable\.app$/i.test(window.location.hostname);
-
-export function shouldAllowLovableOverlay(): boolean {
-  return LOVABLE_EDIT_ENABLED && IS_LOVABLE_HOST;
+export function getPublicSiteUrl(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return SITE_URL_FROM_ENV;
 }
 
-export function getPublicSiteUrl() {
-  return SITE_URL;
-}
+export const SITE_URL = getPublicSiteUrl();
 
 export function getAdminEmails(): string[] {
   const raw = readEnvValue("VITE_ADMIN_EMAILS") ?? "";

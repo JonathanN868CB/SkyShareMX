@@ -92,21 +92,19 @@ All operations/admin routes currently redirect to the under-construction page.
 
 When deploying to Netlify, configure environment variables per context so OAuth redirects and deep links resolve to the correct domain:
 
-- **Deploy Preview builds**: leave `VITE_SITE_URL` unset so the client falls back to Netlify's generated preview origin. Optionally set `VITE_PUBLIC_SITE_URL=${DEPLOY_PRIME_URL}` if you need the URL baked in at build time for Supabase redirects.
-- **Production builds**: set `VITE_SITE_URL=https://skysharemx.com` so Supabase and invitation links always land on the custom domain. Keep `VITE_LOVABLE_EDIT_ENABLED=false` so the Lovable editor never appears in production.
+- **Deploy Preview builds**: leave `VITE_SITE_URL` unset so the client falls back to the preview origin. Optionally set `VITE_PUBLIC_SITE_URL=${DEPLOY_PRIME_URL}` if you need the URL baked in at build time for Supabase redirects.
+- **Production builds**: set `VITE_SITE_URL=https://skysharemx.com` so Supabase and invitation links always land on the custom domain.
 
-| Variable                   | Example value (redacted)                | Where to set in Netlify                                |
-| -------------------------- | -------------------------------------- | ------------------------------------------------------ |
-| `VITE_SITE_URL`            | `https://skysharemx.com`               | Site settings → Build & deploy → Environment (Prod)    |
-| `VITE_PUBLIC_SITE_URL`     | `${DEPLOY_PRIME_URL}` (preview)        | Site settings → Build & deploy → Environment (Preview) |
-| `VITE_LOVABLE_EDIT_ENABLED`| `false` (prod), `true` (Lovable preview)| Context-specific environment variables                 |
-| `VITE_SUPABASE_URL`        | `https://<project>.supabase.co`        | Site settings → Build & deploy → Environment           |
-| `VITE_SUPABASE_ANON_KEY`   | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…` | Site settings → Build & deploy → Environment           |
+| Variable               | Example value (redacted)         | Where to set in Netlify                               |
+| ---------------------- | -------------------------------- | ----------------------------------------------------- |
+| `VITE_SITE_URL`        | `https://skysharemx.com`         | Site settings → Build & deploy → Environment (Prod)   |
+| `VITE_PUBLIC_SITE_URL` | `${DEPLOY_PRIME_URL}` (preview)  | Site settings → Build & deploy → Environment (Preview) |
+| `VITE_SUPABASE_URL`    | `https://<project>.supabase.co`  | Site settings → Build & deploy → Environment          |
+| `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…` | Site settings → Build & deploy → Environment          |
 
 Add the following secrets so the invitation function can reach Supabase and the SMTP relay:
 
-| Variable                     | Example value                                | Where to set in Netlify                        |
-| ---------------------------- | -------------------------------------------- | ---------------------------------------------- |
+| Variable                     | Example value                                | Where to set in Netlify                | ---------------------------- | -------------------------------------------- | ---------------------------------------------- |
 | `SUPABASE_URL`               | `https://<project>.supabase.co`              | Site settings → Build & deploy → Environment   |
 | `SUPABASE_SERVICE_ROLE_KEY`  | `<service-role-key>`                         | Site settings → Build & deploy → Environment   |
 | `SITE_URL`                   | `https://skysharemx.com`                     | Site settings → Build & deploy → Environment   |
