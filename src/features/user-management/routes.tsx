@@ -1,11 +1,11 @@
 import { lazy } from "react";
 import type { RouteObject } from "react-router-dom";
 
-const UserManagementPage = lazy(() => import("./components/UserManagementPage"));
+const UsersPage = lazy(() => import("@/pages/admin/Users"));
 
 export const userManagementRoute: RouteObject = {
   path: "admin/users",
-  element: <UserManagementPage />,
+  element: <UsersPage />,
 };
 
 export const userManagementRoutes: RouteObject[] = [userManagementRoute];
