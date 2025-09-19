@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/shared/lib/api";
 import {
   DEV_HOSTS,
   consumeDomainDeniedMessage,
@@ -10,7 +10,7 @@ import {
   isDevEnvironment,
   rememberReturnTo,
   sanitizeReturnTo,
-} from "@/lib/env";
+} from "@/shared/lib/env";
 
 export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
@@ -21,11 +21,8 @@ export default function Login() {
   const location = useLocation();
 
   const safeReturnTo = useMemo(() => {
-    const sanitized = sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo"));
-    if (sanitized && sanitized.startsWith("/app")) {
-      return sanitized;
-    }
-    return null;
+    const rawReturnTo = new URLSearchParams(location.search).get("returnTo");
+    return rawReturnTo ? sanitizeReturnTo(rawReturnTo) : null;
   }, [location.search]);
 
   const isDev = isDevEnvironment();
@@ -41,14 +38,24 @@ export default function Login() {
   });
 
   useEffect(() => {
-    rememberReturnTo(safeReturnTo);
+    if (safeReturnTo) {
+      rememberReturnTo(safeReturnTo);
+    }
   }, [safeReturnTo]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.top && window.top !== window.self) {
-      const target = `${getPublicSiteUrl()}${window.location.pathname}${window.location.search}`;
-      window.top.location.href = target;
+    const inIframe = window.self !== window.top;
+    const sameOriginParent =
+      inIframe &&
+      document.referrer &&
+      document.referrer.startsWith(window.location.origin);
+    if (sameOriginParent) {
+      try {
+        window.top!.location.href = window.location.href;
+      } catch {
+        // Ignore cross-origin access errors
+      }
     }
   }, []);
 

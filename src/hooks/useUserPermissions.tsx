@@ -7,9 +7,9 @@ import {
   useState,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
-import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/lib/env";
+import { supabase } from "@/shared/lib/api";
+import type { Tables } from "@/entities/supabase";
+import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/shared/lib/env";
 import { toast } from "@/hooks/use-toast";
 
 const SKYSHARE_DOMAIN = "skyshare.com";

@@ -6,7 +6,6 @@ interface ImportMetaEnv {
   readonly VITE_SITE_URL?: string;
   readonly VITE_PUBLIC_SITE_URL?: string;
   readonly VITE_INVITE_FUNCTION_URL?: string;
-  readonly VITE_LOVABLE_EDIT_ENABLED?: string;
   readonly VITE_ADMIN_EMAILS?: string;
 }
 
