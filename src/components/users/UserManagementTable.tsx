@@ -9,9 +9,10 @@ import { MoreHorizontal, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "@/hooks/use-toast";
-import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { useUserPermissions, useReadOnly } from "@/hooks/useUserPermissions";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-type AppRole = 'Super Admin' | 'Admin' | 'Manager' | 'Technician' | 'Read-Only';
+type RoleOption = 'admin' | 'technician' | 'qc' | 'viewer';
 type UserStatus = 'Active' | 'Inactive' | 'Suspended' | 'Pending';
 
 interface UserProfile {
@@ -20,24 +21,48 @@ interface UserProfile {
   email: string;
   first_name?: string;
   last_name?: string;
-  role: AppRole;
+  full_name?: string | null;
+  role: RoleOption;
+  role_enum: 'Super Admin' | 'Admin' | 'Manager' | 'Technician' | 'Read-Only';
+  is_readonly: boolean;
   status: UserStatus;
   last_login?: string;
   created_at: string;
   updated_at: string;
 }
 
+const ROLE_LABELS: Record<RoleOption, string> = {
+  admin: 'Admin',
+  technician: 'Technician',
+  qc: 'QC',
+  viewer: 'Viewer',
+};
+
+const ROLE_OPTIONS: RoleOption[] = ['admin', 'technician', 'qc', 'viewer'];
+
+const ROLE_ENUM_BY_ROLE: Record<RoleOption, UserProfile['role_enum']> = {
+  admin: 'Admin',
+  technician: 'Technician',
+  qc: 'Manager',
+  viewer: 'Read-Only',
+};
+
+const READ_ONLY_MESSAGE = 'Your account is read-only. Ask an admin to upgrade your access.';
+
 export function UserManagementTable() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const { userProfile, isAdmin } = useUserPermissions();
+  const { profile: currentProfile, isAdmin } = useUserPermissions();
+  const isReadOnly = useReadOnly();
 
   const fetchUsers = async () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select(
+          'id, user_id, email, first_name, last_name, full_name, role, role_enum, is_readonly, status, last_login, created_at, updated_at',
+        )
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -58,17 +83,18 @@ export function UserManagementTable() {
     fetchUsers();
   }, []);
 
-  const updateUserRole = async (userId: string, newRole: AppRole) => {
+  const updateUserRole = async (userId: string, newRole: RoleOption) => {
     try {
+      const roleEnum = ROLE_ENUM_BY_ROLE[newRole];
       const { error } = await supabase
         .from('profiles')
-        .update({ role: newRole })
+        .update({ role: newRole, role_enum: roleEnum })
         .eq('user_id', userId);
 
       if (error) throw error;
 
-      setUsers(prev => prev.map(user => 
-        user.user_id === userId ? { ...user, role: newRole } : user
+      setUsers(prev => prev.map(user =>
+        user.user_id === userId ? { ...user, role: newRole, role_enum: roleEnum } : user
       ));
 
       toast({
@@ -80,6 +106,33 @@ export function UserManagementTable() {
       toast({
         title: "Error",
         description: "Failed to update user role",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const updateReadOnlyState = async (userId: string, nextValue: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ is_readonly: nextValue })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      setUsers(prev =>
+        prev.map(user => (user.user_id === userId ? { ...user, is_readonly: nextValue } : user)),
+      );
+
+      toast({
+        title: "Success",
+        description: nextValue ? "User set to read-only" : "User granted write access",
+      });
+    } catch (error) {
+      console.error('Error updating read-only state:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update access level",
         variant: "destructive",
       });
     }
@@ -112,14 +165,17 @@ export function UserManagementTable() {
     }
   };
 
-  const getRoleBadgeVariant = (role: AppRole) => {
+  const getRoleBadgeVariant = (role: RoleOption, roleEnum: UserProfile['role_enum']) => {
+    if (roleEnum === 'Super Admin') return 'default';
     switch (role) {
-      case 'Super Admin': return 'default';
-      case 'Admin': return 'secondary';
-      case 'Manager': return 'outline';
-      case 'Technician': return 'outline';
-      case 'Read-Only': return 'outline';
-      default: return 'outline';
+      case 'admin':
+        return 'secondary';
+      case 'technician':
+      case 'qc':
+        return 'outline';
+      case 'viewer':
+      default:
+        return 'outline';
     }
   };
 
@@ -133,17 +189,24 @@ export function UserManagementTable() {
     }
   };
 
-  const filteredUsers = users.filter(user =>
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (user.first_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (user.last_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    user.role.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const normalizedSearch = searchTerm.toLowerCase();
+  const filteredUsers = users.filter(user => {
+    const roleLabel = ROLE_LABELS[user.role].toLowerCase();
+    return (
+      user.email.toLowerCase().includes(normalizedSearch) ||
+      (user.first_name?.toLowerCase().includes(normalizedSearch)) ||
+      (user.last_name?.toLowerCase().includes(normalizedSearch)) ||
+      (user.full_name?.toLowerCase().includes(normalizedSearch)) ||
+      user.role.toLowerCase().includes(normalizedSearch) ||
+      roleLabel.includes(normalizedSearch)
+    );
+  });
 
   const isProtectedUser = (email: string) => email === 'jonathan@skyshare.com';
   const canEditUser = (targetUser: UserProfile) => {
+    if (isReadOnly) return false;
     if (!isAdmin()) return false;
-    if (isProtectedUser(targetUser.email) && userProfile?.email !== targetUser.email) return false;
+    if (isProtectedUser(targetUser.email) && currentProfile?.email !== targetUser.email) return false;
     return true;
   };
 
@@ -171,63 +234,129 @@ export function UserManagementTable() {
             <TableRow>
               <TableHead>User</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Access</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Login</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredUsers.map((user) => (
-              <TableRow key={user.id}>
-                <TableCell>
-                  <div>
-                    <div className="font-medium">
-                      {user.first_name && user.last_name 
-                        ? `${user.first_name} ${user.last_name}`
-                        : user.email
-                      }
+            {filteredUsers.map(user => {
+              const canModify = canEditUser(user);
+              const disableTooltip = isReadOnly && !canModify;
+              const displayRoleLabel =
+                user.role_enum === 'Super Admin'
+                  ? 'Super Admin'
+                  : ROLE_LABELS[user.role];
+
+              const roleControl = canModify ? (
+                <Select
+                  value={user.role}
+                  onValueChange={(value: RoleOption) => updateUserRole(user.user_id, value)}
+                >
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ROLE_OPTIONS.map(option => (
+                      <SelectItem key={option} value={option}>
+                        {ROLE_LABELS[option]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Badge variant={getRoleBadgeVariant(user.role, user.role_enum)}>
+                  {displayRoleLabel}
+                </Badge>
+              );
+
+              const roleCell = disableTooltip ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex cursor-not-allowed">{roleControl}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{READ_ONLY_MESSAGE}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                roleControl
+              );
+
+              const readOnlyToggle = (
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={user.is_readonly}
+                    onCheckedChange={checked => updateReadOnlyState(user.user_id, checked)}
+                    disabled={!canModify}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {user.is_readonly ? 'Read-only' : 'Write access'}
+                  </span>
+                </div>
+              );
+
+              const accessCell = disableTooltip ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex cursor-not-allowed">{readOnlyToggle}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{READ_ONLY_MESSAGE}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                readOnlyToggle
+              );
+
+              return (
+                <TableRow key={user.id}>
+                  <TableCell>
+                    <div>
+                      <div className="font-medium">
+                        {user.full_name?.trim() ||
+                          (user.first_name && user.last_name
+                            ? `${user.first_name} ${user.last_name}`
+                            : user.email)}
+                      </div>
+                      <div className="text-sm text-muted-foreground">{user.email}</div>
                     </div>
-                    <div className="text-sm text-muted-foreground">{user.email}</div>
-                  </div>
-                </TableCell>
+                  </TableCell>
+                  <TableCell>{roleCell}</TableCell>
+                  <TableCell>{accessCell}</TableCell>
                 <TableCell>
-                  {canEditUser(user) ? (
-                    <Select
-                      value={user.role}
-                      onValueChange={(value: AppRole) => updateUserRole(user.user_id, value)}
-                    >
-                      <SelectTrigger className="w-32">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Read-Only">Read-Only</SelectItem>
-                        <SelectItem value="Technician">Technician</SelectItem>
-                        <SelectItem value="Manager">Manager</SelectItem>
-                        <SelectItem value="Admin">Admin</SelectItem>
-                        {userProfile?.role === 'Super Admin' && (
-                          <SelectItem value="Super Admin">Super Admin</SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Badge variant={getRoleBadgeVariant(user.role)}>
-                      {user.role}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={user.status === 'Active'}
-                      onCheckedChange={(checked) => 
-                        updateUserStatus(user.user_id, checked ? 'Active' : 'Inactive')
-                      }
-                      disabled={!canEditUser(user)}
-                    />
-                    <span className={`text-sm ${getStatusColor(user.status)}`}>
-                      {user.status}
-                    </span>
-                  </div>
+                  {(() => {
+                    const statusControl = (
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          checked={user.status === 'Active'}
+                          onCheckedChange={(checked) =>
+                            updateUserStatus(user.user_id, checked ? 'Active' : 'Inactive')
+                          }
+                          disabled={!canModify}
+                        />
+                        <span className={`text-sm ${getStatusColor(user.status)}`}>
+                          {user.status}
+                        </span>
+                      </div>
+                    );
+
+                    if (disableTooltip) {
+                      return (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex cursor-not-allowed">{statusControl}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{READ_ONLY_MESSAGE}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      );
+                    }
+
+                    return statusControl;
+                  })()}
                 </TableCell>
                 <TableCell>
                   {user.last_login 
@@ -245,7 +374,7 @@ export function UserManagementTable() {
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem>View Permissions</DropdownMenuItem>
                       <DropdownMenuItem>Reset Password</DropdownMenuItem>
-                      {canEditUser(user) && !isProtectedUser(user.email) && (
+                      {canModify && !isProtectedUser(user.email) && (
                         <DropdownMenuItem className="text-destructive">
                           Delete User
                         </DropdownMenuItem>
@@ -253,8 +382,9 @@ export function UserManagementTable() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
-              </TableRow>
-            ))}
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
