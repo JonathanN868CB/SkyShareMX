@@ -18,21 +18,7 @@ import {
   type UserStatus,
 } from "../hooks/useUserProfiles";
 
-interface UserProfile {
-  id: string;
-  user_id: string;
-  email: string;
-  first_name?: string;
-  last_name?: string;
-  full_name?: string | null;
-  role: RoleOption;
-  role_enum: 'Super Admin' | 'Admin' | 'Manager' | 'Technician' | 'Read-Only';
-  is_readonly: boolean;
-  status: UserStatus;
-  last_login?: string;
-  created_at: string;
-  updated_at: string;
-}
+ 
 
 const ROLE_LABELS: Record<RoleOption, string> = {
   admin: 'Admin',
