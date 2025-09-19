@@ -18,28 +18,25 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const DEFAULT_SITE_URL = "https://skysharemx.com";
+const FALLBACK_DEV = "http://localhost:5173";
 
 function normalizeSiteUrl(value?: string | null) {
   if (!value) return null;
   try {
     const parsed = new URL(value);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return null;
-    }
-    return parsed.origin.replace(/\/$/, "");
+    return parsed.origin;
   } catch {
-    return null;
+    return value.trim().replace(/\/+$/, "") || null;
   }
 }
 
-function resolveSiteUrl() {
+function resolveSiteUrlFromEnv() {
   const candidates = [
     process.env.VITE_SITE_URL,
+    process.env.VITE_PUBLIC_SITE_URL,
     process.env.SITE_URL,
     process.env.URL,
-    process.env.DEPLOY_PRIME_URL,
-    process.env.VITE_PUBLIC_SITE_URL,
+    process.env.NEXT_PUBLIC_SITE_URL,
   ];
 
   for (const candidate of candidates) {
@@ -49,8 +46,10 @@ function resolveSiteUrl() {
     }
   }
 
-  return DEFAULT_SITE_URL;
+  return normalizeSiteUrl(FALLBACK_DEV)!;
 }
+
+const SITE_URL = resolveSiteUrlFromEnv();
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
@@ -164,8 +163,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
       },
     });
 
-    const siteUrl = resolveSiteUrl();
-    const inviteLink = `${siteUrl}/login`;
+    const inviteLink = `${SITE_URL}/login`;
 
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">

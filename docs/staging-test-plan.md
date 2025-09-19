@@ -3,7 +3,7 @@
 Use this runbook to validate the SkyShare-hosted staging experience **before** sending any production traffic. Every step should pass in a single test session using a clean browser profile.
 
 ## 1. Pre-checks
-1. Confirm the staging site is deployed and accessible at the Netlify preview domain (e.g. `https://skyshare-maintenance.netlify.app`) and that it no longer redirects to any `lovable.app` host.
+1. Confirm the staging site is deployed and accessible at the Netlify preview domain (e.g. `https://skyshare-maintenance.netlify.app`) and that every navigation stays on the SkyShare-controlled host (no cross-domain redirects).
 2. Verify you have access to the shared Google Workspace account that can complete an OAuth sign-in in staging.
 3. Open the Supabase project dashboard in a separate tab so you can inspect auth sessions, invitation records, and function logs without disturbing the test flow.
 
