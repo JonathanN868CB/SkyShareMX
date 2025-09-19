@@ -19,10 +19,14 @@ export type Database = {
           created_at: string
           email: string
           first_name: string | null
+          full_name: string | null
           id: string
+          is_readonly: boolean
           last_login: string | null
           last_name: string | null
-          role: Database["public"]["Enums"]["app_role"]
+          role: "admin" | "technician" | "qc" | "viewer"
+          /** @deprecated */
+          role_enum: Database["public"]["Enums"]["app_role"]
           status: Database["public"]["Enums"]["user_status"]
           updated_at: string
           user_id: string
@@ -31,10 +35,13 @@ export type Database = {
           created_at?: string
           email: string
           first_name?: string | null
+          full_name?: string | null
           id?: string
+          is_readonly?: boolean
           last_login?: string | null
           last_name?: string | null
-          role?: Database["public"]["Enums"]["app_role"]
+          role?: "admin" | "technician" | "qc" | "viewer"
+          role_enum?: Database["public"]["Enums"]["app_role"]
           status?: Database["public"]["Enums"]["user_status"]
           updated_at?: string
           user_id: string
@@ -43,13 +50,46 @@ export type Database = {
           created_at?: string
           email?: string
           first_name?: string | null
+          full_name?: string | null
           id?: string
+          is_readonly?: boolean
           last_login?: string | null
           last_name?: string | null
-          role?: Database["public"]["Enums"]["app_role"]
+          role?: "admin" | "technician" | "qc" | "viewer"
+          role_enum?: Database["public"]["Enums"]["app_role"]
           status?: Database["public"]["Enums"]["user_status"]
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      access_requests: {
+        Row: {
+          company: string | null
+          created_at: string
+          email: string
+          full_name: string | null
+          id: string
+          reason: string | null
+          status: "new" | "approved" | "rejected" | "closed"
+        }
+        Insert: {
+          company?: string | null
+          created_at?: string
+          email: string
+          full_name?: string | null
+          id?: string
+          reason?: string | null
+          status?: "new" | "approved" | "rejected" | "closed"
+        }
+        Update: {
+          company?: string | null
+          created_at?: string
+          email?: string
+          full_name?: string | null
+          id?: string
+          reason?: string | null
+          status?: "new" | "approved" | "rejected" | "closed"
         }
         Relationships: []
       }

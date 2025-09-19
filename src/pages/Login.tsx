@@ -1,46 +1,78 @@
-import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  DEV_HOSTS,
+  consumeDomainDeniedMessage,
+  enableDevBypass,
+  getPublicSiteUrl,
+  isDevBypassActive,
+  isDevEnvironment,
+  rememberReturnTo,
+  sanitizeReturnTo,
+} from "@/lib/env";
 
 export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  const [devBypass, setDevBypass] = useState(false);
+  const [domainDeniedMessage, setDomainDeniedMessage] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
-  // Check if we're in development mode with multiple fallbacks
-  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-  
-  // Log environment info for debugging
+  const safeReturnTo = useMemo(() => {
+    const sanitized = sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo"));
+    if (sanitized && sanitized.startsWith("/app")) {
+      return sanitized;
+    }
+    return null;
+  }, [location.search]);
+
+  const isDev = isDevEnvironment();
+  const devBypassActive = isDevBypassActive();
+
   console.log("🔧 Login: Environment check", {
     DEV: import.meta.env.DEV,
     MODE: import.meta.env.MODE,
-    hostname: window.location.hostname,
-    isDev
+    hostname: typeof window !== "undefined" ? window.location.hostname : "server",
+    isDev,
+    devBypassActive,
+    devHosts: DEV_HOSTS,
   });
+
+  useEffect(() => {
+    rememberReturnTo(safeReturnTo);
+  }, [safeReturnTo]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.top && window.top !== window.self) {
+      const target = `${getPublicSiteUrl()}${window.location.pathname}${window.location.search}`;
+      window.top.location.href = target;
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    // Listen first so we don't miss events
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("🔔 Login: Auth state changed:", event, session?.user?.email || "no user");
       setEmail(session?.user?.email ?? null);
-      if (event === 'SIGNED_IN' && mounted) {
+      if (event === "SIGNED_IN" && mounted) {
         console.log("✅ Login: Detected signed in, navigating to home");
-        navigate('/', { replace: true });
+        navigate("/app", { replace: true });
       }
     });
 
-    // Then check for existing session
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       const e = data.session?.user?.email ?? null;
       setEmail(e);
       if (data.session) {
         console.log("✅ Login: Existing session found, navigating to home");
-        navigate('/', { replace: true });
+        navigate("/app", { replace: true });
       }
     });
 
@@ -50,15 +82,24 @@ export default function Login() {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    const message = consumeDomainDeniedMessage();
+    if (message) {
+      setDomainDeniedMessage(message);
+    }
+  }, []);
+
   const handleGoogleLogin = async () => {
     console.log("🚀 Login: Starting Google OAuth flow");
     setErrMsg(null);
     setRedirecting(true);
 
-    const redirectUrl = window.location.origin + "/auth/callback";
+    const siteUrl = getPublicSiteUrl();
+    const redirectUrl =
+      `${siteUrl}/auth/callback` + (safeReturnTo ? `?returnTo=${encodeURIComponent(safeReturnTo)}` : "");
     console.log("🔄 Login: Using redirect URL:", redirectUrl);
 
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: redirectUrl,
@@ -73,15 +114,13 @@ export default function Login() {
       return;
     }
 
-    // Simple redirect approach - works great in new tabs
     console.log("🔄 Login: Redirecting to Google OAuth");
   };
 
   const handleDevBypass = () => {
     console.log("🚧 Login: Development bypass - navigating to dashboard");
-    setDevBypass(true);
-    localStorage.setItem('dev-bypass', 'true');
-    navigate('/', { replace: true });
+    enableDevBypass();
+    navigate("/app", { replace: true });
   };
 
   return (
@@ -101,14 +140,13 @@ export default function Login() {
             </p>
           </div>
 
-          {/* Already signed in state */}
           {email && (
             <div className="mb-4 p-3 bg-muted rounded-lg text-center">
               <p className="text-sm text-muted-foreground mb-2">
                 You're already signed in as <span className="font-medium">{email}</span>
               </p>
               <button
-                onClick={() => navigate("/")}
+                onClick={() => navigate("/app")}
                 className="text-primary hover:underline text-sm font-medium"
               >
                 Go to Dashboard
@@ -116,12 +154,17 @@ export default function Login() {
             </div>
           )}
 
-          {/* Google login button - hidden in dev bypass */}
-          {!(isDev && localStorage.getItem('dev-bypass') === 'true') && (
+          {domainDeniedMessage && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {domainDeniedMessage}
+            </div>
+          )}
+
+          {!devBypassActive && (
             <button
               onClick={handleGoogleLogin}
               disabled={redirecting}
-              className="w-full bg-google-red hover:bg-google-red-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3 mb-3"
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-3 mb-3"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path
@@ -145,7 +188,13 @@ export default function Login() {
             </button>
           )}
 
-          {/* Development bypass button - enhanced visibility */}
+          <div className="mt-4 text-center text-sm text-muted-foreground">
+            Don't have access yet?{' '}
+            <Link to="/request-access" className="text-primary font-medium hover:underline">
+              Request access
+            </Link>
+          </div>
+
           {isDev && (
             <button
               onClick={handleDevBypass}
@@ -155,20 +204,19 @@ export default function Login() {
               <span>Skip Login (Development)</span>
             </button>
           )}
-          
-          {/* Manual bypass info for debugging */}
+
           {isDev && (
             <div className="mt-2 text-xs text-muted-foreground text-center">
               Console bypass: <code>localStorage.setItem('dev-bypass', 'true')</code>
             </div>
           )}
-          
+
           {errMsg && (
             <div className="mt-2 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
               <div className="text-sm text-destructive">{errMsg}</div>
               {errMsg.includes("iframe") || errMsg.includes("blocked") ? (
                 <button
-                  onClick={() => window.open(window.location.href, '_blank')}
+                  onClick={() => window.open(window.location.href, "_blank")}
                   className="mt-2 text-xs text-primary hover:underline"
                 >
                   Try opening in a new tab

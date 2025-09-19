@@ -11,6 +11,9 @@ import UserManagement from "./pages/UserManagement";
 import UnderConstructionPage from "./pages/UnderConstructionPage";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import Index from "./pages/Index";
+import RequestAccess from "./pages/RequestAccess";
+import { PublicLayout } from "./components/public/PublicLayout";
 
 
 
@@ -21,18 +24,25 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            {/* Auth routes - standalone */}
+            <Route path="/" element={<PublicLayout />}>
+              <Route index element={<Index />} />
+              <Route path="request-access" element={<RequestAccess />} />
+            </Route>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
-            
-            {/* Main app routes with layout */}
-            <Route path="/" element={<Layout />}>
-              <Route index element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-              <Route path="admin/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
-              <Route path="under-construction" element={<ProtectedRoute><UnderConstructionPage /></ProtectedRoute>} />
+            <Route
+              path="/app"
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Dashboard />} />
+              <Route path="admin/users" element={<UserManagement />} />
+              <Route path="under-construction" element={<UnderConstructionPage />} />
+              <Route path="*" element={<NotFound />} />
             </Route>
-            
-            {/* 404 catch-all */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

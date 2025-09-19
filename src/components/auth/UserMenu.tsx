@@ -7,19 +7,26 @@ export default function UserMenu() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    let mounted = true;
+    let isMounted = true;
     supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setEmail(data.session?.user?.email ?? null);
+      if (isMounted) {
+        setEmail(data.session?.user?.email ?? null);
+      }
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setEmail(session?.user?.email ?? null);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) {
+        setEmail(session?.user?.email ?? null);
+      }
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const onLogout = async () => {
     await supabase.auth.signOut();
-    navigate("/login", { replace: true });
+    navigate("/", { replace: true });
   };
 
   return (

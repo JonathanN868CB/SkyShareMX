@@ -1,34 +1,48 @@
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { popReturnToFromStorage, sanitizeReturnTo } from "@/lib/env";
 
 export default function AuthCallback() {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const queryReturnTo = useMemo(
+    () => sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo")),
+    [location.search],
+  );
 
   useEffect(() => {
     let mounted = true;
+    const storedReturnTo = popReturnToFromStorage();
+    const preferredReturnTo = queryReturnTo ?? storedReturnTo;
+    const targetPath = preferredReturnTo && preferredReturnTo.startsWith("/app")
+      ? preferredReturnTo
+      : "/app";
 
     const handleAuthCallback = async () => {
       console.log("🔄 AuthCallback: Processing auth callback");
 
       try {
-        // Wait a moment for the session to be established
         await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         const { data: sessionData } = await supabase.auth.getSession();
-        console.log("📋 AuthCallback: Session check:", sessionData.session ? "✅ Found" : "❌ None");
+        console.log(
+          "📋 AuthCallback: Session check:",
+          sessionData.session ? "✅ Found" : "❌ None",
+        );
 
         if (sessionData.session && mounted) {
           console.log("✅ AuthCallback: Authentication successful, redirecting");
-          navigate('/', { replace: true });
+          navigate(targetPath, { replace: true });
         } else {
           console.log("❌ AuthCallback: No session found, redirecting to login");
-          navigate('/login', { replace: true });
+          navigate("/login", { replace: true });
         }
       } catch (error) {
         console.error("❌ AuthCallback: Error:", error);
         if (mounted) {
-          navigate('/login', { replace: true });
+          navigate("/login", { replace: true });
         }
       }
     };
@@ -38,7 +52,7 @@ export default function AuthCallback() {
     return () => {
       mounted = false;
     };
-  }, [navigate]);
+  }, [navigate, queryReturnTo]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
