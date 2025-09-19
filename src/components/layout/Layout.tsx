@@ -2,8 +2,11 @@ import { Outlet } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { Topbar } from "./Topbar";
+import { useReadOnly } from "@/hooks/useUserPermissions";
 
 export function Layout() {
+  const isReadOnly = useReadOnly();
+
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
@@ -15,6 +18,11 @@ export function Layout() {
               <Topbar />
             </div>
           </header>
+          {isReadOnly && (
+            <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 text-sm text-amber-900">
+              Your account is read-only. Ask an admin to upgrade your access.
+            </div>
+          )}
           <main className="flex-1 p-6 bg-background">
             <Outlet />
           </main>
