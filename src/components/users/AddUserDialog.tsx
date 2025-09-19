@@ -28,6 +28,7 @@ type AddUserFormData = z.infer<typeof addUserSchema>;
 
 interface AddUserDialogProps {
   onUserAdded: () => void;
+  disabled?: boolean;
 }
 
 type SendInvitationResponse = {
@@ -36,7 +37,7 @@ type SendInvitationResponse = {
   error?: string;
 };
 
-export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
+export function AddUserDialog({ onUserAdded, disabled = false }: AddUserDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -51,6 +52,7 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
   });
 
   const onSubmit = async (formData: AddUserFormData) => {
+    if (disabled) return;
     setIsLoading(true);
     try {
       const response = await fetch(INVITE_FUNCTION_URL, {
@@ -108,10 +110,15 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
     }
   };
 
+  const handleOpenChange = (next: boolean) => {
+    if (disabled && next) return;
+    setOpen(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button className="flex items-center space-x-2">
+        <Button className="flex items-center space-x-2" disabled={disabled}>
           <Plus className="h-4 w-4" />
           <span>Add User</span>
         </Button>
@@ -190,7 +197,7 @@ export function AddUserDialog({ onUserAdded }: AddUserDialogProps) {
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isLoading}>
+              <Button type="submit" disabled={isLoading || disabled}>
                 {isLoading ? "Sending Invitation..." : "Send Invitation"}
               </Button>
             </div>

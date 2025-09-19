@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { 
   Home, 
@@ -33,52 +33,49 @@ const sidebarSections = [
     title: "Overview",
     permission: "Overview" as const,
     items: [
-      { name: "Dashboard", path: "/", icon: Home },
-      { name: "Aircraft Info", path: "/under-construction", icon: Plane },
+      { name: "Dashboard", path: "/app", icon: Home, exact: true },
+      { name: "Aircraft Info", path: "/app/under-construction", icon: Plane },
     ],
   },
   {
     title: "Operations",
     permission: "Operations" as const,
     items: [
-      { name: "Aircraft Conformity", path: "/under-construction", icon: CheckSquare },
-      { name: "14-Day Check", path: "/under-construction", icon: Calendar },
-      { name: "Maintenance Planning", path: "/under-construction", icon: ClipboardList },
-      { name: "Ten or More", path: "/under-construction", icon: Wrench },
-      { name: "Maintenance Control", path: "/under-construction", icon: Settings },
-      { name: "Projects", path: "/under-construction", icon: FolderOpen },
-      { name: "Training", path: "/under-construction", icon: BookOpen },
-      { name: "Docs and Links", path: "/under-construction", icon: FileText },
+      { name: "Aircraft Conformity", path: "/app/under-construction", icon: CheckSquare },
+      { name: "14-Day Check", path: "/app/under-construction", icon: Calendar },
+      { name: "Maintenance Planning", path: "/app/under-construction", icon: ClipboardList },
+      { name: "Ten or More", path: "/app/under-construction", icon: Wrench },
+      { name: "Maintenance Control", path: "/app/under-construction", icon: Settings },
+      { name: "Projects", path: "/app/under-construction", icon: FolderOpen },
+      { name: "Training", path: "/app/under-construction", icon: BookOpen },
+      { name: "Docs and Links", path: "/app/under-construction", icon: FileText },
     ],
   },
   {
     title: "Administration",
     permission: "Administration" as const,
     items: [
-      { name: "Alerts & Notifications", path: "/under-construction", icon: Bell },
-      { name: "Users", path: "/admin/users", icon: Users },
-      { name: "Settings", path: "/under-construction", icon: Settings },
+      { name: "Alerts & Notifications", path: "/app/under-construction", icon: Bell },
+      { name: "Users", path: "/app/admin/users", icon: Users },
+      { name: "Settings", path: "/app/under-construction", icon: Settings },
     ],
   },
   {
     title: "Development",
     permission: "Development" as const,
     items: [
-      { name: "Style Guide", path: "/under-construction", icon: Palette },
+      { name: "Style Guide", path: "/app/under-construction", icon: Palette },
     ],
   },
 ];
 
 export function AppSidebar() {
   const { state } = useSidebar();
-  const location = useLocation();
-  const currentPath = location.pathname;
   const { hasPermission, loading } = useUserPermissions();
 
-  const isActive = (path: string) => currentPath === path;
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
-    isActive 
-      ? "bg-sidebar-active text-white font-medium" 
+    isActive
+      ? "bg-sidebar-active text-white font-medium"
       : "text-sidebar-foreground hover:bg-sidebar-hover";
 
   const shouldShowSection = (section: typeof sidebarSections[0]) => {
@@ -133,6 +130,7 @@ export function AppSidebar() {
                           <NavLink
                             to={item.path}
                             className={getNavCls}
+                            end={Boolean(item.exact)}
                           >
                             <item.icon className="w-4 h-4 flex-shrink-0" />
                             {state !== "collapsed" && (

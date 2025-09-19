@@ -15,7 +15,10 @@ export default function AuthCallback() {
   useEffect(() => {
     let mounted = true;
     const storedReturnTo = popReturnToFromStorage();
-    const targetPath = queryReturnTo ?? storedReturnTo ?? "/";
+    const preferredReturnTo = queryReturnTo ?? storedReturnTo;
+    const targetPath = preferredReturnTo && preferredReturnTo.startsWith("/app")
+      ? preferredReturnTo
+      : "/app";
 
     const handleAuthCallback = async () => {
       console.log("🔄 AuthCallback: Processing auth callback");

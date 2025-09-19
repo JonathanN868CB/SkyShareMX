@@ -26,7 +26,7 @@ export default function UserMenu() {
 
   const onLogout = async () => {
     await supabase.auth.signOut();
-    navigate("/login", { replace: true });
+    navigate("/", { replace: true });
   };
 
   return (
