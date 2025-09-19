@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { popReturnToFromStorage, sanitizeReturnTo } from "@/lib/env";
+import { supabase } from "@/shared/lib/api";
+import { popReturnToFromStorage, sanitizeReturnTo } from "@/shared/lib/env";
 
 export default function AuthCallback() {
   const navigate = useNavigate();
