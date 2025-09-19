@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   DEV_HOSTS,
+  consumeDomainDeniedMessage,
   enableDevBypass,
   getPublicSiteUrl,
   isDevBypassActive,
@@ -15,13 +16,17 @@ export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [domainDeniedMessage, setDomainDeniedMessage] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
-  const safeReturnTo = useMemo(
-    () => sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo")),
-    [location.search],
-  );
+  const safeReturnTo = useMemo(() => {
+    const sanitized = sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo"));
+    if (sanitized && sanitized.startsWith("/app")) {
+      return sanitized;
+    }
+    return null;
+  }, [location.search]);
 
   const isDev = isDevEnvironment();
   const devBypassActive = isDevBypassActive();
@@ -57,7 +62,7 @@ export default function Login() {
       setEmail(session?.user?.email ?? null);
       if (event === "SIGNED_IN" && mounted) {
         console.log("✅ Login: Detected signed in, navigating to home");
-        navigate("/", { replace: true });
+        navigate("/app", { replace: true });
       }
     });
 
@@ -67,7 +72,7 @@ export default function Login() {
       setEmail(e);
       if (data.session) {
         console.log("✅ Login: Existing session found, navigating to home");
-        navigate("/", { replace: true });
+        navigate("/app", { replace: true });
       }
     });
 
@@ -76,6 +81,13 @@ export default function Login() {
       subscription.unsubscribe();
     };
   }, [navigate]);
+
+  useEffect(() => {
+    const message = consumeDomainDeniedMessage();
+    if (message) {
+      setDomainDeniedMessage(message);
+    }
+  }, []);
 
   const handleGoogleLogin = async () => {
     console.log("🚀 Login: Starting Google OAuth flow");
@@ -108,7 +120,7 @@ export default function Login() {
   const handleDevBypass = () => {
     console.log("🚧 Login: Development bypass - navigating to dashboard");
     enableDevBypass();
-    navigate("/", { replace: true });
+    navigate("/app", { replace: true });
   };
 
   return (
@@ -134,11 +146,17 @@ export default function Login() {
                 You're already signed in as <span className="font-medium">{email}</span>
               </p>
               <button
-                onClick={() => navigate("/")}
+                onClick={() => navigate("/app")}
                 className="text-primary hover:underline text-sm font-medium"
               >
                 Go to Dashboard
               </button>
+            </div>
+          )}
+
+          {domainDeniedMessage && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {domainDeniedMessage}
             </div>
           )}
 
@@ -169,6 +187,13 @@ export default function Login() {
               <span>{redirecting ? "Signing you in…" : "Continue with Google"}</span>
             </button>
           )}
+
+          <div className="mt-4 text-center text-sm text-muted-foreground">
+            Don't have access yet?{' '}
+            <Link to="/request-access" className="text-primary font-medium hover:underline">
+              Request access
+            </Link>
+          </div>
 
           {isDev && (
             <button

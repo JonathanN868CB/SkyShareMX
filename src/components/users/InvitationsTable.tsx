@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Trash2, RefreshCw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useReadOnly } from "@/hooks/useUserPermissions";
 
 interface UserInvitation {
   id: string;
@@ -34,6 +36,8 @@ export function InvitationsTable({ refreshKey }: InvitationsTableProps) {
   const [invitations, setInvitations] = useState<UserInvitation[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+  const isReadOnly = useReadOnly();
+  const readOnlyMessage = "Your account is read-only. Ask an admin to upgrade your access.";
 
   const fetchInvitations = async () => {
     try {
@@ -186,14 +190,34 @@ export function InvitationsTable({ refreshKey }: InvitationsTableProps) {
                   : formatDistanceToNow(new Date(invitation.created_at), { addSuffix: true })}
               </TableCell>
               <TableCell>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => deleteInvitation(invitation.id)}
-                  className="text-destructive hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                {isReadOnly ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled
+                            className="text-destructive/50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{readOnlyMessage}</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => deleteInvitation(invitation.id)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
               </TableCell>
             </TableRow>
           ))}
