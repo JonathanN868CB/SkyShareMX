@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/shared/lib/api";
 import {
   DEV_HOSTS,
   consumeDomainDeniedMessage,
@@ -10,7 +10,7 @@ import {
   isDevEnvironment,
   rememberReturnTo,
   sanitizeReturnTo,
-} from "@/lib/env";
+} from "@/shared/lib/env";
 
 export default function Login() {
   const [redirecting, setRedirecting] = useState(false);
