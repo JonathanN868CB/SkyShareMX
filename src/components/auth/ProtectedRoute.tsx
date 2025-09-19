@@ -1,21 +1,23 @@
 import { useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { enableDevBypass, isDevBypassActive, isDevEnvironment, rememberReturnTo } from "@/lib/env";
 
 export default function ProtectedRoute({ children }: { children: JSX.Element }) {
-  const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-  const initialBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
+  const isDev = isDevEnvironment();
+  const initialBypass = isDevBypassActive();
+  const location = useLocation();
 
   const [loading, setLoading] = useState(!initialBypass);
   const [hasSession, setHasSession] = useState(initialBypass);
 
   useEffect(() => {
     // Check if we're in development mode with multiple fallbacks (same logic as Login)
-    const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development' || window.location.hostname === 'localhost' || window.location.hostname.includes('lovable.app');
-    const devBypass = isDev && localStorage.getItem('dev-bypass') === 'true';
-    
+    const isDev = isDevEnvironment();
+    const devBypass = isDevBypassActive();
+
     console.log("🔒 ProtectedRoute: Dev check", { isDev, devBypass, hostname: window.location.hostname });
-    
+
     if (devBypass) {
       console.log("🚧 ProtectedRoute: Dev bypass active, allowing access");
       setHasSession(true);
@@ -28,9 +30,11 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
         setHasSession(true);
         setLoading(false);
       } else {
+        const intendedPath = `${location.pathname}${location.search}${location.hash}`;
+        rememberReturnTo(intendedPath);
         if (isDev) {
           console.log("🚧 ProtectedRoute: No session in preview/dev, enabling dev bypass automatically");
-          localStorage.setItem('dev-bypass', 'true');
+          enableDevBypass();
           setHasSession(true);
           setLoading(false);
         } else {
@@ -39,7 +43,7 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
         }
       }
     });
-  }, []);
+  }, [location.hash, location.pathname, location.search]);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   if (!hasSession) return <Navigate to="/login" replace />;
