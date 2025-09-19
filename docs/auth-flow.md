@@ -61,10 +61,11 @@ update profiles
 ## Environment configuration checklist
 - `VITE_ADMIN_EMAILS`: Comma-separated admin allow-list (used in the browser and Netlify builds).
 - `VITE_ACCESS_REQUEST_FUNCTION_URL` (optional): Override the Netlify function location if the default path changes.
+- `VITE_LOVABLE_EDIT_ENABLED`: Leave `false` for production; set to `true` only on Lovable preview domains to expose the editor overlay.
 - `RESEND_API_KEY`: Server-side secret for Resend.
 - `ACCESS_NOTIF_FROM`: Verified sender for access notifications (e.g. `noreply@skysharemx.com`).
 - `ACCESS_NOTIF_TO`: Distribution list for access requests (e.g. `jonathan@skyshare.com`).
-- `SITE_URL` / `VITE_PUBLIC_SITE_URL`: Ensure OAuth callbacks and email links resolve to the deployed domain.
+- `SITE_URL` / `VITE_SITE_URL` / `VITE_PUBLIC_SITE_URL`: Ensure OAuth callbacks and email links resolve to the deployed domain.
 
 ## Manual QA playbook
 1. **SkyShare login** – Sign in with an `@skyshare.com` account, confirm the profile is auto-created as a read-only viewer

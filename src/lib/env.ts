@@ -1,5 +1,5 @@
 const DEFAULT_DEV_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"] as const;
-const DEFAULT_SITE_URL = "https://skyshare-maintenance.netlify.app";
+const DEFAULT_SITE_URL = "https://skysharemx.com";
 const RETURN_TO_STORAGE_KEY = "skyshare:returnTo";
 const DOMAIN_DENIED_MESSAGE_KEY = "auth:domainDeniedMessage";
 
@@ -67,35 +67,6 @@ function normalizeOrigin(value?: string | null) {
   }
 }
 
-function resolveEnvPublicSiteUrl() {
-  const browserValue = normalizeOrigin(import.meta.env.VITE_PUBLIC_SITE_URL);
-
-  if (browserValue) {
-    return browserValue;
-  }
-
-  if (typeof process !== "undefined" && process.env) {
-    const envValue =
-      normalizeOrigin(process.env.VITE_PUBLIC_SITE_URL) ??
-      normalizeOrigin(process.env.SITE_URL) ??
-      normalizeOrigin(process.env.URL) ??
-      normalizeOrigin(process.env.NEXT_PUBLIC_SITE_URL);
-
-    if (envValue) {
-      return envValue;
-    }
-  }
-
-  return undefined;
-}
-
-export function getPublicSiteUrl() {
-  if (typeof window !== "undefined") {
-    return resolveEnvPublicSiteUrl() ?? window.location.origin;
-  }
-  return resolveEnvPublicSiteUrl() ?? DEFAULT_SITE_URL;
-}
-
 export function sanitizeReturnTo(raw?: string | null): string | null {
   if (!raw) return null;
   try {
@@ -146,6 +117,44 @@ function readEnvValue(key: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function resolveEnvSiteUrl() {
+  const candidates = [
+    readEnvValue("VITE_SITE_URL"),
+    readEnvValue("VITE_PUBLIC_SITE_URL"),
+    readEnvValue("SITE_URL"),
+    readEnvValue("URL"),
+    readEnvValue("NEXT_PUBLIC_SITE_URL"),
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeOrigin(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return undefined;
+}
+
+export const SITE_URL =
+  resolveEnvSiteUrl() ??
+  (typeof window !== "undefined" ? window.location.origin : undefined) ??
+  DEFAULT_SITE_URL;
+
+export const LOVABLE_EDIT_ENABLED =
+  String(readEnvValue("VITE_LOVABLE_EDIT_ENABLED") ?? "false").toLowerCase() === "true";
+
+export const IS_LOVABLE_HOST =
+  typeof window !== "undefined" && /\.lovable\.app$/i.test(window.location.hostname);
+
+export function shouldAllowLovableOverlay(): boolean {
+  return LOVABLE_EDIT_ENABLED && IS_LOVABLE_HOST;
+}
+
+export function getPublicSiteUrl() {
+  return SITE_URL;
 }
 
 export function getAdminEmails(): string[] {
