@@ -18,7 +18,7 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const DEFAULT_SITE_URL = "https://skyshare-maintenance.netlify.app";
+const DEFAULT_SITE_URL = "https://skysharemx.com";
 
 function normalizeSiteUrl(value?: string | null) {
   if (!value) return null;
@@ -34,12 +34,22 @@ function normalizeSiteUrl(value?: string | null) {
 }
 
 function resolveSiteUrl() {
-  return (
-    normalizeSiteUrl(process.env.SITE_URL) ??
-    normalizeSiteUrl(process.env.VITE_PUBLIC_SITE_URL) ??
-    normalizeSiteUrl(process.env.URL) ??
-    DEFAULT_SITE_URL
-  );
+  const candidates = [
+    process.env.VITE_SITE_URL,
+    process.env.SITE_URL,
+    process.env.URL,
+    process.env.DEPLOY_PRIME_URL,
+    process.env.VITE_PUBLIC_SITE_URL,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeSiteUrl(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return DEFAULT_SITE_URL;
 }
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {

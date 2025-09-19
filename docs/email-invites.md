@@ -14,7 +14,7 @@ Set these variables in Netlify (Site settings → Build & deploy → Environment
 
 - `SUPABASE_URL` – Supabase project REST endpoint.
 - `SUPABASE_SERVICE_ROLE_KEY` – Service role key used to insert invitation rows.
-- `SITE_URL` – Public base URL used in the invitation link (e.g. `https://skyshare-maintenance.netlify.app`).
+- `SITE_URL` – Public base URL used in the invitation link (e.g. `https://skysharemx.com`).
 - `SMTP_HOST` – SMTP host for the SkyShare mailbox.
 - `SMTP_PORT` – Port accepted by the SMTP host (usually `587`).
 - `SMTP_USER` – Authenticated mailbox (`jonathan@skyshare.com`).
