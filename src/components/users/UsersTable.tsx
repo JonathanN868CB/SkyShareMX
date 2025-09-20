@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { Loader2, Trash2, Users as UsersIcon } from "lucide-react";
 
 import type { EmploymentStatus, Role, UserSummary } from "@/lib/types/users";
@@ -40,6 +41,11 @@ interface UsersTableProps {
   deletingUserId?: string | null;
   onPageChange?: (page: number) => void;
   onRetry?: () => void;
+  headerTitle?: string;
+  headerDescription?: string;
+  headerActions?: ReactNode;
+  filters?: ReactNode;
+  className?: string;
 }
 
 function getInitials(name: string) {
@@ -66,6 +72,11 @@ export function UsersTable({
   deletingUserId,
   onPageChange,
   onRetry,
+  headerTitle = "Team roster",
+  headerDescription = "Manage access across administrators, managers, technicians, and viewers.",
+  headerActions,
+  filters,
+  className,
 }: UsersTableProps) {
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
 
@@ -83,15 +94,15 @@ export function UsersTable({
   const showEmptyState = !loading && users.length === 0;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+    <div className={cn("overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm", className)}>
+      <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Team roster</h2>
-          <p className="text-sm text-slate-500">Manage access across administrators, managers, technicians, and viewers.</p>
+          <h2 className="text-lg font-semibold text-slate-900">{headerTitle}</h2>
+          <p className="text-sm text-slate-600">{headerDescription}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3 text-sm">
           {refreshing && (
-            <span className="inline-flex items-center gap-2 text-sm text-slate-500">
+            <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-600">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Refreshing
             </span>
           )}
@@ -100,11 +111,13 @@ export function UsersTable({
               Mock data
             </span>
           )}
+          {headerActions}
         </div>
       </div>
-      <div className="overflow-x-auto">
+      {filters && <div className="border-b border-slate-200 bg-slate-50/60 px-6 py-4">{filters}</div>}
+      <div className="overflow-x-auto px-6 pb-6 pt-4">
         <table className="min-w-full border-collapse text-left text-sm">
-          <thead className="sticky top-0 z-10 bg-white">
+          <thead className="bg-white">
             <tr className="h-12 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <th scope="col" className="px-6 py-0">User</th>
               <th scope="col" className="px-4 py-0">Role</th>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
+import { AddUserModal } from "@/components/users/AddUserModal";
 import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 import { UsersFilters } from "@/components/users/UsersFilters";
 import { UsersTable } from "@/components/users/UsersTable";
@@ -8,7 +9,6 @@ import { deleteUser } from "@/lib/usersClient";
 import { getMockUsers, listUsers, updateEmploymentStatus, updateUserRole } from "@/lib/api/users";
 import type { EmploymentStatus, Role, UsersListResponse, UserSummary, UsersQuery } from "@/lib/types/users";
 import { Button } from "@/shared/ui/button";
-import { cn } from "@/shared/lib/utils";
 import { toast as notify } from "@/hooks/use-toast";
 import { toast as sonnerToast } from "@/shared/ui/sonner";
 
@@ -30,18 +30,8 @@ export default function UsersPage() {
 
   const [pendingRoles, setPendingRoles] = useState<Set<string>>(new Set());
   const [pendingStatuses, setPendingStatuses] = useState<Set<string>>(new Set());
-  const [headerElevated, setHeaderElevated] = useState(false);
   const [roleDefaultsOpen, setRoleDefaultsOpen] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setHeaderElevated(window.scrollY > 0);
-    };
-    handleScroll();
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
 
   const buildQuery = useCallback((): UsersQuery => ({
     search: search.trim() || undefined,
@@ -101,6 +91,7 @@ export default function UsersPage() {
 
   const pendingRoleIds = useMemo(() => Array.from(pendingRoles), [pendingRoles]);
   const pendingStatusIds = useMemo(() => Array.from(pendingStatuses), [pendingStatuses]);
+  const hasSuperAdmin = useMemo(() => lockedUserIds.length > 0, [lockedUserIds]);
 
   const handleRoleChange = async (userId: string, nextRole: Role) => {
     if (mockMode) {
@@ -193,45 +184,57 @@ export default function UsersPage() {
     await loadUsers(buildQuery(), { refresh: true });
   };
 
-  const headerClass = cn(
-    "sticky top-0 z-10 -mx-6 mb-4 flex flex-col gap-2 border-b border-slate-200 bg-white/95 px-6 py-6 backdrop-blur",
-    headerElevated && "shadow-sm",
+  const disableControls = loading && users.length === 0;
+
+  const filters = (
+    <UsersFilters
+      search={search}
+      role={roleFilter}
+      status={statusFilter}
+      onSearchChange={value => {
+        setSearch(value);
+        setPage(1);
+      }}
+      onRoleChange={value => {
+        setRoleFilter(value);
+        setPage(1);
+      }}
+      onStatusChange={value => {
+        setStatusFilter(value);
+        setPage(1);
+      }}
+      disabled={disableControls}
+    />
+  );
+
+  const headerActions = (
+    <div className="flex flex-wrap items-center justify-end gap-3">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => setRoleDefaultsOpen(true)}
+        className="h-10 rounded-full border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-100"
+      >
+        Role Defaults
+      </Button>
+      <AddUserModal
+        onSuccess={handleRefresh}
+        disabled={disableControls}
+        mockMode={mockMode}
+        hasSuperAdmin={hasSuperAdmin}
+      />
+    </div>
   );
 
   return (
-    <div className="flex flex-col gap-6 text-slate-900">
-      <header className={headerClass}>
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Users</h1>
-          <p className="mt-2 text-base text-slate-600">Invite teammates, update roles, and manage employment status.</p>
-        </div>
-        <div className="flex items-center pt-4">
-          <span className="text-sm font-medium uppercase tracking-wide text-slate-500">Directory</span>
-        </div>
-        <div className="pt-4">
-          <UsersFilters
-            search={search}
-            role={roleFilter}
-            status={statusFilter}
-            onSearchChange={value => {
-              setSearch(value);
-              setPage(1);
-            }}
-            onRoleChange={value => {
-              setRoleFilter(value);
-              setPage(1);
-            }}
-            onStatusChange={value => {
-              setStatusFilter(value);
-              setPage(1);
-            }}
-            disabled={loading && users.length === 0}
-          />
-        </div>
-      </header>
+    <div className="space-y-8 text-slate-900">
+      <div className="space-y-2">
+        <h1 className="text-3xl font-semibold tracking-tight text-slate-900">User Management</h1>
+        <p className="text-base text-slate-600">Manage user access, roles, and permissions.</p>
+      </div>
 
       {mockMode && !mockBannerDismissed && (
-        <div className="flex flex-wrap items-start justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50/80 px-5 py-4 text-sm text-amber-900">
           <div className="space-y-1">
             <p className="font-semibold">Mock data only</p>
             <p className="text-amber-800">Live API requests failed. You can keep exploring but changes will not persist.</p>
@@ -268,13 +271,11 @@ export default function UsersPage() {
           window.scrollTo({ top: 0, behavior: "smooth" });
         }}
         onRetry={handleRefresh}
+        headerTitle="Users"
+        headerDescription="Invite teammates, update roles, and manage employment status."
+        headerActions={headerActions}
+        filters={filters}
       />
-
-      <div className="flex items-center justify-end">
-        <Button type="button" variant="outline" onClick={() => setRoleDefaultsOpen(true)} className="border-slate-200 text-slate-700">
-          Role defaults
-        </Button>
-      </div>
 
       <RoleDefaultsModal open={roleDefaultsOpen} onOpenChange={setRoleDefaultsOpen} />
     </div>
