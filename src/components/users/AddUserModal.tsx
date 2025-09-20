@@ -90,7 +90,7 @@ export function AddUserModal({ onSuccess, disabled = false, mockMode = false, ha
       <DialogTrigger asChild>
         <Button
           type="button"
-          className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled}
         >
           <Plus className="h-4 w-4" aria-hidden />
