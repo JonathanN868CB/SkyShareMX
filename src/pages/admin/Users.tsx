@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
-import { AddUserModal } from "@/components/users/AddUserModal";
 import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 import { UsersFilters } from "@/components/users/UsersFilters";
 import { UsersTable } from "@/components/users/UsersTable";
+import { deleteUser } from "@/lib/usersClient";
 import { getMockUsers, listUsers, updateEmploymentStatus, updateUserRole } from "@/lib/api/users";
 import type { EmploymentStatus, Role, UsersListResponse, UserSummary, UsersQuery } from "@/lib/types/users";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/utils";
-import { toast } from "@/hooks/use-toast";
+import { toast as notify } from "@/hooks/use-toast";
+import { toast as sonnerToast } from "@/shared/ui/sonner";
 
 const PER_PAGE = 50;
 
@@ -31,6 +32,7 @@ export default function UsersPage() {
   const [pendingStatuses, setPendingStatuses] = useState<Set<string>>(new Set());
   const [headerElevated, setHeaderElevated] = useState(false);
   const [roleDefaultsOpen, setRoleDefaultsOpen] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -73,7 +75,7 @@ export default function UsersPage() {
       applyResponse(fallback);
       setMockMode(prev => {
         if (!prev) {
-          toast({
+          notify({
             title: "Using mock data",
             description: "Live data is unavailable. Showing mock users so you can continue exploring the UI.",
           });
@@ -96,7 +98,6 @@ export default function UsersPage() {
   }, [buildQuery, loadUsers]);
 
   const lockedUserIds = useMemo(() => users.filter(user => user.isSuperAdmin).map(user => user.userId), [users]);
-  const hasSuperAdmin = lockedUserIds.length > 0;
 
   const pendingRoleIds = useMemo(() => Array.from(pendingRoles), [pendingRoles]);
   const pendingStatusIds = useMemo(() => Array.from(pendingStatuses), [pendingStatuses]);
@@ -104,7 +105,7 @@ export default function UsersPage() {
   const handleRoleChange = async (userId: string, nextRole: Role) => {
     if (mockMode) {
       setUsers(prev => prev.map(user => (user.userId === userId ? { ...user, role: nextRole } : user)));
-      toast({
+      notify({
         title: "Mock data",
         description: "Role changes aren’t persisted while using mock data.",
       });
@@ -115,13 +116,13 @@ export default function UsersPage() {
     try {
       const updated = await updateUserRole(userId, nextRole);
       setUsers(prev => prev.map(user => (user.userId === userId ? { ...user, role: updated.role } : user)));
-      toast({
+      notify({
         title: "Role updated",
         description: `${updated.fullName} is now ${nextRole === "admin" ? "an" : "a"} ${nextRole}.`,
       });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not update role";
-      toast({
+      notify({
         title: "Update failed",
         description: message,
         variant: "destructive",
@@ -138,7 +139,7 @@ export default function UsersPage() {
   const handleStatusChange = async (userId: string, nextStatus: EmploymentStatus) => {
     if (mockMode) {
       setUsers(prev => prev.map(user => (user.userId === userId ? { ...user, employmentStatus: nextStatus } : user)));
-      toast({
+      notify({
         title: "Mock data",
         description: "Status updates aren’t persisted while using mock data.",
       });
@@ -149,13 +150,13 @@ export default function UsersPage() {
     try {
       const updated = await updateEmploymentStatus(userId, nextStatus);
       setUsers(prev => prev.map(user => (user.userId === userId ? { ...user, employmentStatus: updated.employmentStatus } : user)));
-      toast({
+      notify({
         title: "Status updated",
         description: `${updated.fullName} is now marked ${updated.employmentStatus}.`,
       });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not update employment status";
-      toast({
+      notify({
         title: "Update failed",
         description: message,
         variant: "destructive",
@@ -169,8 +170,23 @@ export default function UsersPage() {
     }
   };
 
-  const handleAddUserSuccess = async () => {
-    await loadUsers(buildQuery(), { refresh: true });
+  const handleDeleteUser = async (user: UserSummary) => {
+    setDeletingUserId(user.userId);
+    try {
+      const response = await deleteUser(user.userId);
+      if (response.ok) {
+        setUsers(prev => prev.filter(existing => existing.userId !== user.userId));
+        sonnerToast.success(response.message);
+      } else {
+        sonnerToast.info(response.message);
+      }
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unable to delete user.";
+      console.error("Failed to delete user", requestError);
+      sonnerToast.error(message);
+    } finally {
+      setDeletingUserId(null);
+    }
   };
 
   const handleRefresh = async () => {
@@ -189,9 +205,8 @@ export default function UsersPage() {
           <h1 className="text-2xl font-medium tracking-tight">Users</h1>
           <p className="mt-2 text-base text-slate-600">Invite teammates, update roles, and manage employment status.</p>
         </div>
-        <div className="flex items-center justify-between pt-4">
+        <div className="flex items-center pt-4">
           <span className="text-sm font-medium uppercase tracking-wide text-slate-500">Directory</span>
-          <AddUserModal onSuccess={handleAddUserSuccess} hasSuperAdmin={hasSuperAdmin} mockMode={mockMode} />
         </div>
         <div className="pt-4">
           <UsersFilters
@@ -246,6 +261,8 @@ export default function UsersPage() {
         error={error}
         onRoleChange={handleRoleChange}
         onStatusChange={handleStatusChange}
+        onDelete={handleDeleteUser}
+        deletingUserId={deletingUserId}
         onPageChange={nextPage => {
           setPage(nextPage);
           window.scrollTo({ top: 0, behavior: "smooth" });
