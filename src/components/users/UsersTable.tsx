@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Loader2, Users as UsersIcon } from "lucide-react";
+import { Loader2, Trash2, Users as UsersIcon } from "lucide-react";
 
 import type { EmploymentStatus, Role, UserSummary } from "@/lib/types/users";
 import { formatDate } from "@/lib/utils/date";
@@ -9,6 +9,17 @@ import { LockedBadge } from "@/components/users/LockedBadge";
 import { cn } from "@/shared/lib/utils";
 import { Avatar, AvatarFallback } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/shared/ui/alert-dialog";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/shared/ui/pagination";
 
 interface UsersTableProps {
@@ -25,6 +36,8 @@ interface UsersTableProps {
   error?: string | null;
   onRoleChange: (userId: string, role: Role) => void;
   onStatusChange: (userId: string, status: EmploymentStatus) => void;
+  onDelete?: (user: UserSummary) => Promise<void> | void;
+  deletingUserId?: string | null;
   onPageChange?: (page: number) => void;
   onRetry?: () => void;
 }
@@ -49,6 +62,8 @@ export function UsersTable({
   error,
   onRoleChange,
   onStatusChange,
+  onDelete,
+  deletingUserId,
   onPageChange,
   onRetry,
 }: UsersTableProps) {
@@ -95,6 +110,7 @@ export function UsersTable({
               <th scope="col" className="px-4 py-0">Role</th>
               <th scope="col" className="px-4 py-0">Employment Status</th>
               <th scope="col" className="px-4 py-0 text-right">Last Login</th>
+              <th scope="col" className="px-4 py-0 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -114,11 +130,14 @@ export function UsersTable({
                   <td className="px-4 py-3 text-right">
                     <div className="ml-auto h-4 w-20 animate-pulse rounded bg-slate-100" />
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="ml-auto h-9 w-9 animate-pulse rounded-full bg-slate-100" />
+                  </td>
                 </tr>
               ))
             ) : showEmptyState ? (
               <tr>
-                <td colSpan={4} className="px-6 py-12">
+                <td colSpan={5} className="px-6 py-12">
                   <div className="flex flex-col items-center justify-center gap-4 text-center text-slate-500">
                     <UsersIcon className="h-10 w-10 text-slate-300" aria-hidden />
                     <div>
@@ -140,6 +159,8 @@ export function UsersTable({
                 const statusLoading = statusPendingSet.has(user.userId);
                 const initials = getInitials(user.fullName || user.email);
                 const isActiveRow = activeUserId === user.userId;
+                const canDelete = Boolean(onDelete) && !isLocked;
+                const isDeleting = deletingUserId === user.userId;
 
                 return (
                   <tr
@@ -195,6 +216,46 @@ export function UsersTable({
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-slate-600">
                       {formatDate(user.lastLogin)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "h-9 w-9 rounded-full text-slate-400 transition-colors hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                              (!canDelete || isDeleting) && "pointer-events-none opacity-50",
+                            )}
+                            aria-label={`Delete ${user.fullName}`}
+                            disabled={!canDelete || isDeleting}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden />
+                            <span className="sr-only">Delete {user.fullName}</span>
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete user {user.fullName}?</AlertDialogTitle>
+                            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-2 focus-visible:ring-destructive/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                              onClick={async () => {
+                                if (onDelete) {
+                                  await onDelete(user);
+                                }
+                              }}
+                              disabled={!canDelete || isDeleting}
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </td>
                   </tr>
                 );
