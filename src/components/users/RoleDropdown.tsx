@@ -25,7 +25,7 @@ export function RoleDropdown({ value, onChange, disabled = false, loading = fals
       <SelectTrigger
         id={id}
         className={cn(
-          "w-[130px] h-9 rounded-md border-slate-200 bg-white text-sm font-medium text-slate-700 focus:ring-2 focus:ring-primary/60",
+          "h-10 w-[160px] rounded-full border border-transparent bg-slate-100 px-4 text-sm font-medium text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background hover:bg-slate-200",
           disabled && "opacity-60",
         )}
         aria-disabled={disabled || loading}

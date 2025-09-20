@@ -25,7 +25,7 @@ export function StatusPill({ value, onChange, disabled = false, loading = false,
       role="group"
       aria-label="Employment status"
       className={cn(
-        "inline-flex items-center gap-1 rounded-full bg-slate-100 px-1 py-1",
+        "inline-flex items-center gap-1 rounded-full border border-slate-200/70 bg-slate-100/80 p-1",
         isDisabled && "opacity-60",
       )}
     >
@@ -36,7 +36,7 @@ export function StatusPill({ value, onChange, disabled = false, loading = false,
             key={option.value}
             type="button"
             className={cn(
-              "relative inline-flex h-11 min-w-[96px] items-center justify-center rounded-full px-4 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/70",
+              "relative inline-flex h-11 min-w-[96px] items-center justify-center rounded-full px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               isActive
                 ? "bg-primary text-white shadow-sm"
                 : "bg-transparent text-slate-600 hover:bg-white",
