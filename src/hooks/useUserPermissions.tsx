@@ -11,8 +11,8 @@ import { supabase } from "@/shared/lib/api";
 import type { Tables } from "@/entities/supabase";
 import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/shared/lib/env";
 import { toast } from "@/hooks/use-toast";
+import { isSkyshare } from "@/lib/domainGate";
 
-const SKYSHARE_DOMAIN = "skyshare.com";
 const DOMAIN_DENIED_MESSAGE = "Google account must be @skyshare.com.";
 
 const ROLE_ENUM_BY_TEXT: Record<UserProfile["role"], UserProfile["role_enum"]> = {
@@ -105,7 +105,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       const { data: fetchedProfile, error: profileError } = await supabase
         .from("profiles")
         .select(
-          "id, user_id, email, first_name, last_name, full_name, role, role_enum, is_readonly, status, last_login, created_at, updated_at",
+          "id, user_id, email, first_name, last_name, full_name, role, role_enum, is_super_admin, is_readonly, status, last_login, created_at, updated_at",
         )
         .eq("user_id", userId)
         .maybeSingle();
@@ -137,7 +137,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     async (activeSession: Session) => {
       const authUser = activeSession.user;
       const normalizedEmail = normalizeEmail(authUser.email);
-      if (!normalizedEmail.endsWith(`@${SKYSHARE_DOMAIN}`)) {
+      if (!isSkyshare(normalizedEmail)) {
         throw new Error("Invalid email domain");
       }
 
@@ -176,6 +176,10 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         resolvedEnum = resolveAdminEnum(normalizedEmail, existingProfile?.role_enum);
       } else {
         resolvedEnum = ROLE_ENUM_BY_TEXT[resolvedRole] ?? resolvedEnum;
+      }
+
+      if (!isAllowListed) {
+        return;
       }
 
       const fullName = deriveFullName(authUser, existingProfile?.full_name);
@@ -219,7 +223,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       setUser(activeSession.user);
 
       const normalizedEmail = normalizeEmail(activeSession.user.email);
-      const allowedDomain = normalizedEmail.endsWith(`@${SKYSHARE_DOMAIN}`);
+      const allowedDomain = isSkyshare(normalizedEmail);
 
       if (!allowedDomain) {
         await supabase.auth.signOut();
@@ -234,15 +238,20 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         setPermissions([]);
         setIsReadOnly(false);
         setLoading(false);
-        window.location.replace("/login");
+        window.location.replace("/");
         return;
       }
 
       try {
         await ensureProfile(activeSession);
+      } catch (error) {
+        console.error("Error ensuring profile (continuing with load attempt):", error);
+      }
+
+      try {
         await loadProfileAndPermissions(activeSession.user.id);
       } catch (error) {
-        console.error("Error ensuring profile:", error);
+        console.error("Error loading profile and permissions:", error);
         toast({
           title: "Authentication error",
           description: "We couldn't load your profile. Please try again.",
@@ -300,9 +309,12 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   const hasPermission = useCallback(
     (section: AppSection) => {
       if (isDevBypassActive()) return true;
+      if (isReadOnly) {
+        return section === "Overview";
+      }
       return permissions.includes(section);
     },
-    [permissions],
+    [isReadOnly, permissions],
   );
 
   const isAdmin = useCallback(() => {
