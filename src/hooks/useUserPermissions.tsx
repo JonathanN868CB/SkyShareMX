@@ -309,9 +309,12 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   const hasPermission = useCallback(
     (section: AppSection) => {
       if (isDevBypassActive()) return true;
+      if (isReadOnly) {
+        return section === "Overview";
+      }
       return permissions.includes(section);
     },
-    [permissions],
+    [isReadOnly, permissions],
   );
 
   const isAdmin = useCallback(() => {
