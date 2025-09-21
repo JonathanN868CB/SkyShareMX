@@ -31,6 +31,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
   useSidebar,
 } from "@/shared/ui/sidebar";
 
@@ -77,6 +78,10 @@ const sidebarSections = [
   },
 ];
 
+const SAFE_SECTION_PERMISSIONS = new Set<
+  (typeof sidebarSections)[number]["permission"]
+>(["Overview"]);
+
 export function AppSidebar() {
   const { state } = useSidebar();
   const { hasPermission, loading } = useUserPermissions();
@@ -95,13 +100,14 @@ export function AppSidebar() {
       ? "bg-sidebar-active text-white font-medium"
       : "text-sidebar-foreground hover:bg-sidebar-hover";
 
-  const shouldShowSection = (section: typeof sidebarSections[0]) => {
-    if (loading) return true; // don't hide while loading
+  const shouldShowSection = (section: (typeof sidebarSections)[number]) => {
     if (devBypassActive) return true; // show everything when dev bypass is on
-    if (section.permission === 'Overview') return true; // always show Overview
+    if (SAFE_SECTION_PERMISSIONS.has(section.permission)) return true; // always show safe sections
+    if (loading) return false; // defer sensitive sections until permissions resolve
     return hasPermission(section.permission);
   };
-  const sectionsToRender = sidebarSections
+
+  const processedSections = sidebarSections
     .map(section => {
       if (devBypassActive) {
         return section;
@@ -116,7 +122,9 @@ export function AppSidebar() {
 
       return { ...section, items: filteredItems };
     })
-    .filter(section => section.items.length > 0 && shouldShowSection(section));
+    .filter(section => section.items.length > 0);
+
+  const shouldRenderSkeletons = loading && !devBypassActive;
 
   return (
     <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
@@ -149,7 +157,17 @@ export function AppSidebar() {
 
         {/* Navigation */}
         <div className="flex-1 p-4 space-y-6">
-        {sectionsToRender.map(section => {
+          {processedSections.map(section => {
+            const canRenderSection = shouldShowSection(section);
+            const showSkeleton =
+              shouldRenderSkeletons &&
+              !SAFE_SECTION_PERMISSIONS.has(section.permission) &&
+              !canRenderSection;
+
+            if (!canRenderSection && !showSkeleton) {
+              return null;
+            }
+
             return (
               <SidebarGroup key={section.title}>
                 <SidebarGroupLabel className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wide">
@@ -157,22 +175,28 @@ export function AppSidebar() {
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {section.items.map((item) => (
-                      <SidebarMenuItem key={item.name}>
-                        <SidebarMenuButton asChild>
-                          <NavLink
-                            to={item.path}
-                            className={getNavCls}
-                            end={Boolean(item.exact)}
-                          >
-                            <item.icon className="w-4 h-4 flex-shrink-0" />
-                            {state !== "collapsed" && (
-                              <span className="truncate">{item.name}</span>
-                            )}
-                          </NavLink>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
+                    {canRenderSection
+                      ? section.items.map(item => (
+                          <SidebarMenuItem key={item.name}>
+                            <SidebarMenuButton asChild>
+                              <NavLink
+                                to={item.path}
+                                className={getNavCls}
+                                end={Boolean(item.exact)}
+                              >
+                                <item.icon className="w-4 h-4 flex-shrink-0" />
+                                {state !== "collapsed" && (
+                                  <span className="truncate">{item.name}</span>
+                                )}
+                              </NavLink>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ))
+                      : section.items.map((_, index) => (
+                          <SidebarMenuItem key={`${section.title}-skeleton-${index}`}>
+                            <SidebarMenuSkeleton showIcon aria-hidden="true" />
+                          </SidebarMenuItem>
+                        ))}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
