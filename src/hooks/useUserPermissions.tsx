@@ -11,8 +11,8 @@ import { supabase } from "@/shared/lib/api";
 import type { Tables } from "@/entities/supabase";
 import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/shared/lib/env";
 import { toast } from "@/hooks/use-toast";
+import { isSkyshare } from "@/lib/domainGate";
 
-const SKYSHARE_DOMAIN = "skyshare.com";
 const DOMAIN_DENIED_MESSAGE = "Google account must be @skyshare.com.";
 
 const ROLE_ENUM_BY_TEXT: Record<UserProfile["role"], UserProfile["role_enum"]> = {
@@ -137,7 +137,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     async (activeSession: Session) => {
       const authUser = activeSession.user;
       const normalizedEmail = normalizeEmail(authUser.email);
-      if (!normalizedEmail.endsWith(`@${SKYSHARE_DOMAIN}`)) {
+      if (!isSkyshare(normalizedEmail)) {
         throw new Error("Invalid email domain");
       }
 
@@ -219,7 +219,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       setUser(activeSession.user);
 
       const normalizedEmail = normalizeEmail(activeSession.user.email);
-      const allowedDomain = normalizedEmail.endsWith(`@${SKYSHARE_DOMAIN}`);
+      const allowedDomain = isSkyshare(normalizedEmail);
 
       if (!allowedDomain) {
         await supabase.auth.signOut();
@@ -234,7 +234,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         setPermissions([]);
         setIsReadOnly(false);
         setLoading(false);
-        window.location.replace("/login");
+        window.location.replace("/");
         return;
       }
 

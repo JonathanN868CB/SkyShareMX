@@ -8,10 +8,10 @@ Use this runbook to validate the SkyShare-hosted staging experience **before** s
 3. Open the Supabase project dashboard in a separate tab so you can inspect auth sessions and function logs without disturbing the test flow.
 
 ## 2. Authentication flow in staging
-1. Load `/login` directly in the staging site.
-2. The app should immediately navigate to `/auth/start`. Watch the browser URL bar (or DevTools Network panel) to confirm the 302 to `/auth/start` fires.
+1. Load `/` directly in the staging site.
+2. Confirm the landing card renders with the Google sign-in button and no additional routes are exposed.
 3. Click **Continue with Google** and complete the Google OAuth flow using the designated staging account.
-4. When Google redirects back to the portal, confirm the app resolves to `/` and the authenticated layout loads (header + dashboard tiles). This indicates the Supabase session cookie was stored correctly.
+4. When Google redirects back to the portal, confirm the app resolves to `/app` and the authenticated layout loads (header + dashboard tiles). This indicates the Supabase session cookie was stored correctly.
 5. In Supabase → Authentication → Users, confirm the staging user shows a recent sign-in timestamp matching your test.
 
 ## 3. User management smoke test
@@ -22,7 +22,7 @@ Use this runbook to validate the SkyShare-hosted staging experience **before** s
 ## 4. Troubleshooting & observability
 - **users-admin function logs**: Run `netlify functions:tail users-admin` to inspect role or deletion failures. Expect 403s when targeting the protected admin account.
 - **Supabase profiles**: Use the Table editor to confirm Viewer rows are recreated on login and that deletions remove both Auth and `profiles` entries.
-- **Auth redirect issues**: If the app never reaches `/`, open the browser DevTools console to check for blocked third-party cookies. Clear storage for the active Netlify origin (preview or `https://skysharemx.com`) and try again.
+- **Auth redirect issues**: If the app never reaches `/app`, open the browser DevTools console to check for blocked third-party cookies. Clear storage for the active Netlify origin (preview or `https://skysharemx.com`) and try again.
 
 ## 5. Sign-off
 Capture screenshots of:

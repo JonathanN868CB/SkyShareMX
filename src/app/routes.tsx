@@ -6,12 +6,9 @@ import { AppErrorBoundary } from "./ErrorBoundary";
 import { ProtectedRoute } from "@/features/auth";
 import { userManagementRoutes } from "@/features/user-management";
 
-const PublicLayout = lazy(() => import("./layout/PublicLayout").then(module => ({ default: module.PublicLayout })));
 const AppLayout = lazy(() => import("./layout/Layout").then(module => ({ default: module.Layout })));
 
-const IndexPage = lazy(() => import("@/pages/Index"));
-const RequestAccessPage = lazy(() => import("@/pages/RequestAccess"));
-const LoginPage = lazy(() => import("@/pages/Login"));
+const LandingPage = lazy(() => import("@/pages/Landing"));
 const AuthCallbackPage = lazy(() => import("@/pages/AuthCallback"));
 const DashboardPage = lazy(() => import("@/pages/Dashboard"));
 const UnderConstructionPage = lazy(() => import("@/pages/UnderConstructionPage"));
@@ -35,21 +32,7 @@ const featureChildren: RouteObject[] = userManagementRoutes.map(route => ({
 const routes: RouteObject[] = [
   {
     path: "/",
-    element: withBoundary(<PublicLayout />),
-    children: [
-      {
-        index: true,
-        element: withSuspense(<IndexPage />),
-      },
-      {
-        path: "request-access",
-        element: withSuspense(<RequestAccessPage />),
-      },
-    ],
-  },
-  {
-    path: "/login",
-    element: withBoundary(<LoginPage />),
+    element: withBoundary(<LandingPage />),
   },
   {
     path: "/auth/callback",
