@@ -277,7 +277,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     }
 
     let isActive = true;
-    let initialSessionHandled = false;
+    let optimisticSessionApplied = false;
 
     const handleHydrationFailure = async () => {
       if (!isActive) {
@@ -285,7 +285,6 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       }
 
       await handleSession(null);
-      initialSessionHandled = true;
 
       toast({
         title: "Session expired",
@@ -316,7 +315,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         }
 
         await handleSession(session ?? null);
-        initialSessionHandled = true;
+        optimisticSessionApplied = true;
 
         return session ?? null;
       } catch (error) {
@@ -331,9 +330,12 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "INITIAL_SESSION") {
         await persistedSessionPromise;
-        if (initialSessionHandled) {
-          return;
+        if (!optimisticSessionApplied) {
+          await handleSession(session);
+          optimisticSessionApplied = true;
         }
+
+        return;
       }
 
       await handleSession(session);
