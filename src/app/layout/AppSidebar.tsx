@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { useIsSuperAdmin } from "@/features/auth";
 import logoAsset from "@/shared/assets/skyshare-logo.png";
 import { isDevBypassActive } from "@/shared/lib/env";
 import {
@@ -79,6 +80,7 @@ const sidebarSections = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const { hasPermission, loading } = useUserPermissions();
+  const { isSuper: isSuperAdmin } = useIsSuperAdmin();
   const devBypassActive = isDevBypassActive();
 
   useEffect(() => {
@@ -99,6 +101,23 @@ export function AppSidebar() {
     if (section.permission === 'Overview') return true; // always show Overview
     return hasPermission(section.permission);
   };
+  const sectionsToRender = sidebarSections
+    .map(section => {
+      if (devBypassActive) {
+        return section;
+      }
+
+      const filteredItems = section.items.filter(item => {
+        if (item.path === "/app/admin/users") {
+          return isSuperAdmin;
+        }
+        return true;
+      });
+
+      return { ...section, items: filteredItems };
+    })
+    .filter(section => section.items.length > 0 && shouldShowSection(section));
+
   return (
     <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
       <SidebarContent>
@@ -130,7 +149,7 @@ export function AppSidebar() {
 
         {/* Navigation */}
         <div className="flex-1 p-4 space-y-6">
-        {sidebarSections.filter(shouldShowSection).map((section) => {
+        {sectionsToRender.map(section => {
             return (
               <SidebarGroup key={section.title}>
                 <SidebarGroupLabel className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wide">

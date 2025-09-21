@@ -32,6 +32,7 @@ interface UsersTableProps {
   page: number;
   perPage: number;
   mockMode?: boolean;
+  canManage?: boolean;
   lockedUserIds?: string[];
   pendingRoleIds?: string[];
   pendingStatusIds?: string[];
@@ -55,6 +56,25 @@ function getInitials(name: string) {
   return parts.map(part => part.charAt(0).toUpperCase()).join("");
 }
 
+const ROLE_LABELS: Record<Role, string> = {
+  admin: "Admin",
+  manager: "Manager",
+  technician: "Technician",
+  viewer: "Viewer",
+};
+
+const STATUS_LABELS: Record<EmploymentStatus, string> = {
+  active: "Active",
+  inactive: "Inactive",
+};
+
+const readOnlyRoleClass =
+  "inline-flex h-10 min-w-[160px] items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-4 text-sm font-medium text-slate-600";
+const readOnlyStatusClass =
+  "inline-flex h-11 min-w-[210px] items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-4 text-sm font-medium text-slate-600";
+const readOnlyActionClass =
+  "inline-flex h-9 items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold uppercase tracking-wide text-slate-500";
+
 export function UsersTable({
   users,
   loading,
@@ -63,6 +83,7 @@ export function UsersTable({
   page,
   perPage,
   mockMode = false,
+  canManage = true,
   lockedUserIds = [],
   pendingRoleIds = [],
   pendingStatusIds = [],
@@ -173,7 +194,8 @@ export function UsersTable({
                 const statusLoading = statusPendingSet.has(user.userId);
                 const initials = getInitials(user.fullName || user.email);
                 const isActiveRow = activeUserId === user.userId;
-                const canDelete = Boolean(onDelete) && !isLocked;
+                const canMutateRow = canManage && !isLocked;
+                const canDelete = Boolean(onDelete) && canMutateRow;
                 const isDeleting = deletingUserId === user.userId;
                 const normalizedEmail = user.email.trim().toLowerCase();
                 const isMasterAdmin = normalizedEmail === "jonathan@skyshare.com";
@@ -216,21 +238,29 @@ export function UsersTable({
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <RoleDropdown
-                        value={user.role}
-                        onChange={next => onRoleChange(user.userId, next)}
-                        disabled={isLocked}
-                        loading={roleLoading}
-                        options={roleOptions}
-                      />
+                      {canManage ? (
+                        <RoleDropdown
+                          value={user.role}
+                          onChange={next => onRoleChange(user.userId, next)}
+                          disabled={!canMutateRow}
+                          loading={roleLoading}
+                          options={roleOptions}
+                        />
+                      ) : (
+                        <div className={readOnlyRoleClass}>{ROLE_LABELS[user.role]}</div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusPill
-                        value={user.employmentStatus}
-                        onChange={next => onStatusChange(user.userId, next)}
-                        disabled={isLocked}
-                        loading={statusLoading}
-                      />
+                      {canManage ? (
+                        <StatusPill
+                          value={user.employmentStatus}
+                          onChange={next => onStatusChange(user.userId, next)}
+                          disabled={!canMutateRow}
+                          loading={statusLoading}
+                        />
+                      ) : (
+                        <div className={readOnlyStatusClass}>{STATUS_LABELS[user.employmentStatus]}</div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-slate-600">
                       {formatDate(user.lastLogin)}
@@ -276,7 +306,9 @@ export function UsersTable({
                           </AlertDialogContent>
                         </AlertDialog>
                       ) : (
-                        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Protected</span>
+                        <span className={readOnlyActionClass}>
+                          {isLocked ? "Protected" : "Admins only"}
+                        </span>
                       )}
                     </td>
                   </tr>
