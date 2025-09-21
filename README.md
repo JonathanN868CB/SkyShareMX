@@ -98,6 +98,7 @@ When deploying to Netlify, configure environment variables per context so OAuth 
 | `VITE_PUBLIC_SITE_URL` | `${DEPLOY_PRIME_URL}` (preview)  | Site settings → Build & deploy → Environment (Preview) |
 | `VITE_SUPABASE_URL`    | `https://<project>.supabase.co`  | Site settings → Build & deploy → Environment          |
 | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…` | Site settings → Build & deploy → Environment          |
+| `VITE_ADMIN_EMAILS`      | `jonathan@skyshare.com` (default; leave blank if no extra admins) | Site settings → Build & deploy → Environment (optional) |
 
 Add the following secrets so Netlify functions can reach Supabase:
 
