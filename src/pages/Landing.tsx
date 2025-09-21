@@ -104,7 +104,7 @@ export default function Landing() {
             <img
               src="/brands/skyshare-lockup.png"
               alt="SkyShare"
-              className="w-48 md:w-60 lg:w-[17rem] select-none drop-shadow-sm"
+              className="w-48 md:w-60 lg:w-[17rem] select-none drop-shadow-sm transform scale-[1.24] origin-top"
               draggable={false}
             />
             <div className="max-w-sm">
