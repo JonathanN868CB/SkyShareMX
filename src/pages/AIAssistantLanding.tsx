@@ -1,331 +1,216 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity,
   ArrowRight,
-  BrainCircuit,
-  CalendarCheck,
-  ClipboardList,
+  BookOpenCheck,
   Database,
-  FileText,
-  LineChart,
-  RadioTower,
+  Rocket,
+  Search,
   ShieldCheck,
   Sparkles,
-  Workflow,
 } from "lucide-react";
 
-import { aiAssistantHeroImage } from "@/assets/ai-assistant-hero";
-import { cn } from "@/shared/lib/utils";
+import { AI_ASSISTANT_HERO_IMAGE } from "@/assets/ai-assistant-hero";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/ui/card";
 
-type FeatureHighlight = {
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  bullets?: string[];
-};
-
-type KnowledgeSource = {
-  label: string;
-  icon: LucideIcon;
-};
-
-type RoadmapStage = "pilot" | "design" | "vision";
-
-type RoadmapItem = {
-  stage: string;
-  tone: RoadmapStage;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  milestones: string[];
-};
-
-const featureHighlights: FeatureHighlight[] = [
+const featureHighlights = [
   {
-    title: "Context-aware copilots",
+    title: "Context built from our data",
     description:
-      "Pair maintainers with an assistant that understands every tail number, work order, and deferment in flight control.",
-    icon: BrainCircuit,
-    bullets: [
-      "Cross-reference open discrepancies with historical fixes and vendor recommendations.",
-      "Surface torque values, task cards, and required tooling the moment a job is assigned.",
-    ],
+      "Connects employee handbooks, fleet manuals, maintenance procedures, and compliance documents so every reply mirrors how SkyShare actually operates.",
+    icon: BookOpenCheck,
   },
   {
-    title: "Predictive maintenance intelligence",
+    title: "Instant access to history",
     description:
-      "Model component fatigue and forecast downtime so schedules, crews, and parts arrive before issues escalate.",
-    icon: LineChart,
-    bullets: [
-      "Blend flight hours, landings, and telemetry trends to flag risk windows early.",
-      "Translate predictions into maintenance windows that respect customer commitments.",
-    ],
+      "Surface aircraft records, inspection logs, and component status with a single prompt—no more hunting through disparate systems.",
+    icon: Database,
   },
   {
-    title: "Automated follow-through",
+    title: "Answers you can trust",
     description:
-      "Generate compliant documentation, update Supabase records, and notify teams without waiting on manual data entry.",
-    icon: Workflow,
-    bullets: [
-      "Draft logbook entries, MEL references, and return-to-service notes for supervisor approval.",
-      "Route action items to parts, QA, and field teams as soon as work orders close.",
-    ],
+      "Role-aware responses that cite their sources, respect maintenance authorizations, and keep our operation compliant.",
+    icon: ShieldCheck,
   },
+] satisfies Array<{ title: string; description: string; icon: LucideIcon }>;
+
+const knowledgeDomains = [
+  "Employee handbook",
+  "Aircraft maintenance manuals",
+  "Inspection & compliance checklists",
+  "Training and onboarding guides",
+  "Operations & scheduling memos",
+  "Parts and tooling records",
+  "Safety reports & SMS notes",
+  "Vendor & support contacts",
 ];
 
-const knowledgeSources: KnowledgeSource[] = [
-  { label: "Maintenance event history", icon: ClipboardList },
-  { label: "Aircraft telemetry & trends", icon: Activity },
-  { label: "MEL / CDL libraries", icon: FileText },
-  { label: "Regulatory compliance guides", icon: ShieldCheck },
-  { label: "Vendor SB & AD feeds", icon: RadioTower },
-  { label: "Ops scheduling data", icon: CalendarCheck },
-  { label: "SkyShare Supabase source of truth", icon: Database },
-];
-
-const roadmapStages: Record<RoadmapStage, string> = {
-  pilot: "border-emerald-200/80 bg-emerald-50 text-emerald-700",
-  design: "border-amber-200/80 bg-amber-50 text-amber-700",
-  vision: "border-indigo-200/80 bg-indigo-50 text-indigo-700",
-};
-
-const roadmap: RoadmapItem[] = [
+const roadmap = [
   {
-    stage: "In pilot · Q3 2024",
-    tone: "pilot",
-    title: "MX Ops Copilot",
+    title: "Discovery interviews",
+    window: "Active now",
     description:
-      "Live experiments with maintenance control deliver conversational triage, daily anomaly briefs, and curated task prep.",
+      "Capturing the questions technicians, leads, and leadership ask every day to map required data sources and guardrails.",
+    icon: Search,
+  },
+  {
+    title: "Private hangar beta",
+    window: "Q2",
+    description:
+      "Wire the LLM into secured knowledge bases, deliver cited answers, and iterate with an invite-only group of maintainers.",
     icon: Sparkles,
-    milestones: [
-      "Summaries of the overnight backlog with risk and grounding blockers highlighted.",
-      "Suggested next-best-actions auto-aligned to fleet availability and technician coverage.",
-    ],
   },
   {
-    stage: "In design · Q4 2024",
-    tone: "design",
-    title: "Predictive health forecasting",
+    title: "Flight line launch",
+    window: "Q3",
     description:
-      "Component models tie utilization, environment, and vendor data together to schedule maintenance before failure.",
-    icon: LineChart,
-    milestones: [
-      "Probability dashboards for aircraft systems with lead time for parts procurement.",
-      "Automated slotting of forecasted work into the integrated maintenance calendar.",
-    ],
+      "Roll the assistant out company-wide with permission-aware access tied to maintenance roles and operational readiness.",
+    icon: Rocket,
   },
-  {
-    stage: "Vision · 2025",
-    tone: "vision",
-    title: "Closed-loop hangar automation",
-    description:
-      "The assistant orchestrates planning, execution, and reporting so teams focus on decisions—not paperwork.",
-    icon: Workflow,
-    milestones: [
-      "Generate workcards, staffing plans, and SMS notifications as schedules evolve.",
-      "Continuous compliance audit trails with ready-to-file documentation packages.",
-    ],
-  },
-];
+] satisfies Array<{ title: string; window: string; description: string; icon: LucideIcon }>;
 
 export default function AIAssistantLanding() {
   return (
-    <div className="space-y-16">
-      <section className="grid gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,1fr)] items-center">
-        <div className="space-y-6">
-          <Badge className="w-fit border border-primary/20 bg-primary/10 text-primary">
-            AI Assistant preview
-          </Badge>
-          <div className="space-y-4">
-            <h1 className="text-4xl font-heading font-bold text-foreground sm:text-5xl">
-              SkyShare AI Maintenance Assistant
+    <div className="mx-auto flex max-w-6xl flex-col gap-16 py-2">
+      <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-slate-950 text-white shadow-xl">
+        <img
+          src={AI_ASSISTANT_HERO_IMAGE}
+          alt="SkyShare jet rendered as a hero image for the AI assistant powered by ChatGPT and OpenAI."
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-950/85 via-slate-950/65 to-slate-900/70" />
+        <div className="relative z-10 flex flex-col gap-8 px-8 py-16 sm:px-12 lg:px-16">
+          <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.35em] text-sky-200/90">
+            <span className="rounded-full border border-white/30 bg-white/10 px-3 py-1 tracking-[0.28em]">
+              Coming soon
+            </span>
+            <span className="text-slate-100/75">ChatGPT + OpenAI under the hood</span>
+          </div>
+          <div className="max-w-3xl space-y-4">
+            <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
+              SkyShare Maintenance AI Assistant
             </h1>
-            <p className="text-lg text-muted-foreground max-w-2xl">
-              We&apos;re building an intelligent copilot that keeps every aircraft airworthy—pairing generative reasoning with
-              the data backbone SkyShare trusts today.
+            <p className="text-lg text-slate-100/85">
+              This will be the future home for technicians to ask anything about how SkyShare keeps the fleet
+              flying—from employee handbooks and aircraft manuals to procedural documents and parts history.
+            </p>
+            <p className="text-sm text-slate-100/70">
+              Powered by large language models tuned with SkyShare&apos;s real data so manuals, records, and
+              history are always one prompt away.
             </p>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-              <p className="font-semibold text-foreground">Embedded in maintenance control</p>
-              <p>Answer questions, prep work orders, and brief leadership from a single conversational canvas.</p>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-              <p className="font-semibold text-foreground">Grounded in secure data</p>
-              <p>Responses cite the same Supabase-backed knowledge base your team already curates.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <Button asChild className="gap-2">
-              <a href="mailto:innovation@skyshare.com?subject=AI%20Assistant%20Pilot">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <Button
+              asChild
+              size="lg"
+              className="bg-white px-6 py-3 text-slate-950 shadow-lg hover:bg-white/90"
+            >
+              <a href="mailto:maintenance@skyshare.com?subject=AI%20Assistant%20Preview">
                 Request early access
-                <ArrowRight aria-hidden className="h-4 w-4" />
+                <ArrowRight className="ml-2 size-4" />
               </a>
             </Button>
-            <span className="text-sm text-muted-foreground">
-              Pilots with maintenance control and field teams roll out later this year.
-            </span>
-          </div>
-        </div>
-        <div className="relative">
-          <div
-            aria-hidden
-            className="absolute inset-0 -z-10 blur-3xl"
-            style={{
-              background:
-                "radial-gradient(120% 120% at 20% 0%, rgba(216,235,255,0.7), transparent), radial-gradient(120% 120% at 80% 20%, rgba(233,215,255,0.6), transparent)",
-            }}
-          />
-          <div className="relative overflow-hidden rounded-3xl border border-border/50 bg-gradient-to-br from-background via-background/80 to-background/40 shadow-xl ring-1 ring-black/5">
-            <img
-              src={aiAssistantHeroImage}
-              alt="Illustration of the SkyShare AI assistant collaborating with maintenance teams"
-              className="h-full w-full object-cover"
-              loading="lazy"
-            />
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-6">
-        <div className="space-y-3">
-          <h2 className="text-2xl font-heading font-semibold text-foreground">What the assistant will unlock</h2>
-          <p className="max-w-3xl text-muted-foreground">
-            Built with SkyShare maintainers, the assistant accelerates every step of the maintenance lifecycle—from discovery and
-            planning through documentation and compliance.
-          </p>
-        </div>
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          {featureHighlights.map(feature => (
-            <Card key={feature.title} className="h-full border-border/60 bg-card/90">
-              <CardHeader className="space-y-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <feature.icon aria-hidden className="h-5 w-5" />
-                </div>
-                <CardTitle className="text-xl text-foreground">{feature.title}</CardTitle>
-                <p className="text-sm leading-relaxed text-muted-foreground">{feature.description}</p>
-              </CardHeader>
-              {feature.bullets?.length ? (
-                <CardContent className="pt-0">
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                    {feature.bullets.map(point => (
-                      <li key={point} className="flex items-start gap-2">
-                        <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary/60" aria-hidden />
-                        <span className="leading-relaxed">{point}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              ) : null}
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="space-y-2">
-          <h2 className="text-2xl font-heading font-semibold text-foreground">Grounded in trusted sources</h2>
-          <p className="max-w-3xl text-muted-foreground">
-            Every response references the same systems that power SkyShare operations today, keeping the assistant auditable and
-            verifiable by your team.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          {knowledgeSources.map(source => (
-            <Badge
-              key={source.label}
+            <Button
+              asChild
+              size="lg"
               variant="outline"
-              className="flex items-center gap-2 border-dashed border-border/60 bg-muted/30 text-muted-foreground"
+              className="border-white/50 bg-white/10 px-6 py-3 text-white hover:bg-white/15"
             >
-              <source.icon aria-hidden className="h-3.5 w-3.5 text-primary" />
-              {source.label}
-            </Badge>
+              <a href="mailto:maintenance@skyshare.com?subject=AI%20Assistant%20Questions">
+                Tell us the questions you want answered
+              </a>
+            </Button>
+          </div>
+        </div>
+        <div className="pointer-events-none absolute bottom-6 right-6 hidden max-w-xs rounded-2xl border border-white/20 bg-white/10 p-4 text-right text-xs leading-relaxed text-slate-100/80 backdrop-blur-md md:block">
+          Manuals, records, history—one prompt away.
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-2xl font-semibold text-foreground sm:text-3xl">Built for the hangar</h2>
+        <p className="mt-2 max-w-2xl text-base text-muted-foreground">
+          Ask natural language questions and get role-aware answers grounded in SkyShare procedures and aircraft
+          data.
+        </p>
+        <div className="mt-8 grid gap-6 md:grid-cols-3">
+          {featureHighlights.map(({ title, description, icon: Icon }) => (
+            <Card key={title} className="border-slate-200/70 bg-card/95 shadow-sm">
+              <CardHeader className="flex flex-row items-start gap-4 pb-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400">
+                  <Icon className="size-6" aria-hidden="true" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">{title}</CardTitle>
+                  <CardDescription className="text-sm text-muted-foreground/80">
+                    {description}
+                  </CardDescription>
+                </div>
+              </CardHeader>
+            </Card>
           ))}
         </div>
       </section>
 
-      <section className="space-y-6">
-        <div className="space-y-2">
-          <h2 className="text-2xl font-heading font-semibold text-foreground">Roadmap to the assistant</h2>
-          <p className="max-w-3xl text-muted-foreground">
-            We&apos;re releasing capabilities in waves so teams can validate impact, guide the model, and build trust before full
-            automation.
-          </p>
-        </div>
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          {roadmap.map(item => (
-            <Card key={item.title} className="h-full border-border/60 bg-card/90">
-              <CardHeader className="space-y-4">
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "w-fit border text-[0.7rem] font-medium uppercase tracking-wide",
-                    roadmapStages[item.tone],
-                  )}
-                >
-                  {item.stage}
-                </Badge>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
-                    <item.icon aria-hidden className="h-5 w-5" />
-                  </div>
-                  <CardTitle className="text-xl text-foreground">{item.title}</CardTitle>
-                </div>
-                <p className="text-sm leading-relaxed text-muted-foreground">{item.description}</p>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <ul className="space-y-2 text-sm text-muted-foreground">
-                  {item.milestones.map(milestone => (
-                    <li key={milestone} className="flex items-start gap-2">
-                      <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary/60" aria-hidden />
-                      <span className="leading-relaxed">{milestone}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
+      <section className="rounded-3xl border border-border bg-card/80 p-10 shadow-sm">
+        <h2 className="text-2xl font-semibold text-foreground">What it will know</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Connected to the systems our technicians rely on so every answer reflects current policy and aircraft status.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          {knowledgeDomains.map(domain => (
+            <Badge
+              key={domain}
+              variant="outline"
+              className="border-slate-300/70 bg-white/80 text-slate-700"
+            >
+              {domain}
+            </Badge>
           ))}
         </div>
       </section>
 
       <section>
-        <Card className="relative overflow-hidden border border-primary/30 bg-gradient-to-r from-primary/10 via-primary/5 to-background shadow-lg">
-          <div
-            aria-hidden
-            className="absolute inset-0 -z-10"
-            style={{
-              background:
-                "radial-gradient(140% 140% at 0% 100%, rgba(223, 242, 255, 0.6), transparent), radial-gradient(120% 120% at 100% 0%, rgba(218, 213, 255, 0.6), transparent)",
-            }}
-          />
-          <CardHeader className="space-y-3">
-            <Badge className="w-fit border border-primary/30 bg-primary/20 text-primary">
-              Co-design invitation
-            </Badge>
-            <CardTitle className="text-3xl font-heading text-foreground">
-              Partner with the AI build crew
-            </CardTitle>
-            <p className="max-w-3xl text-base text-muted-foreground">
-              We&apos;re inviting maintainers, controllers, and reliability engineers to shape the assistant from day one. Share the
-              workflows that slow you down and we&apos;ll craft automation loops that return hours to the operation.
-            </p>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-muted-foreground sm:max-w-2xl">
-              Early partners join discovery workshops, get sandbox access, and influence how the assistant cites, documents, and
-              acts across the fleet.
-            </p>
-            <Button asChild size="lg" className="gap-2">
-              <a href="mailto:innovation@skyshare.com?subject=AI%20Assistant%20Pilot">
-                Book a design session
-                <ArrowRight aria-hidden className="h-4 w-4" />
-              </a>
-            </Button>
-          </CardContent>
-        </Card>
+        <h2 className="text-2xl font-semibold text-foreground">Roadmap to launch</h2>
+        <div className="mt-6 grid gap-6 md:grid-cols-2">
+          {roadmap.map(({ title, window, description, icon: Icon }) => (
+            <Card key={title} className="border-slate-200/80 bg-card shadow-sm">
+              <CardHeader className="flex flex-row items-start gap-4 pb-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Icon className="size-6" aria-hidden="true" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">{title}</CardTitle>
+                  <CardDescription className="text-xs uppercase tracking-[0.25em] text-primary">
+                    {window}
+                  </CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 text-sm text-muted-foreground">{description}</CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-3xl border border-primary/30 bg-gradient-to-r from-sky-500/10 via-primary/10 to-indigo-500/10 px-10 py-12 shadow-sm">
+        <h2 className="text-2xl font-semibold text-foreground">Help shape the assistant</h2>
+        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+          We&apos;re mapping the data sources and workflows the assistant needs to understand. Share scenarios and documents so we can tune the experience before launch.
+        </p>
+        <div className="mt-6 flex flex-wrap gap-4">
+          <Button asChild size="lg">
+            <a href="mailto:maintenance@skyshare.com?subject=AI%20Assistant%20Use%20Case">Share a use case</a>
+          </Button>
+          <Button
+            asChild
+            size="lg"
+            variant="outline"
+            className="border-primary/40 text-primary hover:bg-primary/10"
+          >
+            <a href="mailto:maintenance@skyshare.com?subject=AI%20Assistant%20Updates">Get launch updates</a>
+          </Button>
+        </div>
       </section>
     </div>
   );
