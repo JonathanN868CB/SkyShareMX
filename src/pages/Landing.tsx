@@ -70,25 +70,30 @@ export default function Landing() {
       className="min-h-screen relative overflow-hidden grid place-items-center"
       aria-label="SkyShare Maintenance Portal login"
       style={{
-        background:
-          `
-          radial-gradient(1200px 600px at 20% 10%, rgba(247,219,215,.8), transparent 60%),
-          radial-gradient(900px 520px at 85% 15%, rgba(255,224,230,.7), transparent 55%),
-          radial-gradient(1100px 680px at 50% 85%, rgba(232,240,255,.8), transparent 60%),
-          radial-gradient(700px 420px at 10% 80%, rgba(255,240,220,.7), transparent 55%),
-          radial-gradient(1000px 560px at 90% 70%, rgba(240,230,255,.6), transparent 60%),
+        // Rich, responsive, full-bleed background (no images)
+        background: `
+          radial-gradient(1200px 620px at 22% 8%, rgba(248,219,215,.92), transparent 62%),
+          radial-gradient(980px 540px at 86% 14%, rgba(255,210,220,.82), transparent 56%),
+          radial-gradient(1120px 700px at 50% 86%, rgba(232,240,255,.88), transparent 60%),
+          radial-gradient(760px 460px at 12% 82%, rgba(255,240,220,.82), transparent 56%),
+          radial-gradient(1080px 600px at 92% 72%, rgba(240,230,255,.78), transparent 60%),
+          radial-gradient(1200px 900px at 50% 0%, rgba(255,255,255,.28), transparent 70%),
+          radial-gradient(1600px 900px at 50% 100%, rgba(0,0,0,.06), transparent 70%),
           #f7f3ef
-          `,
+        `,
       }}
     >
-      <div className="w-[92%] max-w-2xl rounded-2xl bg-white/85 backdrop-blur shadow-2xl p-8 md:p-10">
+      <div className="w-[92%] max-w-3xl rounded-[22px] bg-white/65 backdrop-blur-xl border border-white/30 shadow-[0_12px_48px_rgba(0,0,0,.18)] ring-1 ring-black/5 px-8 py-9 md:px-12 md:py-11">
         <div className="flex flex-col items-center gap-6 text-center">
-          {/* TODO: replace with real logo/wordmark component if present */}
-          <div className="h-12 w-12 rounded-xl bg-black/90 text-white grid place-items-center text-2xl font-semibold select-none">
-            S
-          </div>
+          {/* Horizontal SkyShare wordmark */}
+          <img
+            src="/brands/skyshare-lockup.png"
+            alt="SkyShare"
+            className="h-8 md:h-10 opacity-90 select-none"
+            draggable={false}
+          />
           <div>
-            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Maintenance Portal</h1>
+            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-neutral-900">Maintenance Portal</h1>
             <p className="mt-2 text-base md:text-lg text-neutral-600">The home base for SkyShare Maintenance</p>
           </div>
           {domainMessage ? (
@@ -98,16 +103,15 @@ export default function Landing() {
           ) : null}
           <button
             onClick={handleGoogle}
-            className="w-full md:w-auto px-6 py-3 md:px-8 md:py-3 rounded-xl font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-400"
+            className="w-full md:w-auto px-7 py-3 md:px-9 md:py-3 rounded-xl font-semibold text-white border border-white/20 shadow-[0_6px_20px_rgba(193,34,43,.35)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-400"
             aria-label="Continue with Google"
             style={{
-              background:
-                `linear-gradient(180deg, #d3292c 0%, #c01a22 100%)`,
+              background: `linear-gradient(180deg, #d93a3e 0%, #c8222b 55%, #b81b25 100%)`,
             }}
           >
             Continue with Google
           </button>
-          <p className="text-sm text-neutral-600 mt-2">
+          <p className="text-sm text-neutral-600 mt-1.5">
             Access restricted to <span className="font-medium">@skyshare.com</span> email addresses
           </p>
         </div>
