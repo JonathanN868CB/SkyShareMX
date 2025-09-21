@@ -105,7 +105,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       const { data: fetchedProfile, error: profileError } = await supabase
         .from("profiles")
         .select(
-          "id, user_id, email, first_name, last_name, full_name, role, role_enum, is_readonly, status, last_login, created_at, updated_at",
+          "id, user_id, email, first_name, last_name, full_name, role, role_enum, is_super_admin, is_readonly, status, last_login, created_at, updated_at",
         )
         .eq("user_id", userId)
         .maybeSingle();
