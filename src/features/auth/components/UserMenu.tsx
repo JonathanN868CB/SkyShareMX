@@ -43,7 +43,7 @@ export default function UserMenu() {
         </>
       ) : (
         <a
-          href="/login"
+          href="/"
           className="rounded-md border border-border px-3 py-1 hover:bg-accent hover:text-accent-foreground transition-colors"
         >
           Sign in

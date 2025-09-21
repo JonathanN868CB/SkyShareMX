@@ -2,6 +2,7 @@ import { useState } from "react";
 import { MoreHorizontal, Search } from "lucide-react";
 
 import { useUserPermissions, useReadOnly } from "@/hooks/useUserPermissions";
+import { READ_ONLY_REMINDER_MESSAGE } from "@/shared/lib/read-only-reminder";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu";
@@ -28,8 +29,6 @@ const ROLE_LABELS: Record<RoleOption, string> = {
 };
 
 const ROLE_OPTIONS: RoleOption[] = ['admin', 'technician', 'qc', 'viewer'];
-
-const VIEWER_MESSAGE = 'Your account is limited to Viewer access. Ask an admin to upgrade your permissions.';
 
 export function UserManagementTable() {
   const {
@@ -155,7 +154,7 @@ export function UserManagementTable() {
                     <TooltipTrigger asChild>
                       <span className="inline-flex cursor-not-allowed">{roleControl}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{VIEWER_MESSAGE}</TooltipContent>
+                    <TooltipContent>{READ_ONLY_REMINDER_MESSAGE}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               ) : (
@@ -181,7 +180,7 @@ export function UserManagementTable() {
                     <TooltipTrigger asChild>
                       <span className="inline-flex cursor-not-allowed">{readOnlyToggle}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{VIEWER_MESSAGE}</TooltipContent>
+                    <TooltipContent>{READ_ONLY_REMINDER_MESSAGE}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               ) : (

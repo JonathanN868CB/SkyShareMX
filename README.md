@@ -33,7 +33,7 @@ npm run build
 Place reusable UI components in `/src/components/ui/`. These are typically design system components that can be used across pages.
 
 ### Page Components
-Add new pages in `/src/pages/` and register them in `/src/App.tsx` routes.
+Add new pages in `/src/pages/` and register them in `/src/app/routes.tsx`.
 
 ### Layout Components
 Layout-related components (sidebars, headers, etc.) go in `/src/components/layout/`.
@@ -54,9 +54,9 @@ When copying code from design tools:
 
 ## Current Routes
 
-- `/` - Dashboard (welcome page)
-- `/login` - Authentication page with Google login placeholder
-- `/under-construction` - Placeholder for incomplete features
+- `/` - Landing page with Google SSO entry
+- `/app` - Authenticated dashboard shell
+- `/app/under-construction` - Placeholder for incomplete features
 
 ## Architecture
 
@@ -67,10 +67,12 @@ src/
 │   ├── ui/              # Reusable UI components
 │   └── UnderConstruction.tsx
 ├── pages/               # Page components
+│   ├── AuthCallback.tsx
 │   ├── Dashboard.tsx
-│   ├── Login.tsx
+│   ├── Landing.tsx
 │   └── UnderConstructionPage.tsx
-└── App.tsx             # Main routing configuration
+└── app/
+    └── routes.tsx      # Main routing configuration
 ```
 
 ## Sidebar Navigation
