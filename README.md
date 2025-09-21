@@ -2,6 +2,8 @@
 
 A React-based maintenance portal shell for SkyShare aircraft operations.
 
+> **Onboarding:** Team members sign in with Google using their @skyshare.com email; no invitation pipeline is required.
+
 > **Branding note:** Favicon and meta assets live in `/public` (`favicon.svg`, `skyshare-logo.png`, and `site.webmanifest`). Update those files if the SkyShareMX branding package changes.
 
 ## Project Structure
@@ -71,13 +73,6 @@ src/
 └── App.tsx             # Main routing configuration
 ```
 
-## Email invitations
-
-- Invitation emails are sent by the Netlify serverless function at
-  [`netlify/functions/send-user-invitation.ts`](netlify/functions/send-user-invitation.ts).
-- The function uses Nodemailer to send messages through the SkyShare mailbox `jonathan@skyshare.com`.
-- See [`docs/email-invites.md`](docs/email-invites.md) for SMTP configuration details and required environment variables.
-
 ## Sidebar Navigation
 
 The sidebar includes organized sections:
@@ -93,7 +88,7 @@ All operations/admin routes currently redirect to the under-construction page.
 When deploying to Netlify, configure environment variables per context so OAuth redirects and deep links resolve to the correct domain:
 
 - **Deploy Preview builds**: leave `VITE_SITE_URL` unset so the client falls back to the preview origin. Optionally set `VITE_PUBLIC_SITE_URL=${DEPLOY_PRIME_URL}` if you need the URL baked in at build time for Supabase redirects.
-- **Production builds**: set `VITE_SITE_URL=https://skysharemx.com` so Supabase and invitation links always land on the custom domain.
+- **Production builds**: set `VITE_SITE_URL=https://skysharemx.com` so Supabase OAuth redirects always land on the custom domain.
 
 | Variable               | Example value (redacted)         | Where to set in Netlify                               |
 | ---------------------- | -------------------------------- | ----------------------------------------------------- |
@@ -102,16 +97,11 @@ When deploying to Netlify, configure environment variables per context so OAuth 
 | `VITE_SUPABASE_URL`    | `https://<project>.supabase.co`  | Site settings → Build & deploy → Environment          |
 | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…` | Site settings → Build & deploy → Environment          |
 
-Add the following secrets so the invitation function can reach Supabase and the SMTP relay:
+Add the following secrets so Netlify functions can reach Supabase:
 
-| Variable                     | Example value                                | Where to set in Netlify                | ---------------------------- | -------------------------------------------- | ---------------------------------------------- |
+| Variable                     | Example value                                | Where to set in Netlify                |
+| ---------------------------- | -------------------------------------------- | -------------------------------------- |
 | `SUPABASE_URL`               | `https://<project>.supabase.co`              | Site settings → Build & deploy → Environment   |
 | `SUPABASE_SERVICE_ROLE_KEY`  | `<service-role-key>`                         | Site settings → Build & deploy → Environment   |
 | `SITE_URL`                   | `https://skysharemx.com`                     | Site settings → Build & deploy → Environment   |
-| `SMTP_HOST`                  | `smtp.gmail.com`                             | Site settings → Build & deploy → Environment   |
-| `SMTP_PORT`                  | `587`                                        | Site settings → Build & deploy → Environment   |
-| `SMTP_USER`                  | `jonathan@skyshare.com`                      | Site settings → Build & deploy → Environment   |
-| `SMTP_PASS`                  | `<app password>`                             | Site settings → Build & deploy → Environment   |
-| `SMTP_FROM`                  | `SkyShare Maintenance Portal <jonathan@skyshare.com>` | Site settings → Build & deploy → Environment   |
-
 Secrets can be managed securely either through the Netlify UI (the Environment variables panel above) or via the CLI with `netlify env:set <NAME> <VALUE>` so they never live in source control. Ensure the Supabase keys belong to the same project referenced by `SUPABASE_URL`; mismatches will break both invitations and Google OAuth redirect flows.
