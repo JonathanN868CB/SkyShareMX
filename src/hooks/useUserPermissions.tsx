@@ -279,6 +279,25 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     let isActive = true;
     let initialSessionHandled = false;
 
+    const handleHydrationFailure = async () => {
+      if (!isActive) {
+        return;
+      }
+
+      await handleSession(null);
+      initialSessionHandled = true;
+
+      toast({
+        title: "Session expired",
+        description: "Please sign in again.",
+        variant: "destructive",
+      });
+
+      if (typeof window !== "undefined" && window.location.pathname !== "/") {
+        window.location.replace("/");
+      }
+    };
+
     const persistedSessionPromise = (async () => {
       try {
         const {
@@ -288,6 +307,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
         if (error) {
           console.error("Error fetching persisted session:", error);
+          await handleHydrationFailure();
           return null;
         }
 
@@ -296,14 +316,12 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         }
 
         await handleSession(session ?? null);
-
-        if (session) {
-          initialSessionHandled = true;
-        }
+        initialSessionHandled = true;
 
         return session ?? null;
       } catch (error) {
         console.error("Unexpected error hydrating session:", error);
+        await handleHydrationFailure();
         return null;
       }
     })();
