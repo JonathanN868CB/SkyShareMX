@@ -23,6 +23,14 @@ const corsHeaders: Record<string, string> = {
 
 const ROLE_VALUES: Role[] = ["admin", "manager", "technician", "viewer"];
 const STATUS_VALUES: EmploymentStatus[] = ["active", "inactive"];
+const ROLE_NORMALIZATION_ALIASES: Partial<Record<string, Role>> = {
+  "read-only": "viewer",
+  "read only": "viewer",
+  readonly: "viewer",
+  "super-admin": "admin",
+  "super admin": "admin",
+  superadmin: "admin",
+};
 const MASTER_ADMIN_EMAIL = "jonathan@skyshare.com";
 
 function resolveSupabase() {
@@ -41,14 +49,43 @@ function resolveSupabase() {
   });
 }
 
+function normalizeRole(value: unknown): Role | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const canonical = normalized.replace(/[\s_]+/g, "-");
+  const alias = ROLE_NORMALIZATION_ALIASES[normalized] ?? ROLE_NORMALIZATION_ALIASES[canonical];
+
+  if (alias) {
+    return alias;
+  }
+
+  if (ROLE_VALUES.includes(normalized as Role)) {
+    return normalized as Role;
+  }
+
+  if (ROLE_VALUES.includes(canonical as Role)) {
+    return canonical as Role;
+  }
+
+  return undefined;
+}
+
 function mapProfile(row: Record<string, unknown>): UserSummary {
   const fullName = typeof row.full_name === "string" && row.full_name.trim().length > 0 ? row.full_name.trim() : (row.email as string);
+  const role: Role = normalizeRole(row.role) ?? "viewer";
 
   return {
     userId: String(row.user_id ?? ""),
     fullName,
     email: String(row.email ?? ""),
-    role: (row.role ?? "viewer") as Role,
+    role,
     employmentStatus: (row.employment_status ?? "inactive") as EmploymentStatus,
     lastLogin: row.last_login ? String(row.last_login) : null,
     isSuperAdmin: Boolean(row.is_super_admin),
@@ -101,7 +138,7 @@ async function handlePatch(
   const isProtectedEmail = normalizedEmail === MASTER_ADMIN_EMAIL;
 
   if (action === "role") {
-    const nextRole = typeof payload.role === "string" ? (payload.role.toLowerCase() as Role) : undefined;
+    const nextRole = normalizeRole(payload.role);
     if (!nextRole || !ROLE_VALUES.includes(nextRole)) {
       return jsonResponse(400, { error: "Invalid role" });
     }
@@ -191,7 +228,7 @@ async function handleDelete(
   const hadAuthUser = Boolean(authData?.user);
   const profileEmail = normalizeEmail(profile?.email as string | undefined);
   const targetEmail = profileEmail || authEmail;
-  const profileRole = typeof profile?.role === "string" ? String(profile.role).toLowerCase() : "";
+  const profileRole = normalizeRole(profile?.role) ?? "";
   const isSuperAdmin = Boolean(profile?.is_super_admin);
   const isProtected = isSuperAdmin || targetEmail === MASTER_ADMIN_EMAIL || profileRole === "admin";
 
