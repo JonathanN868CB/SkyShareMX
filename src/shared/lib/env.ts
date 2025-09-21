@@ -10,6 +10,16 @@ const envHosts = (import.meta.env.VITE_DEV_HOSTS ?? "")
 
 const uniqueHosts = Array.from(new Set([...DEFAULT_DEV_HOSTS, ...envHosts]));
 
+const TRUTHY_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+
+function isTruthyEnvValue(value?: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
 function matchesHost(hostname: string, candidate: string) {
   if (!candidate) return false;
   const normalized = candidate
@@ -38,16 +48,50 @@ export function isDevEnvironment(): boolean {
   return uniqueHosts.some(candidate => matchesHost(hostname, candidate));
 }
 
+function isLocalDevRuntime(): boolean {
+  if (typeof import.meta !== "undefined") {
+    const metaEnv = import.meta.env as Record<string, unknown>;
+    if (metaEnv?.DEV === true || metaEnv?.DEV === "true") {
+      return true;
+    }
+    if (metaEnv?.MODE === "development") {
+      return true;
+    }
+  }
+
+  if (typeof process !== "undefined" && process.env?.NODE_ENV === "development") {
+    return true;
+  }
+
+  return false;
+}
+
+function isDevBypassFlagEnabled(): boolean {
+  return isTruthyEnvValue(readEnvValue("VITE_ENABLE_DEV_BYPASS"));
+}
+
+export function isDevBypassAllowed(): boolean {
+  return isLocalDevRuntime() || isDevBypassFlagEnabled();
+}
+
 export function isDevBypassActive(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
 
-  return isDevEnvironment() && localStorage.getItem("dev-bypass") === "true";
+  if (!isDevBypassAllowed()) {
+    return false;
+  }
+
+  return localStorage.getItem("dev-bypass") === "true";
 }
 
 export function enableDevBypass() {
   if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!isDevBypassAllowed()) {
     return;
   }
 
