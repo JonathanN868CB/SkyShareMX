@@ -1,0 +1,178 @@
+import { createClient } from "@supabase/supabase-js";
+
+import type { Database } from "../../src/entities/supabase";
+import type { EmploymentStatus, Role, UserSummary, UsersListResponse } from "../../src/lib/types/users";
+
+interface HandlerEvent {
+  httpMethod: string;
+  queryStringParameters?: Record<string, string | undefined>;
+}
+
+interface HandlerResponse {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+};
+
+const ROLE_VALUES: Role[] = ["admin", "manager", "technician", "viewer"];
+const STATUS_VALUES: EmploymentStatus[] = ["active", "inactive"];
+
+function resolveSupabase() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRole = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRole) {
+    throw new Error("Supabase credentials are not configured (SUPABASE_URL, SUPABASE_SERVICE_ROLE)");
+  }
+
+  return createClient<Database>(supabaseUrl, serviceRole, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+function parseNumber(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function normalizeString(value: string | undefined) {
+  return (value ?? "").trim();
+}
+
+function mapProfile(row: Record<string, unknown>): UserSummary {
+  const fullName = typeof row.full_name === "string" && row.full_name.trim().length > 0 ? row.full_name.trim() : (row.email as string);
+
+  return {
+    userId: String(row.user_id ?? ""),
+    fullName,
+    email: String(row.email ?? ""),
+    role: (row.role ?? "viewer") as Role,
+    employmentStatus: (row.employment_status ?? "inactive") as EmploymentStatus,
+    lastLogin: row.last_login ? String(row.last_login) : null,
+    isSuperAdmin: Boolean(row.is_super_admin),
+  };
+}
+
+async function refreshLastLogins(
+  supabase: ReturnType<typeof resolveSupabase>,
+  records: UserSummary[],
+) {
+  await Promise.all(
+    records.map(async record => {
+      try {
+        const { data } = await supabase.auth.admin.getUserById(record.userId);
+        const authUser = data?.user;
+        if (!authUser?.last_sign_in_at) return;
+        const current = record.lastLogin ? Date.parse(record.lastLogin) : 0;
+        const latest = Date.parse(authUser.last_sign_in_at);
+        if (Number.isNaN(latest) || latest <= 0 || latest <= current) return;
+        await supabase
+          .from("profiles")
+          .update({ last_login: authUser.last_sign_in_at })
+          .eq("user_id", record.userId);
+        record.lastLogin = authUser.last_sign_in_at;
+      } catch (error) {
+        console.error("Failed to refresh last login for", record.userId, error);
+      }
+    }),
+  );
+}
+
+export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: corsHeaders };
+  }
+
+  if (event.httpMethod !== "GET") {
+    return {
+      statusCode: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ error: "Method not allowed" }),
+    };
+  }
+
+  try {
+    const supabase = resolveSupabase();
+    const searchTerm = normalizeString(event.queryStringParameters?.search);
+    const roleParam = normalizeString(event.queryStringParameters?.role).toLowerCase();
+    const statusParam = normalizeString(event.queryStringParameters?.status).toLowerCase();
+    const page = parseNumber(event.queryStringParameters?.page, 1);
+    const perPage = parseNumber(event.queryStringParameters?.perPage, 50);
+
+    const safeRole = ROLE_VALUES.includes(roleParam as Role) ? (roleParam as Role) : undefined;
+    const safeStatus = STATUS_VALUES.includes(statusParam as EmploymentStatus)
+      ? (statusParam as EmploymentStatus)
+      : undefined;
+
+    const rangeStart = (page - 1) * perPage;
+    const rangeEnd = rangeStart + perPage - 1;
+
+    let query = supabase
+      .from("profiles")
+      .select("user_id, full_name, email, role, employment_status, last_login, is_super_admin", { count: "exact" })
+      .order("full_name", { ascending: true })
+      .range(rangeStart, rangeEnd);
+
+    if (searchTerm) {
+      const pattern = `%${searchTerm.replace(/%/g, "").replace(/_/g, "")}%`;
+      query = query.or(
+        [
+          `full_name.ilike.${pattern}`,
+          `email.ilike.${pattern}`,
+          `role.ilike.${pattern}`,
+        ].join(","),
+      );
+    }
+
+    if (safeRole) {
+      query = query.eq("role", safeRole);
+    }
+
+    if (safeStatus) {
+      query = query.eq("employment_status", safeStatus);
+    }
+
+    const { data, count, error } = await query;
+
+    if (error) {
+      console.error("Failed to query profiles", error);
+      throw error;
+    }
+
+    const mapped = (data ?? []).map(row => mapProfile(row));
+
+    await refreshLastLogins(supabase, mapped);
+
+    const payload: UsersListResponse = {
+      data: mapped,
+      total: typeof count === "number" ? count : mapped.length,
+      page,
+      perPage,
+    };
+
+    return {
+      statusCode: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    };
+  } catch (error) {
+    console.error("users-list error", error);
+    return {
+      statusCode: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ error: error instanceof Error ? error.message : "Unexpected error" }),
+    };
+  }
+};

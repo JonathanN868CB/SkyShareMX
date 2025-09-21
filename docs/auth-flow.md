@@ -4,16 +4,15 @@
 - Authentication flows through Supabase. After every auth state change we confirm the signed-in email ends with
   `@skyshare.com`.
 - Any other domain is immediately signed out and redirected to `/login`. We stash the message
-  “Only @skyshare.com addresses can sign in. Please use ‘Request access’ to ask for permission.” in session storage so it
+  “Google account must be @skyshare.com.” in session storage so it
   surfaces on the next visit to the login screen.
 - The login screen also links to the request access form for visitors who were rejected by the domain gate.
 
-## Default profile roles & read-only behavior
-- Supabase `profiles` rows now include `role` (text) and `is_readonly` (boolean) alongside the legacy `role_enum` column.
+## Default profile roles & Viewer behavior
+- Supabase `profiles` rows include `role` (text) and `is_readonly` (boolean) alongside the legacy `role_enum` column.
 - First-time SkyShare crew members are inserted as `role='viewer'` and `is_readonly=true`. The UI surfaces a banner and
-  disables mutating actions for read-only accounts.
-- Emails listed in `VITE_ADMIN_EMAILS` are promoted to `role='admin'` with `is_readonly=false` during the upsert. Update
-  the comma-separated environment variable (all lowercase) to maintain the allow-list.
+  disables mutating actions for Viewer accounts.
+- `jonathan@skyshare.com` is promoted to `role='admin'` with `is_readonly=false` during the upsert. Every other `@skyshare.com` account remains a Viewer until an admin elevates them manually.
 
 ## Access request intake
 - Non-skyshare visitors can submit the form at `/request-access`. Submissions insert into `public.access_requests`
@@ -29,7 +28,7 @@
   ```
   Update `status` as you progress the request (`new`, `approved`, `rejected`, `closed`).
 
-## Promoting a user from read-only
+## Promoting a Viewer
 Run the SQL below in Supabase (service role) to elevate a profile. Adjust the email filter to the target user.
 
 ```sql
@@ -59,7 +58,6 @@ update profiles
 ```
 
 ## Environment configuration checklist
-- `VITE_ADMIN_EMAILS`: Comma-separated admin allow-list (used in the browser and Netlify builds).
 - `VITE_ACCESS_REQUEST_FUNCTION_URL` (optional): Override the Netlify function location if the default path changes.
 - `RESEND_API_KEY`: Server-side secret for Resend.
 - `ACCESS_NOTIF_FROM`: Verified sender for access notifications (e.g. `noreply@skysharemx.com`).
@@ -67,9 +65,7 @@ update profiles
 - `SITE_URL` / `VITE_SITE_URL` / `VITE_PUBLIC_SITE_URL`: Ensure OAuth callbacks and email links resolve to the deployed domain.
 
 ## Manual QA playbook
-1. **SkyShare login** – Sign in with an `@skyshare.com` account, confirm the profile is auto-created as a read-only viewer
-   and the dashboard banner/tooltips appear. If the email is in `VITE_ADMIN_EMAILS`, verify full access (no banner) after
-   refreshing the session.
+1. **SkyShare login** – Sign in with an `@skyshare.com` account, confirm the profile is auto-created as a Viewer and the dashboard banner/tooltips appear. Only `jonathan@skyshare.com` should have Admin access (no banner).
 2. **Non-SkyShare login** – Attempt to sign in with a non-skyshare domain. Confirm the app signs out, redirects back to
    `/login`, and displays the gated message.
 3. **Request access flow** – Submit the public form with a non-skyshare email. Confirm the success toast appears, the row

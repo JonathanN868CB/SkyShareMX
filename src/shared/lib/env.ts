@@ -127,9 +127,27 @@ function readEnvValue(key: string): string | undefined {
   return undefined;
 }
 
-const SUPABASE_URL_FALLBACK = "https://vmxeiyzqzdursrdgenqa.supabase.co";
-const SUPABASE_ANON_KEY_FALLBACK =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZteGVpeXpxemR1cnNyZGdlbnFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwNzE5NDgsImV4cCI6MjA3MzY0Nzk0OH0.ACwRUfyEYMjJLiF5d-6Dzh1docfp7cywcAn8wx3k93A";
+function requireEnvValue(keys: string[], description: string): string {
+  for (const key of keys) {
+    const value = readEnvValue(key);
+    if (value) {
+      return value;
+    }
+  }
+
+  const message =
+    `Missing required environment configuration for ${description}. ` +
+    `Set one of: ${keys.join(", ")}.`;
+
+  if (
+    typeof console !== "undefined" &&
+    (typeof process === "undefined" || process.env?.NODE_ENV !== "production")
+  ) {
+    console.warn(message);
+  }
+
+  throw new Error(message);
+}
 
 function resolveEnvSiteUrl() {
   const candidates = [
@@ -152,20 +170,21 @@ function resolveEnvSiteUrl() {
 const SITE_URL_FROM_ENV = resolveEnvSiteUrl();
 
 export function getSupabaseUrl(): string {
-  return (
-    readEnvValue("VITE_SUPABASE_URL") ??
-    readEnvValue("SUPABASE_URL") ??
-    readEnvValue("NEXT_PUBLIC_SUPABASE_URL") ??
-    SUPABASE_URL_FALLBACK
+  return requireEnvValue(
+    ["VITE_SUPABASE_URL", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"],
+    "Supabase URL"
   );
 }
 
 export function getSupabaseAnonKey(): string {
-  return (
-    readEnvValue("VITE_SUPABASE_ANON_KEY") ??
-    readEnvValue("SUPABASE_ANON_KEY") ??
-    readEnvValue("NEXT_PUBLIC_SUPABASE_ANON_KEY") ??
-    SUPABASE_ANON_KEY_FALLBACK
+  return requireEnvValue(
+    [
+      "VITE_SUPABASE_ANON_KEY",
+      "SUPABASE_ANON_KEY",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "VITE_SUPABASE_PUBLISHABLE_KEY",
+    ],
+    "Supabase anonymous key"
   );
 }
 
@@ -180,10 +199,13 @@ export const SITE_URL = getPublicSiteUrl();
 
 export function getAdminEmails(): string[] {
   const raw = readEnvValue("VITE_ADMIN_EMAILS") ?? "";
-  return raw
+  const MASTER_ADMIN_EMAIL = "jonathan@skyshare.com";
+  const configured = raw
     .split(",")
     .map(value => value.trim().toLowerCase())
-    .filter(Boolean);
+    .filter(value => value === MASTER_ADMIN_EMAIL);
+
+  return Array.from(new Set([MASTER_ADMIN_EMAIL, ...configured]));
 }
 
 export function setDomainDeniedMessage(message: string) {
