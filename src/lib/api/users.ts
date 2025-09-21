@@ -5,11 +5,31 @@ import type {
   UsersListResponse,
   UsersQuery,
 } from "@/lib/types/users";
+import { getSession } from "@/shared/lib/api";
 
 const USERS_LIST_ENDPOINT = "/.netlify/functions/users-list";
 const USERS_ADMIN_ENDPOINT = "/.netlify/functions/users-admin";
 
 export let isMockUsersData = false;
+
+async function resolveAccessToken(): Promise<string> {
+  const { data, error } = await getSession();
+  if (error) {
+    throw error;
+  }
+
+  const token = data?.session?.access_token;
+  if (!token) {
+    throw new Error("Authentication required");
+  }
+
+  return token;
+}
+
+export async function buildAuthorizedHeaders(base: Record<string, string> = {}) {
+  const token = await resolveAccessToken();
+  return { ...base, Authorization: `Bearer ${token}` } satisfies Record<string, string>;
+}
 
 const SEARCHABLE_ROLE_LABELS: Record<Role, string> = {
   admin: "Admin",
@@ -71,9 +91,10 @@ export async function listUsers(query: UsersQuery = {}): Promise<UsersListRespon
   assertClientSide();
 
   const queryString = buildQueryString(query);
+  const headers = await buildAuthorizedHeaders({ Accept: "application/json" });
   const response = await fetch(`${USERS_LIST_ENDPOINT}${queryString}`, {
     method: "GET",
-    headers: { "Accept": "application/json" },
+    headers,
   });
 
   const payload = await handleResponse(response);
@@ -86,7 +107,10 @@ async function mutateUser(payload: Record<string, unknown>): Promise<UserSummary
 
   const response = await fetch(USERS_ADMIN_ENDPOINT, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: await buildAuthorizedHeaders({
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
     body: JSON.stringify(payload),
   });
 
