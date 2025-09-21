@@ -1,4 +1,46 @@
+import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { cn } from "@/shared/lib/utils";
+
+type DashboardCard = {
+  key: string;
+  title: string;
+  description: string;
+};
+
 export default function Dashboard() {
+  const { hasPermission, loading } = useUserPermissions();
+
+  const cards: DashboardCard[] = [
+    {
+      key: "overview",
+      title: "Overview",
+      description:
+        "Monitor your fleet status and maintenance schedules at a glance.",
+    },
+  ];
+
+  const shouldShowOperations = loading || hasPermission("Operations");
+  const shouldShowAdministration = loading || hasPermission("Administration");
+
+  if (shouldShowOperations) {
+    cards.push({
+      key: "operations",
+      title: "Operations",
+      description:
+        "Access maintenance tools, planning, and operational controls.",
+    });
+  }
+
+  if (shouldShowAdministration) {
+    cards.push({
+      key: "administration",
+      title: "Administration",
+      description: "Manage users, settings, and system configurations.",
+    });
+  }
+
+  const cardCount = cards.length;
+
   return (
     <div>
       <div className="mb-8">
@@ -10,27 +52,26 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div className="bg-card rounded-lg border border-border p-6">
-          <h3 className="font-heading font-semibold text-lg mb-2">Overview</h3>
-          <p className="text-muted-foreground text-sm">
-            Monitor your fleet status and maintenance schedules at a glance.
-          </p>
-        </div>
-
-        <div className="bg-card rounded-lg border border-border p-6">
-          <h3 className="font-heading font-semibold text-lg mb-2">Operations</h3>
-          <p className="text-muted-foreground text-sm">
-            Access maintenance tools, planning, and operational controls.
-          </p>
-        </div>
-
-        <div className="bg-card rounded-lg border border-border p-6">
-          <h3 className="font-heading font-semibold text-lg mb-2">Administration</h3>
-          <p className="text-muted-foreground text-sm">
-            Manage users, settings, and system configurations.
-          </p>
-        </div>
+      <div
+        className={cn(
+          "grid gap-6",
+          "grid-cols-1",
+          cardCount >= 2 && "md:grid-cols-2",
+          cardCount >= 3 && "lg:grid-cols-3",
+          cardCount === 1 && "max-w-xl mx-auto",
+        )}
+      >
+        {cards.map((card) => (
+          <div
+            key={card.key}
+            className="bg-card rounded-lg border border-border p-6"
+          >
+            <h3 className="font-heading font-semibold text-lg mb-2">
+              {card.title}
+            </h3>
+            <p className="text-muted-foreground text-sm">{card.description}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
