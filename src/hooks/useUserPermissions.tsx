@@ -276,13 +276,53 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       return () => {};
     }
 
+    let isActive = true;
+    let initialSessionHandled = false;
+
+    const persistedSessionPromise = (async () => {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (error) {
+          console.error("Error fetching persisted session:", error);
+          return null;
+        }
+
+        if (!isActive) {
+          return session ?? null;
+        }
+
+        await handleSession(session ?? null);
+
+        if (session) {
+          initialSessionHandled = true;
+        }
+
+        return session ?? null;
+      } catch (error) {
+        console.error("Unexpected error hydrating session:", error);
+        return null;
+      }
+    })();
+
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "INITIAL_SESSION") {
+        await persistedSessionPromise;
+        if (initialSessionHandled) {
+          return;
+        }
+      }
+
       await handleSession(session);
     });
 
     return () => {
+      isActive = false;
       subscription.unsubscribe();
     };
   }, [handleSession]);
