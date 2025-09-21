@@ -13,8 +13,7 @@ import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/sha
 import { toast } from "@/hooks/use-toast";
 
 const SKYSHARE_DOMAIN = "skyshare.com";
-const DOMAIN_DENIED_MESSAGE =
-  "Only @skyshare.com addresses can sign in. Please use ‘Request access’ to ask for permission.";
+const DOMAIN_DENIED_MESSAGE = "Google account must be @skyshare.com.";
 
 const ROLE_ENUM_BY_TEXT: Record<UserProfile["role"], UserProfile["role_enum"]> = {
   admin: "Admin",
@@ -95,6 +94,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [permissions, setPermissions] = useState<AppSection[]>([]);
   const [loading, setLoading] = useState(true);
+  // TODO: Rename these viewer-specific flags to match customer-facing terminology.
   const [isReadOnly, setIsReadOnly] = useState(false);
 
   const adminEmails = useMemo(() => getAdminEmails(), []);

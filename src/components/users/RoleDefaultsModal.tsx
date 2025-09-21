@@ -225,7 +225,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
         <DialogHeader className="space-y-2">
           <DialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Permissions</DialogTitle>
           <DialogDescription>
-            Configure access and workflow defaults for each role. Updates apply to future invites automatically.
+            Configure access and workflow defaults for each role. Updates apply to future Google sign-ins automatically.
           </DialogDescription>
         </DialogHeader>
 
