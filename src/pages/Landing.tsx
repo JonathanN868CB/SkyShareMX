@@ -83,37 +83,53 @@ export default function Landing() {
         `,
       }}
     >
-      <div className="w-[92%] max-w-3xl rounded-[22px] bg-white/65 backdrop-blur-xl border border-white/30 shadow-[0_12px_48px_rgba(0,0,0,.18)] ring-1 ring-black/5 px-8 py-9 md:px-12 md:py-11">
-        <div className="flex flex-col items-center gap-6 text-center">
-          {/* Horizontal SkyShare wordmark */}
-          <img
-            src="/brands/skyshare-lockup.png"
-            alt="SkyShare"
-            className="h-8 md:h-10 opacity-90 select-none"
-            draggable={false}
-          />
-          <div>
-            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-neutral-900">Maintenance Portal</h1>
-            <p className="mt-2 text-base md:text-lg text-neutral-600">The home base for SkyShare Maintenance</p>
-          </div>
-          {domainMessage ? (
-            <div className="w-full rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
-              {domainMessage}
+      <div className="relative w-[92%] max-w-xl">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 rounded-[34px] opacity-70 blur-[90px]"
+          style={{
+            background:
+              "radial-gradient(110% 120% at 28% 18%, rgba(255,255,255,0.75), rgba(255,255,255,0))",
+          }}
+        />
+        <div
+          className="relative overflow-hidden rounded-[26px] border border-white/45 px-8 py-9 md:px-12 md:py-11 shadow-[0_28px_60px_rgba(20,25,45,0.22)] ring-1 ring-white/55 backdrop-blur-3xl"
+          style={{
+            background:
+              "linear-gradient(164deg, rgba(255,255,255,0.88) 0%, rgba(255,255,255,0.7) 48%, rgba(255,255,255,0.52) 100%)",
+          }}
+        >
+          <div className="flex flex-col items-center gap-7 text-center">
+            {/* Horizontal SkyShare wordmark */}
+            <img
+              src="/brands/skyshare-lockup.png"
+              alt="SkyShare"
+              className="w-48 md:w-60 lg:w-[17rem] select-none drop-shadow-sm"
+              draggable={false}
+            />
+            <div className="max-w-sm">
+              <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-neutral-900">Maintenance Portal</h1>
+              <p className="mt-3 text-base md:text-lg text-neutral-600">The home base for SkyShare Maintenance</p>
             </div>
-          ) : null}
-          <button
-            onClick={handleGoogle}
-            className="w-full md:w-auto px-7 py-3 md:px-9 md:py-3 rounded-xl font-semibold text-white border border-white/20 shadow-[0_6px_20px_rgba(193,34,43,.35)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-400"
-            aria-label="Continue with Google"
-            style={{
-              background: `linear-gradient(180deg, #d93a3e 0%, #c8222b 55%, #b81b25 100%)`,
-            }}
-          >
-            Continue with Google
-          </button>
-          <p className="text-sm text-neutral-600 mt-1.5">
-            Access restricted to <span className="font-medium">@skyshare.com</span> email addresses
-          </p>
+            {domainMessage ? (
+              <div className="w-full rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 shadow-sm">
+                {domainMessage}
+              </div>
+            ) : null}
+            <button
+              onClick={handleGoogle}
+              className="w-full md:w-auto min-w-[240px] px-7 py-3 md:px-9 md:py-3 rounded-xl font-semibold text-white border border-white/20 shadow-[0_6px_20px_rgba(193,34,43,.35)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-400"
+              aria-label="Continue with Google"
+              style={{
+                background: `linear-gradient(180deg, #d93a3e 0%, #c8222b 55%, #b81b25 100%)`,
+              }}
+            >
+              Continue with Google
+            </button>
+            <p className="text-sm text-neutral-600 mt-1.5">
+              Access restricted to <span className="font-medium">@skyshare.com</span> email addresses
+            </p>
+          </div>
         </div>
       </div>
     </div>
