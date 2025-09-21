@@ -178,6 +178,10 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         resolvedEnum = ROLE_ENUM_BY_TEXT[resolvedRole] ?? resolvedEnum;
       }
 
+      if (!isAllowListed) {
+        return;
+      }
+
       const fullName = deriveFullName(authUser, existingProfile?.full_name);
 
       const { error: upsertError } = await supabase
@@ -240,9 +244,14 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
       try {
         await ensureProfile(activeSession);
+      } catch (error) {
+        console.error("Error ensuring profile (continuing with load attempt):", error);
+      }
+
+      try {
         await loadProfileAndPermissions(activeSession.user.id);
       } catch (error) {
-        console.error("Error ensuring profile:", error);
+        console.error("Error loading profile and permissions:", error);
         toast({
           title: "Authentication error",
           description: "We couldn't load your profile. Please try again.",
