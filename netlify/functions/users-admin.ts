@@ -6,6 +6,7 @@ import type { EmploymentStatus, Role, UserSummary } from "../../src/lib/types/us
 interface HandlerEvent {
   httpMethod: string;
   body?: string | null;
+  headers?: Record<string, string | undefined>;
   queryStringParameters?: Record<string, string | undefined>;
 }
 
@@ -47,6 +48,86 @@ function resolveSupabase() {
       persistSession: false,
     },
   });
+}
+
+function resolveSupabaseAuthClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey =
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.VITE_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !anonKey) {
+    throw new Error("Supabase credentials are not configured (SUPABASE_URL, SUPABASE_ANON_KEY)");
+  }
+
+  return createClient<Database>(supabaseUrl, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+function getAccessToken(event: HandlerEvent) {
+  const header = event.headers?.authorization ?? event.headers?.Authorization;
+  if (!header) {
+    return null;
+  }
+
+  const parts = header.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0];
+  }
+
+  const [scheme, ...rest] = parts;
+  if (!/^bearer$/i.test(scheme)) {
+    return null;
+  }
+
+  const token = rest.join(" ").trim();
+  return token.length > 0 ? token : null;
+}
+
+async function requireAdmin(
+  event: HandlerEvent,
+  supabase: ReturnType<typeof resolveSupabase>,
+): Promise<HandlerResponse | { userId: string }> {
+  const token = getAccessToken(event);
+  if (!token) {
+    return jsonResponse(401, { error: "Authentication required" });
+  }
+
+  const authClient = resolveSupabaseAuthClient();
+  const { data, error } = await authClient.auth.getUser(token);
+
+  if (error || !data?.user) {
+    console.error("Failed to verify Supabase session", error);
+    const status = error?.status ?? 401;
+    return jsonResponse(status === 404 ? 401 : status, { error: "Invalid or expired session" });
+  }
+
+  const userId = data.user.id;
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("user_id, role, role_enum, is_super_admin")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("Failed to load profile for authorization", profileError);
+    return jsonResponse(500, { error: "Unable to verify permissions" });
+  }
+
+  const normalizedRole = typeof profile?.role === "string" ? profile.role.toLowerCase() : "";
+  const roleEnum = typeof profile?.role_enum === "string" ? profile.role_enum : "";
+  const isSuperAdmin = Boolean(profile?.is_super_admin) || roleEnum === "Super Admin";
+
+  if (normalizedRole !== "admin" && !isSuperAdmin) {
+    return jsonResponse(403, { error: "Forbidden" });
+  }
+
+  return { userId };
 }
 
 function normalizeRole(value: unknown): Role | undefined {
@@ -264,6 +345,10 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   try {
     const supabase = resolveSupabase();
+    const authResult = await requireAdmin(event, supabase);
+    if ("statusCode" in authResult) {
+      return authResult;
+    }
     if (event.httpMethod === "PATCH") {
       const payload = event.body ? (JSON.parse(event.body) as Record<string, unknown>) : {};
       return await handlePatch(supabase, payload);
