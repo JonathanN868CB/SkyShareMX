@@ -40,13 +40,13 @@ export default function AuthCallback() {
           console.log("✅ AuthCallback: Authentication successful, redirecting");
           navigate(targetPath, { replace: true });
         } else {
-          console.log("❌ AuthCallback: No session found, redirecting to login");
-          navigate("/login", { replace: true });
+          console.log("❌ AuthCallback: No session found, redirecting to landing");
+          navigate("/", { replace: true });
         }
       } catch (error) {
         console.error("❌ AuthCallback: Error:", error);
         if (mounted) {
-          navigate("/login", { replace: true });
+          navigate("/", { replace: true });
         }
       }
     };
