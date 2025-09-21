@@ -36,24 +36,33 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
       return;
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) {
-        setHasSession(true);
-        setLoading(false);
-      } else {
-        const intendedPath = `${location.pathname}${location.search}${location.hash}`;
-        rememberReturnTo(intendedPath);
-        if (devBypassAllowed) {
-          console.log("🚧 ProtectedRoute: No session in preview/dev, enabling dev bypass automatically");
-          enableDevBypass();
+    const checkSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
           setHasSession(true);
-          setLoading(false);
         } else {
-          setHasSession(false);
-          setLoading(false);
+          const intendedPath = `${location.pathname}${location.search}${location.hash}`;
+          rememberReturnTo(intendedPath);
+          if (devBypassAllowed) {
+            console.log(
+              "🚧 ProtectedRoute: No session in preview/dev, enabling dev bypass automatically",
+            );
+            enableDevBypass();
+            setHasSession(true);
+          } else {
+            setHasSession(false);
+          }
         }
+      } catch (error) {
+        console.error("🔒 ProtectedRoute: Failed to retrieve session", error);
+        setHasSession(false);
+      } finally {
+        setLoading(false);
       }
-    });
+    };
+
+    checkSession();
   }, [location.hash, location.pathname, location.search]);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
