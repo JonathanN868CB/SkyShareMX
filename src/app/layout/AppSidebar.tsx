@@ -1,11 +1,11 @@
 import { NavLink } from "react-router-dom";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
 import logoAsset from "@/shared/assets/skyshare-logo.png";
-import { 
-  Home, 
-  Plane, 
-  CheckSquare, 
-  Calendar, 
+import {
+  Home,
+  Plane,
+  CheckSquare,
+  Calendar,
   ClipboardList,
   Settings,
   Users,
@@ -14,7 +14,9 @@ import {
   FileText,
   Wrench,
   BookOpen,
-  FolderOpen
+  FolderOpen,
+  MessageSquare,
+  Building,
 } from "lucide-react";
 
 import {
@@ -36,6 +38,7 @@ const sidebarSections = [
     items: [
       { name: "Dashboard", path: "/app", icon: Home, exact: true },
       { name: "Aircraft Info", path: "/app/under-construction", icon: Plane },
+      { name: "AI Assistant", path: "/app/ai-assistant", icon: MessageSquare },
     ],
   },
   {
@@ -46,6 +49,7 @@ const sidebarSections = [
       { name: "14-Day Check", path: "/app/under-construction", icon: Calendar },
       { name: "Maintenance Planning", path: "/app/under-construction", icon: ClipboardList },
       { name: "Ten or More", path: "/app/under-construction", icon: Wrench },
+      { name: "Terminal-OGD", path: "/app/terminal-ogd", icon: Building },
       { name: "Maintenance Control", path: "/app/under-construction", icon: Settings },
       { name: "Projects", path: "/app/under-construction", icon: FolderOpen },
       { name: "Training", path: "/app/under-construction", icon: BookOpen },
