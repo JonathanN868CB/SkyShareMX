@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
 import logoAsset from "@/shared/assets/skyshare-logo.png";
+import { isDevBypassActive } from "@/shared/lib/env";
 import {
   Home,
   Plane,
@@ -77,6 +79,14 @@ const sidebarSections = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const { hasPermission, loading } = useUserPermissions();
+  const devBypassActive = isDevBypassActive();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!devBypassActive && localStorage.getItem("dev-bypass")) {
+      localStorage.removeItem("dev-bypass");
+    }
+  }, [devBypassActive]);
 
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
     isActive
@@ -84,9 +94,8 @@ export function AppSidebar() {
       : "text-sidebar-foreground hover:bg-sidebar-hover";
 
   const shouldShowSection = (section: typeof sidebarSections[0]) => {
-    const isDevBypass = typeof window !== 'undefined' && localStorage.getItem('dev-bypass') === 'true';
     if (loading) return true; // don't hide while loading
-    if (isDevBypass) return true; // show everything when dev bypass is on
+    if (devBypassActive) return true; // show everything when dev bypass is on
     if (section.permission === 'Overview') return true; // always show Overview
     return hasPermission(section.permission);
   };
