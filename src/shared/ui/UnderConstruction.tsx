@@ -19,11 +19,6 @@ export function UnderConstruction() {
           loading="lazy"
         />
         <p className="text-sm text-muted-foreground mb-4">{jokeLine}</p>
-        <p className="text-muted-foreground">
-          Our SkyShare crew is busy teaching clouds to carpool—this feature will
-          be cleared for takeoff before you can say "in-flight Wi-Fi." Thanks
-          for cruising with us!
-        </p>
       </div>
     </div>
   );
