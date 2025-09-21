@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, type MouseEvent as ReactMouseEvent } from "react";
 import { NavLink } from "react-router-dom";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { useIsSuperAdmin } from "@/features/auth";
 import logoAsset from "@/shared/assets/skyshare-logo.png";
 import { isDevBypassActive } from "@/shared/lib/env";
+import { cn } from "@/shared/lib/utils";
+import { showAccessDenied } from "@/shared/ui/access-denied-dialog";
 import {
   Home,
   Plane,
@@ -82,6 +84,14 @@ const SAFE_SECTION_PERMISSIONS = new Set<
   (typeof sidebarSections)[number]["permission"]
 >(["Overview"]);
 
+type SidebarSection = (typeof sidebarSections)[number];
+type SidebarItem = SidebarSection["items"][number];
+type SectionPermissionState = "granted" | "denied" | "loading";
+type SidebarSectionWithAccess = SidebarSection & {
+  items: Array<SidebarItem & { canNavigate: boolean }>;
+  permissionState: SectionPermissionState;
+};
+
 export function AppSidebar() {
   const { state } = useSidebar();
   const { hasPermission, loading } = useUserPermissions();
@@ -95,36 +105,57 @@ export function AppSidebar() {
     }
   }, [devBypassActive]);
 
-  const getNavCls = ({ isActive }: { isActive: boolean }) =>
-    isActive
-      ? "bg-sidebar-active text-white font-medium"
-      : "text-sidebar-foreground hover:bg-sidebar-hover";
+  const getNavCls = (isActive: boolean, canNavigate: boolean) =>
+    cn(
+      isActive
+        ? "bg-sidebar-active text-white font-medium"
+        : "text-sidebar-foreground hover:bg-sidebar-hover",
+      !canNavigate && "text-sidebar-foreground/50 hover:bg-transparent cursor-not-allowed",
+    );
 
-  const shouldShowSection = (section: (typeof sidebarSections)[number]) => {
-    if (devBypassActive) return true; // show everything when dev bypass is on
-    if (SAFE_SECTION_PERMISSIONS.has(section.permission)) return true; // always show safe sections
-    if (loading) return false; // defer sensitive sections until permissions resolve
-    return hasPermission(section.permission);
+  const handleDeniedNavigation = (
+    event: ReactMouseEvent<HTMLAnchorElement>,
+    canNavigate: boolean,
+  ) => {
+    if (canNavigate) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    showAccessDenied();
   };
 
-  const processedSections = sidebarSections
-    .map(section => {
-      if (devBypassActive) {
-        return section;
-      }
+  const getSectionPermissionState = (
+    section: SidebarSection,
+  ): SectionPermissionState => {
+    if (devBypassActive) return "granted";
+    if (SAFE_SECTION_PERMISSIONS.has(section.permission)) return "granted";
+    if (loading) return "loading";
+    return hasPermission(section.permission) ? "granted" : "denied";
+  };
 
-      const filteredItems = section.items.filter(item => {
-        if (item.path === "/app/admin/users") {
-          return isSuperAdmin;
-        }
-        return true;
+  const processedSections: SidebarSectionWithAccess[] = sidebarSections
+    .map(section => {
+      const permissionState = getSectionPermissionState(section);
+
+      const itemsWithAccess = section.items.map(item => {
+        const requiresSuperAdmin = item.path === "/app/admin/users";
+        const canNavigate =
+          devBypassActive ||
+          SAFE_SECTION_PERMISSIONS.has(section.permission) ||
+          (permissionState === "granted" && (!requiresSuperAdmin || isSuperAdmin));
+
+        return { ...item, canNavigate };
       });
 
-      return { ...section, items: filteredItems };
+      return {
+        ...section,
+        items: itemsWithAccess,
+        permissionState,
+      };
     })
     .filter(section => section.items.length > 0);
-
-  const shouldRenderSkeletons = loading && !devBypassActive;
 
   return (
     <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
@@ -158,15 +189,9 @@ export function AppSidebar() {
         {/* Navigation */}
         <div className="flex-1 p-4 space-y-6">
           {processedSections.map(section => {
-            const canRenderSection = shouldShowSection(section);
             const showSkeleton =
-              shouldRenderSkeletons &&
-              !SAFE_SECTION_PERMISSIONS.has(section.permission) &&
-              !canRenderSection;
-
-            if (!canRenderSection && !showSkeleton) {
-              return null;
-            }
+              section.permissionState === "loading" &&
+              !SAFE_SECTION_PERMISSIONS.has(section.permission);
 
             return (
               <SidebarGroup key={section.title}>
@@ -175,14 +200,29 @@ export function AppSidebar() {
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {canRenderSection
-                      ? section.items.map(item => (
+                    {showSkeleton
+                      ? section.items.map((_, index) => (
+                          <SidebarMenuItem key={`${section.title}-skeleton-${index}`}>
+                            <SidebarMenuSkeleton showIcon aria-hidden="true" />
+                          </SidebarMenuItem>
+                        ))
+                      : section.items.map(item => (
                           <SidebarMenuItem key={item.name}>
                             <SidebarMenuButton asChild>
                               <NavLink
                                 to={item.path}
-                                className={getNavCls}
+                                className={({ isActive }) =>
+                                  getNavCls(isActive, item.canNavigate)
+                                }
                                 end={Boolean(item.exact)}
+                                aria-disabled={!item.canNavigate}
+                                data-disabled={item.canNavigate ? undefined : true}
+                                onClick={event =>
+                                  handleDeniedNavigation(event, item.canNavigate)
+                                }
+                                onAuxClick={event =>
+                                  handleDeniedNavigation(event, item.canNavigate)
+                                }
                               >
                                 <item.icon className="w-4 h-4 flex-shrink-0" />
                                 {state !== "collapsed" && (
@@ -190,11 +230,6 @@ export function AppSidebar() {
                                 )}
                               </NavLink>
                             </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ))
-                      : section.items.map((_, index) => (
-                          <SidebarMenuItem key={`${section.title}-skeleton-${index}`}>
-                            <SidebarMenuSkeleton showIcon aria-hidden="true" />
                           </SidebarMenuItem>
                         ))}
                   </SidebarMenu>
