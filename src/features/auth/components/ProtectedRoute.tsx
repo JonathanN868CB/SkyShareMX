@@ -46,6 +46,6 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
   }, [location.hash, location.pathname, location.search]);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
-  if (!hasSession) return <Navigate to="/login" replace />;
+  if (!hasSession) return <Navigate to="/" replace />;
   return children;
 }
