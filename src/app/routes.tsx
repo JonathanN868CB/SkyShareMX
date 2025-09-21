@@ -11,7 +11,7 @@ const AppLayout = lazy(() => import("./layout/Layout").then(module => ({ default
 const LandingPage = lazy(() => import("@/pages/Landing"));
 const AuthCallbackPage = lazy(() => import("@/pages/AuthCallback"));
 const DashboardPage = lazy(() => import("@/pages/Dashboard"));
-const AIAssistantLandingPage = lazy(() => import("@/pages/AIAssistantLanding"));
+const AIAssistantLanding = lazy(() => import("@/pages/AIAssistantLanding"));
 const UnderConstructionPage = lazy(() => import("@/pages/UnderConstructionPage"));
 const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
@@ -55,7 +55,7 @@ const routes: RouteObject[] = [
       },
       {
         path: "ai-assistant",
-        element: withSuspense(<AIAssistantLandingPage />),
+        element: withSuspense(<AIAssistantLanding />),
       },
       ...featureChildren,
       {
