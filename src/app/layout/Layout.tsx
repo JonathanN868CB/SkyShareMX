@@ -20,7 +20,7 @@ export function Layout() {
           </header>
           {isReadOnly && (
             <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 text-sm text-amber-900">
-              Your account is read-only. Ask an admin to upgrade your access.
+              Your account is set to Viewer access. Ask an admin to upgrade your permissions.
             </div>
           )}
           <main className="flex-1 p-6 bg-background">

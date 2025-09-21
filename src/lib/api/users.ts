@@ -18,12 +18,6 @@ const SEARCHABLE_ROLE_LABELS: Record<Role, string> = {
   viewer: "Viewer",
 };
 
-export interface InviteUserPayload {
-  email: string;
-  fullName: string;
-  role: Role;
-}
-
 function assertClientSide() {
   if (typeof window === "undefined" && typeof fetch === "undefined") {
     throw new Error("Users API is not available in this execution environment");
@@ -100,19 +94,6 @@ async function mutateUser(payload: Record<string, unknown>): Promise<UserSummary
   return (parsed?.user ?? parsed) as UserSummary;
 }
 
-export async function inviteUser({ email, fullName, role }: InviteUserPayload): Promise<UserSummary> {
-  assertClientSide();
-
-  const response = await fetch(USERS_ADMIN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ email, fullName, role }),
-  });
-
-  const parsed = await handleResponse(response);
-  return (parsed?.user ?? parsed) as UserSummary;
-}
-
 export async function updateUserRole(userId: string, role: Role): Promise<UserSummary> {
   return mutateUser({ userId, action: "role", role });
 }
@@ -162,7 +143,7 @@ const mockUsersSeed: UserSummary[] = [
     userId: "55555555-5555-4555-8555-555555555555",
     fullName: "Imani Brooks",
     email: "imani.brooks@skyshare.com",
-    role: "admin",
+    role: "manager",
     employmentStatus: "inactive",
     lastLogin: new Date("2023-12-20T11:10:00Z").toISOString(),
     isSuperAdmin: false,

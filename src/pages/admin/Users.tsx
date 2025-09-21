@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
-import { AddUserModal } from "@/components/users/AddUserModal";
 import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 import { UsersFilters } from "@/components/users/UsersFilters";
 import { UsersTable } from "@/components/users/UsersTable";
@@ -13,6 +12,7 @@ import { toast as notify } from "@/hooks/use-toast";
 import { toast as sonnerToast } from "@/shared/ui/sonner";
 
 const PER_PAGE = 50;
+const MASTER_ADMIN_EMAIL = "jonathan@skyshare.com";
 
 export default function UsersPage() {
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -91,9 +91,33 @@ export default function UsersPage() {
 
   const pendingRoleIds = useMemo(() => Array.from(pendingRoles), [pendingRoles]);
   const pendingStatusIds = useMemo(() => Array.from(pendingStatuses), [pendingStatuses]);
-  const hasSuperAdmin = useMemo(() => lockedUserIds.length > 0, [lockedUserIds]);
-
   const handleRoleChange = async (userId: string, nextRole: Role) => {
+    const targetUser = users.find(user => user.userId === userId);
+    if (!targetUser) {
+      return;
+    }
+
+    const normalizedEmail = targetUser.email.trim().toLowerCase();
+    const isMasterAdmin = normalizedEmail === MASTER_ADMIN_EMAIL;
+
+    if (nextRole === "admin" && !isMasterAdmin) {
+      notify({
+        title: "Admin locked",
+        description: "Only Jonathan Schaedig can hold Admin access.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (isMasterAdmin && nextRole !== "admin") {
+      notify({
+        title: "Protected account",
+        description: "Jonathan’s admin access cannot be changed.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (mockMode) {
       setUsers(prev => prev.map(user => (user.userId === userId ? { ...user, role: nextRole } : user)));
       notify({
@@ -167,7 +191,7 @@ export default function UsersPage() {
       const response = await deleteUser(user.userId);
       if (response.ok) {
         setUsers(prev => prev.filter(existing => existing.userId !== user.userId));
-        sonnerToast.success(response.message);
+        sonnerToast.success("User deleted. They can sign in again any time.");
       } else {
         sonnerToast.info(response.message);
       }
@@ -217,12 +241,6 @@ export default function UsersPage() {
       >
         Role Defaults
       </Button>
-      <AddUserModal
-        onSuccess={handleRefresh}
-        disabled={disableControls}
-        mockMode={mockMode}
-        hasSuperAdmin={hasSuperAdmin}
-      />
     </div>
   );
 
@@ -272,7 +290,7 @@ export default function UsersPage() {
         }}
         onRetry={handleRefresh}
         headerTitle="Users"
-        headerDescription="Invite teammates, update roles, and manage employment status."
+        headerDescription="Review SkyShare roles and employment status for your team."
         headerActions={headerActions}
         filters={filters}
       />

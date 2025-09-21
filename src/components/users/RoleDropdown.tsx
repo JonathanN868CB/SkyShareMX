@@ -17,9 +17,12 @@ interface RoleDropdownProps {
   disabled?: boolean;
   loading?: boolean;
   id?: string;
+  options?: Role[];
 }
 
-export function RoleDropdown({ value, onChange, disabled = false, loading = false, id }: RoleDropdownProps) {
+export function RoleDropdown({ value, onChange, disabled = false, loading = false, id, options }: RoleDropdownProps) {
+  const availableRoles = options && options.length > 0 ? options : (Object.keys(roleLabels) as Role[]);
+
   return (
     <Select value={value} onValueChange={next => onChange(next as Role)} disabled={disabled || loading}>
       <SelectTrigger
@@ -34,7 +37,7 @@ export function RoleDropdown({ value, onChange, disabled = false, loading = fals
         {loading && <Loader2 className="ml-2 h-4 w-4 animate-spin text-slate-400" aria-hidden />}
       </SelectTrigger>
       <SelectContent className="w-[180px]">
-        {(Object.keys(roleLabels) as Role[]).map(option => (
+        {availableRoles.map(option => (
           <SelectItem
             key={option}
             value={option}

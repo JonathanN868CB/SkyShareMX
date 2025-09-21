@@ -199,10 +199,13 @@ export const SITE_URL = getPublicSiteUrl();
 
 export function getAdminEmails(): string[] {
   const raw = readEnvValue("VITE_ADMIN_EMAILS") ?? "";
-  return raw
+  const MASTER_ADMIN_EMAIL = "jonathan@skyshare.com";
+  const configured = raw
     .split(",")
     .map(value => value.trim().toLowerCase())
-    .filter(Boolean);
+    .filter(value => value === MASTER_ADMIN_EMAIL);
+
+  return Array.from(new Set([MASTER_ADMIN_EMAIL, ...configured]));
 }
 
 export function setDomainDeniedMessage(message: string) {
