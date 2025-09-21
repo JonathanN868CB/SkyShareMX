@@ -22,6 +22,14 @@ const corsHeaders: Record<string, string> = {
 
 const ROLE_VALUES: Role[] = ["admin", "manager", "technician", "viewer"];
 const STATUS_VALUES: EmploymentStatus[] = ["active", "inactive"];
+const ROLE_NORMALIZATION_ALIASES: Partial<Record<string, Role>> = {
+  "read-only": "viewer",
+  "read only": "viewer",
+  readonly: "viewer",
+  "super-admin": "admin",
+  "super admin": "admin",
+  superadmin: "admin",
+};
 
 function resolveSupabase() {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -51,14 +59,43 @@ function normalizeString(value: string | undefined) {
   return (value ?? "").trim();
 }
 
+function normalizeRole(value: unknown): Role | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const canonical = normalized.replace(/[\s_]+/g, "-");
+  const alias = ROLE_NORMALIZATION_ALIASES[normalized] ?? ROLE_NORMALIZATION_ALIASES[canonical];
+
+  if (alias) {
+    return alias;
+  }
+
+  if (ROLE_VALUES.includes(normalized as Role)) {
+    return normalized as Role;
+  }
+
+  if (ROLE_VALUES.includes(canonical as Role)) {
+    return canonical as Role;
+  }
+
+  return undefined;
+}
+
 function mapProfile(row: Record<string, unknown>): UserSummary {
   const fullName = typeof row.full_name === "string" && row.full_name.trim().length > 0 ? row.full_name.trim() : (row.email as string);
+  const role: Role = normalizeRole(row.role) ?? "viewer";
 
   return {
     userId: String(row.user_id ?? ""),
     fullName,
     email: String(row.email ?? ""),
-    role: (row.role ?? "viewer") as Role,
+    role,
     employmentStatus: (row.employment_status ?? "inactive") as EmploymentStatus,
     lastLogin: row.last_login ? String(row.last_login) : null,
     isSuperAdmin: Boolean(row.is_super_admin),
