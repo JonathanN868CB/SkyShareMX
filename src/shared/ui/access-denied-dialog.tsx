@@ -10,6 +10,7 @@ import {
 
 import logoAsset from "@/shared/assets/skyshare-logo.png";
 import { getAdminEmails } from "@/shared/lib/env";
+import { READ_ONLY_REMINDER_MESSAGE } from "@/shared/lib/read-only-reminder";
 import { Button } from "./button";
 import {
   Dialog,
@@ -20,36 +21,50 @@ import {
   DialogTitle,
 } from "./dialog";
 
+type DialogVariant = "access-denied" | "read-only-reminder";
+
 type AccessDeniedDialogContextValue = {
-  show: () => void;
+  show: (variant?: DialogVariant) => void;
   hide: () => void;
 };
 
 const AccessDeniedDialogContext = createContext<AccessDeniedDialogContextValue | null>(null);
 
-const warnMissingProvider = () => {
+const warnMissingProvider = (caller: string) => {
   if (import.meta.env.DEV) {
-    console.warn("showAccessDenied() called before AccessDeniedDialogProvider mounted.");
+    console.warn(`${caller} called before AccessDeniedDialogProvider mounted.`);
   }
 };
 
-let showAccessDeniedHandler: () => void = warnMissingProvider;
+let showAccessDeniedHandler: () => void = () => warnMissingProvider("showAccessDenied()");
+let showReadOnlyReminderHandler: () => void = () => warnMissingProvider("showReadOnlyReminder()");
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function showAccessDenied() {
   showAccessDeniedHandler();
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
+export function showReadOnlyReminder() {
+  showReadOnlyReminderHandler();
+}
+
 export function AccessDeniedDialogProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [variant, setVariant] = useState<DialogVariant>("access-denied");
 
-  const show = useCallback(() => setOpen(true), []);
+  const show = useCallback((nextVariant: DialogVariant = "access-denied") => {
+    setVariant(nextVariant);
+    setOpen(true);
+  }, []);
   const hide = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
-    showAccessDeniedHandler = show;
+    showAccessDeniedHandler = () => show("access-denied");
+    showReadOnlyReminderHandler = () => show("read-only-reminder");
     return () => {
-      showAccessDeniedHandler = warnMissingProvider;
+      showAccessDeniedHandler = () => warnMissingProvider("showAccessDenied()");
+      showReadOnlyReminderHandler = () => warnMissingProvider("showReadOnlyReminder()");
     };
   }, [show]);
 
@@ -63,6 +78,22 @@ export function AccessDeniedDialogProvider({ children }: { children: ReactNode }
     }
     return `mailto:${recipients.join(",")}`;
   }, [adminEmails]);
+
+  const dialogCopy = useMemo(() => {
+    if (variant === "read-only-reminder") {
+      return {
+        title: "Viewer access",
+        description: READ_ONLY_REMINDER_MESSAGE,
+        body: "Reach out to your SkyShare administrator to request elevated permissions.",
+      };
+    }
+
+    return {
+      title: "Access restricted",
+      description: "You don’t have access to this module.",
+      body: "Reach out to your SkyShare administrator to request the permissions you need.",
+    };
+  }, [variant]);
 
   return (
     <AccessDeniedDialogContext.Provider value={contextValue}>
@@ -78,15 +109,13 @@ export function AccessDeniedDialogProvider({ children }: { children: ReactNode }
             />
             <DialogHeader className="space-y-2 text-center">
               <DialogTitle className="text-xl font-semibold text-foreground">
-                Access restricted
+                {dialogCopy.title}
               </DialogTitle>
               <DialogDescription className="text-base">
-                You don’t have access to this module.
+                {dialogCopy.description}
               </DialogDescription>
             </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              Reach out to your SkyShare administrator to request the permissions you need.
-            </p>
+            <p className="text-sm text-muted-foreground">{dialogCopy.body}</p>
             <DialogFooter className="w-full justify-center">
               <Button asChild className="px-6" onClick={hide}>
                 <a href={contactHref}>Contact an admin</a>

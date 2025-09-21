@@ -1,9 +1,9 @@
-import { UserManagementTable } from "./UserManagementTable";
 import { useReadOnly } from "@/hooks/useUserPermissions";
+import { READ_ONLY_REMINDER_MESSAGE } from "@/shared/lib/read-only-reminder";
+import { UserManagementTable } from "./UserManagementTable";
 
 export default function UserManagement() {
   const isReadOnly = useReadOnly();
-  const viewerMessage = "Your account is limited to Viewer access. Ask an admin to upgrade your permissions.";
 
   return (
     <div className="space-y-6">
@@ -12,7 +12,7 @@ export default function UserManagement() {
         <p className="text-base text-muted-foreground">
           Review viewer defaults and adjust elevated roles for the SkyShare team.
         </p>
-        {isReadOnly && <p className="text-sm text-muted-foreground">{viewerMessage}</p>}
+        {isReadOnly && <p className="text-sm text-muted-foreground">{READ_ONLY_REMINDER_MESSAGE}</p>}
       </div>
 
       <UserManagementTable />
