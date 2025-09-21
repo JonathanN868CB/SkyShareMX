@@ -1,7 +1,7 @@
 # Users directory & administration
 
 The Users page surfaces a complete list of profiles with inline role and employment-status controls. It depends on three Netlify
-functions and a Supabase table. This document captures the operational details you need when deploying or maintaining the
+functions and a Supabase table. New SkyShare teammates self-onboard by signing in with Google using their `@skyshare.com` email, so no invitation workflow is required. This document captures the operational details you need when deploying or maintaining the
 feature.
 
 ## Environment variables
@@ -26,8 +26,8 @@ Configure the following variables for any environment that needs live data:
 
 ### `users-admin`
 
-* **POST:** Invites a new user (`{ email, fullName, role }`), upserts `profiles` with `employment_status='active'` and `is_super_admin=false`.
-* **PATCH:** Mutates either `role` or `employment_status`. Super-admin rows return `403`.
+* **DELETE:** Removes a user by `id`. The function deletes the Supabase Auth user, removes the matching `profiles` row, and returns `ok: true` even if the user was already missing. Admin and super-admin rows return `403`.
+* **PATCH:** Mutates either `role` or `employment_status`. Super-admin rows return `403`, and only `jonathan@skyshare.com` can hold the Admin role.
 
 ### `bootstrap-super-admin`
 

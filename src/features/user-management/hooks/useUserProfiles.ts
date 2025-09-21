@@ -106,7 +106,7 @@ export function useUserProfiles() {
 
         toast({
           title: "Success",
-          description: isReadOnly ? "User set to read-only" : "User granted write access",
+          description: isReadOnly ? "User set to Viewer access" : "User granted Editor access",
         });
       } catch (error) {
         console.error("Failed to update user access", error);

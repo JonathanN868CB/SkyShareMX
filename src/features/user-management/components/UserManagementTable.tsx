@@ -29,7 +29,7 @@ const ROLE_LABELS: Record<RoleOption, string> = {
 
 const ROLE_OPTIONS: RoleOption[] = ['admin', 'technician', 'qc', 'viewer'];
 
-const READ_ONLY_MESSAGE = 'Your account is read-only. Ask an admin to upgrade your access.';
+const VIEWER_MESSAGE = 'Your account is limited to Viewer access. Ask an admin to upgrade your permissions.';
 
 export function UserManagementTable() {
   const {
@@ -155,7 +155,7 @@ export function UserManagementTable() {
                     <TooltipTrigger asChild>
                       <span className="inline-flex cursor-not-allowed">{roleControl}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{READ_ONLY_MESSAGE}</TooltipContent>
+                    <TooltipContent>{VIEWER_MESSAGE}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               ) : (
@@ -170,7 +170,7 @@ export function UserManagementTable() {
                     disabled={!canModify}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {user.is_readonly ? 'Read-only' : 'Write access'}
+                    {user.is_readonly ? 'Viewer access' : 'Editor access'}
                   </span>
                 </div>
               );
@@ -181,7 +181,7 @@ export function UserManagementTable() {
                     <TooltipTrigger asChild>
                       <span className="inline-flex cursor-not-allowed">{readOnlyToggle}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{READ_ONLY_MESSAGE}</TooltipContent>
+                    <TooltipContent>{VIEWER_MESSAGE}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               ) : (
@@ -223,15 +223,15 @@ export function UserManagementTable() {
                     if (disableTooltip) {
                       return (
                         <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex cursor-not-allowed">{statusControl}</span>
-                            </TooltipTrigger>
-                            <TooltipContent>{READ_ONLY_MESSAGE}</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      );
-                    }
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex cursor-not-allowed">{statusControl}</span>
+                          </TooltipTrigger>
+                          <TooltipContent>{VIEWER_MESSAGE}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    );
+                  }
 
                     return statusControl;
                   })()}

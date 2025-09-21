@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Loader2, Trash2, Users as UsersIcon } from "lucide-react";
+import { Loader2, Skull, Users as UsersIcon } from "lucide-react";
 
 import type { EmploymentStatus, Role, UserSummary } from "@/lib/types/users";
+import { ROLES } from "@/lib/types/users";
 import { formatDate } from "@/lib/utils/date";
 import { RoleDropdown } from "@/components/users/RoleDropdown";
 import { StatusPill } from "@/components/users/StatusPill";
@@ -151,15 +152,15 @@ export function UsersTable({
             ) : showEmptyState ? (
               <tr>
                 <td colSpan={5} className="px-6 py-12">
-                  <div className="flex flex-col items-center justify-center gap-4 text-center text-slate-500">
-                    <UsersIcon className="h-10 w-10 text-slate-300" aria-hidden />
-                    <div>
-                      <h3 className="text-lg font-medium text-slate-600">No users found</h3>
-                      <p className="mt-1 text-sm">Try adjusting your filters or invite a new teammate.</p>
-                    </div>
-                    {onRetry && (
-                      <Button type="button" variant="outline" onClick={onRetry}>
-                        Retry
+                    <div className="flex flex-col items-center justify-center gap-4 text-center text-slate-500">
+                      <UsersIcon className="h-10 w-10 text-slate-300" aria-hidden />
+                      <div>
+                        <h3 className="text-lg font-medium text-slate-600">No users found</h3>
+                        <p className="mt-1 text-sm">Adjust your filters or have the teammate sign in with Google.</p>
+                      </div>
+                      {onRetry && (
+                        <Button type="button" variant="outline" onClick={onRetry}>
+                          Retry
                       </Button>
                     )}
                   </div>
@@ -174,6 +175,9 @@ export function UsersTable({
                 const isActiveRow = activeUserId === user.userId;
                 const canDelete = Boolean(onDelete) && !isLocked;
                 const isDeleting = deletingUserId === user.userId;
+                const normalizedEmail = user.email.trim().toLowerCase();
+                const isMasterAdmin = normalizedEmail === "jonathan@skyshare.com";
+                const roleOptions = isMasterAdmin ? ROLES : ROLES.filter(role => role !== "admin");
 
                 return (
                   <tr
@@ -217,6 +221,7 @@ export function UsersTable({
                         onChange={next => onRoleChange(user.userId, next)}
                         disabled={isLocked}
                         loading={roleLoading}
+                        options={roleOptions}
                       />
                     </td>
                     <td className="px-4 py-3">
@@ -231,44 +236,48 @@ export function UsersTable({
                       {formatDate(user.lastLogin)}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className={cn(
-                              "h-9 w-9 rounded-full text-slate-400 transition-colors hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                              (!canDelete || isDeleting) && "pointer-events-none opacity-50",
-                            )}
-                            aria-label={`Delete ${user.fullName}`}
-                            disabled={!canDelete || isDeleting}
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden />
-                            <span className="sr-only">Delete {user.fullName}</span>
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete user {user.fullName}?</AlertDialogTitle>
-                            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-2 focus-visible:ring-destructive/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                              onClick={async () => {
-                                if (onDelete) {
-                                  await onDelete(user);
-                                }
-                              }}
-                              disabled={!canDelete || isDeleting}
+                      {canDelete ? (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className={cn(
+                                "h-9 w-9 rounded-full text-slate-400 transition-colors hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                                isDeleting && "pointer-events-none opacity-50",
+                              )}
+                              aria-label={`Delete ${user.fullName}`}
+                              disabled={isDeleting}
                             >
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                              <Skull className="h-[18px] w-[18px]" aria-hidden />
+                              <span className="sr-only">Delete {user.fullName}</span>
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete user {user.fullName}?</AlertDialogTitle>
+                              <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-2 focus-visible:ring-destructive/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                onClick={async () => {
+                                  if (onDelete) {
+                                    await onDelete(user);
+                                  }
+                                }}
+                                disabled={isDeleting}
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      ) : (
+                        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Protected</span>
+                      )}
                     </td>
                   </tr>
                 );
