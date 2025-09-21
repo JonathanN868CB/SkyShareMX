@@ -5,6 +5,7 @@ import type { EmploymentStatus, Role, UserSummary, UsersListResponse } from "../
 
 interface HandlerEvent {
   httpMethod: string;
+  headers?: Record<string, string | undefined>;
   queryStringParameters?: Record<string, string | undefined>;
 }
 
@@ -19,6 +20,14 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
+
+function jsonResponse(statusCode: number, payload: Record<string, unknown>): HandlerResponse {
+  return {
+    statusCode,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  } satisfies HandlerResponse;
+}
 
 const ROLE_VALUES: Role[] = ["admin", "manager", "technician", "viewer"];
 const STATUS_VALUES: EmploymentStatus[] = ["active", "inactive"];
@@ -45,6 +54,86 @@ function resolveSupabase() {
       persistSession: false,
     },
   });
+}
+
+function resolveSupabaseAuthClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey =
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.VITE_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !anonKey) {
+    throw new Error("Supabase credentials are not configured (SUPABASE_URL, SUPABASE_ANON_KEY)");
+  }
+
+  return createClient<Database>(supabaseUrl, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+function getAccessToken(event: HandlerEvent) {
+  const header = event.headers?.authorization ?? event.headers?.Authorization;
+  if (!header) {
+    return null;
+  }
+
+  const parts = header.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0];
+  }
+
+  const [scheme, ...rest] = parts;
+  if (!/^bearer$/i.test(scheme)) {
+    return null;
+  }
+
+  const token = rest.join(" ").trim();
+  return token.length > 0 ? token : null;
+}
+
+async function requireAdmin(
+  event: HandlerEvent,
+  supabase: ReturnType<typeof resolveSupabase>,
+): Promise<HandlerResponse | { userId: string }> {
+  const token = getAccessToken(event);
+  if (!token) {
+    return jsonResponse(401, { error: "Authentication required" });
+  }
+
+  const authClient = resolveSupabaseAuthClient();
+  const { data, error } = await authClient.auth.getUser(token);
+
+  if (error || !data?.user) {
+    console.error("Failed to verify Supabase session", error);
+    const status = error?.status ?? 401;
+    return jsonResponse(status === 404 ? 401 : status, { error: "Invalid or expired session" });
+  }
+
+  const userId = data.user.id;
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("user_id, role, role_enum, is_super_admin")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("Failed to load profile for authorization", profileError);
+    return jsonResponse(500, { error: "Unable to verify permissions" });
+  }
+
+  const normalizedRole = typeof profile?.role === "string" ? profile.role.toLowerCase() : "";
+  const roleEnum = typeof profile?.role_enum === "string" ? profile.role_enum : "";
+  const isSuperAdmin = Boolean(profile?.is_super_admin) || roleEnum === "Super Admin";
+
+  if (normalizedRole !== "admin" && !isSuperAdmin) {
+    return jsonResponse(403, { error: "Forbidden" });
+  }
+
+  return { userId };
 }
 
 function parseNumber(value: string | undefined, fallback: number) {
@@ -133,15 +222,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   if (event.httpMethod !== "GET") {
-    return {
-      statusCode: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ error: "Method not allowed" }),
-    };
+    return jsonResponse(405, { error: "Method not allowed" });
   }
 
   try {
     const supabase = resolveSupabase();
+    const authResult = await requireAdmin(event, supabase);
+    if ("statusCode" in authResult) {
+      return authResult;
+    }
     const searchTerm = normalizeString(event.queryStringParameters?.search);
     const roleParam = normalizeString(event.queryStringParameters?.role).toLowerCase();
     const statusParam = normalizeString(event.queryStringParameters?.status).toLowerCase();
