@@ -4,6 +4,7 @@ import { RefreshCw } from "lucide-react";
 import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 import { UsersFilters } from "@/components/users/UsersFilters";
 import { UsersTable } from "@/components/users/UsersTable";
+import { useIsSuperAdmin } from "@/features/auth/index";
 import { deleteUser } from "@/lib/usersClient";
 import { getMockUsers, listUsers, updateEmploymentStatus, updateUserRole } from "@/lib/api/users";
 import type { EmploymentStatus, Role, UsersListResponse, UserSummary, UsersQuery } from "@/lib/types/users";
@@ -33,6 +34,9 @@ export default function UsersPage() {
   const [roleDefaultsOpen, setRoleDefaultsOpen] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
+  const { isSuper: isSuperAdmin } = useIsSuperAdmin();
+  const canManage = isSuperAdmin;
+
   const buildQuery = useCallback((): UsersQuery => ({
     search: search.trim() || undefined,
     role: roleFilter,
@@ -61,6 +65,14 @@ export default function UsersPage() {
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to load users";
       setError(message);
+      const unauthorized = /401|403|unauthorized|forbidden/i.test(message);
+      if (unauthorized) {
+        setUsers([]);
+        setTotal(0);
+        setMockMode(false);
+        return;
+      }
+
       const fallback = getMockUsers(query);
       applyResponse(fallback);
       setMockMode(prev => {
@@ -92,6 +104,10 @@ export default function UsersPage() {
   const pendingRoleIds = useMemo(() => Array.from(pendingRoles), [pendingRoles]);
   const pendingStatusIds = useMemo(() => Array.from(pendingStatuses), [pendingStatuses]);
   const handleRoleChange = async (userId: string, nextRole: Role) => {
+    if (!canManage) {
+      return;
+    }
+
     const targetUser = users.find(user => user.userId === userId);
     if (!targetUser) {
       return;
@@ -152,6 +168,10 @@ export default function UsersPage() {
   };
 
   const handleStatusChange = async (userId: string, nextStatus: EmploymentStatus) => {
+    if (!canManage) {
+      return;
+    }
+
     if (mockMode) {
       setUsers(prev => prev.map(user => (user.userId === userId ? { ...user, employmentStatus: nextStatus } : user)));
       notify({
@@ -186,6 +206,10 @@ export default function UsersPage() {
   };
 
   const handleDeleteUser = async (user: UserSummary) => {
+    if (!canManage) {
+      return;
+    }
+
     setDeletingUserId(user.userId);
     try {
       const response = await deleteUser(user.userId);
@@ -231,7 +255,7 @@ export default function UsersPage() {
     />
   );
 
-  const headerActions = (
+  const headerActions = canManage ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <Button
         type="button"
@@ -242,7 +266,7 @@ export default function UsersPage() {
         Role Defaults
       </Button>
     </div>
-  );
+  ) : null;
 
   return (
     <div className="space-y-8 text-slate-900">
@@ -276,13 +300,14 @@ export default function UsersPage() {
         page={page}
         perPage={PER_PAGE}
         mockMode={mockMode}
+        canManage={canManage}
         lockedUserIds={lockedUserIds}
         pendingRoleIds={pendingRoleIds}
         pendingStatusIds={pendingStatusIds}
         error={error}
         onRoleChange={handleRoleChange}
         onStatusChange={handleStatusChange}
-        onDelete={handleDeleteUser}
+        onDelete={canManage ? handleDeleteUser : undefined}
         deletingUserId={deletingUserId}
         onPageChange={nextPage => {
           setPage(nextPage);
@@ -295,7 +320,7 @@ export default function UsersPage() {
         filters={filters}
       />
 
-      <RoleDefaultsModal open={roleDefaultsOpen} onOpenChange={setRoleDefaultsOpen} />
+      {canManage && <RoleDefaultsModal open={roleDefaultsOpen} onOpenChange={setRoleDefaultsOpen} />}
     </div>
   );
 }
