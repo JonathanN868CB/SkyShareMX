@@ -15,11 +15,6 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { cn } from "@/shared/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
-interface RoleDefaultsModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
-
 const ROLE_CONFIG = [
   {
     id: "admin",
@@ -160,6 +155,20 @@ const PERMISSION_IDS = PERMISSION_SECTIONS.flatMap(section => section.permission
 
 type RolePermissionMatrix = Record<RoleKey, Record<PermissionKey, PermissionLevel>>;
 
+type RolePermissionMatrixSnapshot = Partial<
+  Record<RoleKey, Partial<Record<PermissionKey, PermissionLevel | null | undefined>>>
+>;
+
+function isPermissionLevel(value: unknown): value is PermissionLevel {
+  return value === "none" || value === "read" || value === "write";
+}
+
+interface RoleDefaultsModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialMatrixSnapshot?: RolePermissionMatrixSnapshot;
+}
+
 const PERMISSION_LEVELS: { value: PermissionLevel; label: string }[] = [
   { value: "none", label: "None" },
   { value: "read", label: "Read" },
@@ -228,9 +237,19 @@ function createInitialMatrix(): RolePermissionMatrix {
   }, {} as RolePermissionMatrix);
 }
 
-function cloneMatrix(matrix: RolePermissionMatrix): RolePermissionMatrix {
+function cloneMatrix(matrix?: RolePermissionMatrixSnapshot | RolePermissionMatrix): RolePermissionMatrix {
   return ROLE_CONFIG.reduce<RolePermissionMatrix>((rolesAccumulator, role) => {
-    rolesAccumulator[role.id] = { ...matrix[role.id] };
+    const rolePermissions = matrix?.[role.id] ?? {};
+
+    rolesAccumulator[role.id] = PERMISSION_IDS.reduce<Record<PermissionKey, PermissionLevel>>(
+      (permissionsAccumulator, permissionId) => {
+        const level = rolePermissions?.[permissionId];
+        permissionsAccumulator[permissionId] = isPermissionLevel(level) ? level : "none";
+        return permissionsAccumulator;
+      },
+      {} as Record<PermissionKey, PermissionLevel>,
+    );
+
     return rolesAccumulator;
   }, {} as RolePermissionMatrix);
 }
@@ -241,7 +260,7 @@ function matricesEqual(first: RolePermissionMatrix, second: RolePermissionMatrix
   );
 }
 
-export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps) {
+export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }: RoleDefaultsModalProps) {
   const initialMatrixRef = useRef<RolePermissionMatrix>();
 
   if (!initialMatrixRef.current) {
@@ -249,16 +268,33 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
   }
 
   const [activeRole, setActiveRole] = useState<RoleKey>("admin");
-  const [savedMatrix, setSavedMatrix] = useState<RolePermissionMatrix>(() => cloneMatrix(initialMatrixRef.current!));
-  const [matrix, setMatrix] = useState<RolePermissionMatrix>(() => cloneMatrix(initialMatrixRef.current!));
+  const [savedMatrix, setSavedMatrix] = useState<RolePermissionMatrix>(() =>
+    cloneMatrix(initialMatrixSnapshot ?? initialMatrixRef.current!),
+  );
+  const [matrix, setMatrix] = useState<RolePermissionMatrix>(() =>
+    cloneMatrix(initialMatrixSnapshot ?? initialMatrixRef.current!),
+  );
 
   const initialMatrix = initialMatrixRef.current!;
+
+  useEffect(() => {
+    if (!initialMatrixSnapshot) {
+      return;
+    }
+
+    const normalizedSavedMatrix = cloneMatrix(initialMatrixSnapshot);
+    const normalizedMatrix = cloneMatrix(initialMatrixSnapshot);
+
+    setSavedMatrix(previous => (matricesEqual(previous, normalizedSavedMatrix) ? previous : normalizedSavedMatrix));
+    setMatrix(previous => (matricesEqual(previous, normalizedMatrix) ? previous : normalizedMatrix));
+  }, [initialMatrixSnapshot]);
 
   useEffect(() => {
     if (!open) {
       setActiveRole("admin");
     }
-    setMatrix(cloneMatrix(savedMatrix));
+    const normalizedMatrix = cloneMatrix(savedMatrix);
+    setMatrix(previous => (matricesEqual(previous, normalizedMatrix) ? previous : normalizedMatrix));
   }, [open, savedMatrix]);
 
   const hasChanges = useMemo(() => !matricesEqual(matrix, savedMatrix), [matrix, savedMatrix]);
@@ -290,8 +326,9 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
   const handleSave = () => {
     if (!hasChanges) return;
 
-    setSavedMatrix(cloneMatrix(matrix));
-    console.log("Saved — local only (no DB yet)", matrix);
+    const normalizedMatrix = cloneMatrix(matrix);
+    setSavedMatrix(normalizedMatrix);
+    console.log("Saved — local only (no DB yet)", normalizedMatrix);
     toast({ title: "Saved — local only (no DB yet)" });
     // TODO(supabase): persist role defaults
     // TODO: enforce in route guards
@@ -381,7 +418,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                             <div className="space-y-3">
                               {section.permissions.map(permission => {
                                 const permissionLabelId = `${role.id}-${section.id}-${permission.id}-label`;
-                                const permissionLevel = matrix[role.id][permission.id];
+                                const permissionLevel = matrix[role.id]?.[permission.id] ?? "none";
 
                                 return (
                                   <div
