@@ -1,28 +1,11 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/shared/lib/api";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 
 export default function UserMenu() {
-  const [email, setEmail] = useState<string | null>(null);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    let isMounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (isMounted) {
-        setEmail(data.session?.user?.email ?? null);
-      }
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (isMounted) {
-        setEmail(session?.user?.email ?? null);
-      }
-    });
-    return () => {
-      isMounted = false;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
+  const { user } = useUserPermissions();
+  const email = user?.email ?? null;
 
   const onLogout = async () => {
     await supabase.auth.signOut();
