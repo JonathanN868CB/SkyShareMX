@@ -435,15 +435,37 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     isMountedRef.current = true;
 
     const devBypass = isDevBypassActive();
-    const timer =
-      typeof window !== "undefined"
-        ? window.setTimeout(() => {
-            if (isMountedRef.current && loadingRef.current) {
-              appendAuthLog("PermissionProvider safety flip");
-              setLoading(false);
-            }
-          }, 2000)
-        : undefined;
+    let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleSafetyFlip = () => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      safetyTimer = window.setTimeout(() => {
+        if (!isMountedRef.current) {
+          return;
+        }
+        if (!loadingRef.current) {
+          return;
+        }
+
+        const activeController = sessionAbortRef.current;
+        if (activeController && !activeController.signal.aborted) {
+          appendAuthLog(
+            "PermissionProvider safety flip deferred; session handler active",
+          );
+          scheduleSafetyFlip();
+          return;
+        }
+
+        appendAuthLog("PermissionProvider safety flip");
+        setLoading(false);
+      }, 2000);
+    };
+
+    if (typeof window !== "undefined") {
+      scheduleSafetyFlip();
+    }
 
     if (devBypass) {
       appendAuthLog("PermissionProvider dev bypass active");
@@ -503,8 +525,8 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
     return () => {
       appendAuthLog("PermissionProvider unmount");
       isMountedRef.current = false;
-      if (typeof window !== "undefined" && timer !== undefined) {
-        window.clearTimeout(timer);
+      if (typeof window !== "undefined" && safetyTimer !== undefined) {
+        window.clearTimeout(safetyTimer);
       }
       teardown?.();
     };
