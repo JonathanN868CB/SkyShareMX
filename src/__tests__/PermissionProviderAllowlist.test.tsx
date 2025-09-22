@@ -7,6 +7,7 @@ import type { Session, User } from "@supabase/supabase-js";
 
 import type { Tables } from "@/entities/supabase";
 import { PermissionProvider, useUserPermissions } from "@/hooks/useUserPermissions";
+import { getAdminEmails } from "@/shared/lib/env";
 
 type UserProfile = Tables<"profiles">;
 type AppSection = Tables<"user_permissions">["section"];
@@ -26,7 +27,7 @@ const refs = vi.hoisted(() => {
 
   const sessionUser: Partial<User> = {
     id: "allowlisted-user-id",
-    email: "jonathan@skyshare.com",
+    email: "allowlisted.user@skyshare.com",
     user_metadata: {
       full_name: "Jonathan Schaedig",
     },
@@ -66,16 +67,28 @@ const refs = vi.hoisted(() => {
   };
 });
 
+const ORIGINAL_ADMIN_EMAILS = process.env.VITE_ADMIN_EMAILS;
+
 vi.mock("@/debug", () => ({
   appendAuthLog: vi.fn(),
   AuthDebugOverlay: () => null,
 }));
 
-vi.mock("@/shared/lib/env", () => ({
-  getAdminEmails: () => ["jonathan@skyshare.com"],
-  isDevBypassActive: () => false,
+const envSpies = vi.hoisted(() => ({
   setDomainDeniedMessage: vi.fn(),
 }));
+
+vi.mock("@/shared/lib/env", async () => {
+  const actual = await vi.importActual<typeof import("@/shared/lib/env")>(
+    "@/shared/lib/env",
+  );
+
+  return {
+    ...actual,
+    isDevBypassActive: () => false,
+    setDomainDeniedMessage: envSpies.setDomainDeniedMessage,
+  };
+});
 
 vi.mock("@/hooks/use-toast", () => ({
   toast: vi.fn(),
@@ -190,6 +203,8 @@ describe("PermissionProvider allow-list promotion", () => {
   });
 
   beforeEach(() => {
+    process.env.VITE_ADMIN_EMAILS =
+      "allowlisted.user@skyshare.com, extra.admin@example.com";
     refs.supabaseState.profile = null;
     refs.supabaseState.permissions = [];
     refs.mswCallCount = 0;
@@ -201,6 +216,11 @@ describe("PermissionProvider allow-list promotion", () => {
   afterEach(() => {
     server.resetHandlers();
     vi.clearAllMocks();
+    if (ORIGINAL_ADMIN_EMAILS === undefined) {
+      delete process.env.VITE_ADMIN_EMAILS;
+    } else {
+      process.env.VITE_ADMIN_EMAILS = ORIGINAL_ADMIN_EMAILS;
+    }
   });
 
   afterAll(() => {
@@ -212,6 +232,12 @@ describe("PermissionProvider allow-list promotion", () => {
     document.body.appendChild(container);
     const root = createRoot(container);
     const snapshots: Snapshot[] = [];
+
+    expect(getAdminEmails()).toEqual([
+      "jonathan@skyshare.com",
+      "allowlisted.user@skyshare.com",
+      "extra.admin@example.com",
+    ]);
 
     await act(async () => {
       root.render(
@@ -229,6 +255,7 @@ describe("PermissionProvider allow-list promotion", () => {
     expect(finalState?.loading).toBe(false);
     expect(finalState?.profile?.role).toBe("admin");
     expect(finalState?.profile?.role_enum).toBe("Super Admin");
+    expect(finalState?.profile?.email).toBe("allowlisted.user@skyshare.com");
     expect(finalState?.isReadOnly).toBe(false);
     expect(new Set(finalState?.permissions ?? [])).toEqual(
       new Set(["Overview", "Operations", "Administration", "Development"]),
