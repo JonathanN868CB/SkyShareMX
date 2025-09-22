@@ -125,6 +125,12 @@ async function tick() {
   });
 }
 
+async function flushMicrotasks() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 function expectAuthLogEmitted() {
   const messages = appendAuthLogSpy.mock.calls.map(([message]) => String(message));
   expect(messages.some(message => message.includes("PermissionProvider"))).toBe(true);
@@ -279,6 +285,109 @@ describe("PermissionProvider", () => {
     container.remove();
   });
 
+  it("defers the safety flip while a session handler is active", async () => {
+    vi.useFakeTimers();
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const states: Array<{
+      loading: boolean;
+      user: User | null;
+      permissions: Tables<"user_permissions">["section"][];
+    }> = [];
+
+    try {
+      let resolveGetSession:
+        | ((value: { data: { session: Session | null } | null; error: unknown }) => void)
+        | undefined;
+      getSessionMock.mockReturnValue(
+        new Promise(resolve => {
+          resolveGetSession = resolve;
+        }),
+      );
+
+      await act(async () => {
+        root.render(
+          <PermissionProvider>
+            <Observer onChange={state => states.push(state)} />
+          </PermissionProvider>,
+        );
+      });
+
+      await flushMicrotasks();
+
+      let resolveProfile:
+        | ((value: { data: Tables<"profiles"> | null; error: unknown }) => void)
+        | undefined;
+      state.profilePromise = new Promise(resolve => {
+        resolveProfile = resolve;
+      }) as Promise<{ data: Tables<"profiles"> | null; error: unknown }>;
+
+      let resolvePermissions:
+        | ((
+            value: {
+              data: Array<{ section: Tables<"user_permissions">["section"] }>;
+              error: unknown;
+            },
+          ) => void)
+        | undefined;
+      state.permissionsPromise = new Promise(resolve => {
+        resolvePermissions = resolve;
+      }) as Promise<{
+        data: Array<{ section: Tables<"user_permissions">["section"] }>;
+        error: unknown;
+      }>;
+
+      const session = {
+        user: { id: "user-1", email: "pilot@skyshare.com" },
+      } as Session;
+
+      await act(async () => {
+        state.authChangeHandler?.("INITIAL_SESSION", session);
+      });
+
+      await flushMicrotasks();
+
+      const logCountBefore = appendAuthLogSpy.mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      await flushMicrotasks();
+
+      const newLogs = appendAuthLogSpy.mock.calls
+        .slice(logCountBefore)
+        .map(([message]) => String(message));
+
+      expect(
+        newLogs.some(
+          message =>
+            message ===
+            "PermissionProvider safety flip deferred; session handler active",
+        ),
+      ).toBe(true);
+      expect(newLogs.some(message => message === "PermissionProvider safety flip")).toBe(
+        false,
+      );
+      expect(states.at(-1)?.loading).toBe(true);
+
+      resolveProfile?.({ data: state.profileData, error: null });
+      resolvePermissions?.({ data: state.permissionsData, error: null });
+      resolveGetSession?.({ data: { session: null }, error: null });
+
+      await flushMicrotasks();
+
+      expect(states.at(-1)?.loading).toBe(false);
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+      vi.useRealTimers();
+    }
+  });
+
   it("clears state on SIGNED_OUT when profile loading hangs", async () => {
     getSessionMock.mockResolvedValue({ data: { session: null }, error: null });
 
@@ -309,6 +418,10 @@ describe("PermissionProvider", () => {
       data: Tables<"profiles"> | null;
       error: unknown;
     }>;
+
+    await act(async () => {
+      state.authChangeHandler?.("INITIAL_SESSION", null);
+    });
 
     await act(async () => {
       state.authChangeHandler?.("SIGNED_IN", session);
