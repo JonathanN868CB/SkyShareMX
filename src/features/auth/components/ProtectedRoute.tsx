@@ -1,18 +1,9 @@
-import type { CSSProperties } from "react";
 import { useEffect, useRef } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
 import { appendAuthLog } from "@/debug";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { isDevBypassActive, rememberReturnTo } from "@/shared/lib/env";
-
-const hiddenWrapperStyle: CSSProperties = {
-  position: "absolute",
-  width: 0,
-  height: 0,
-  overflow: "hidden",
-  clip: "rect(0 0 0 0)",
-};
 
 export default function ProtectedRoute({ children }: { children: JSX.Element }) {
   const location = useLocation();
@@ -59,14 +50,9 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
 
   if (loading) {
     return (
-      <>
-        <div className="p-6 text-sm text-muted-foreground" aria-live="polite">
-          Loading…
-        </div>
-        <div style={hiddenWrapperStyle} aria-hidden>
-          {children}
-        </div>
-      </>
+      <div className="p-6 text-sm text-muted-foreground" aria-live="polite">
+        Loading…
+      </div>
     );
   }
 
