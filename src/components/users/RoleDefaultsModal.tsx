@@ -300,7 +300,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl overflow-hidden">
+      <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden grid-rows-[auto_minmax(0,_1fr)_auto]">
         <DialogHeader className="space-y-2">
           <DialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Permissions</DialogTitle>
           <DialogDescription>
@@ -308,7 +308,11 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs value={activeRole} onValueChange={value => setActiveRole(value as RoleKey)} className="space-y-6">
+        <Tabs
+          value={activeRole}
+          onValueChange={value => setActiveRole(value as RoleKey)}
+          className="flex min-h-0 flex-col gap-6"
+        >
           <TabsList className="flex w-full flex-wrap gap-2 rounded-full bg-slate-100 p-1 sm:w-auto">
             {ROLE_CONFIG.map(role => (
               <TabsTrigger
@@ -324,7 +328,11 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
           {ROLE_CONFIG.map(role => {
             const isReadOnly = Boolean(role.readOnly);
             return (
-              <TabsContent key={role.id} value={role.id} className="space-y-6 focus-visible:outline-none">
+              <TabsContent
+                key={role.id}
+                value={role.id}
+                className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden focus-visible:outline-none"
+              >
                 <div
                   className={cn(
                     "flex items-start gap-3 rounded-xl border px-4 py-3 text-sm",
@@ -349,7 +357,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                   </div>
                 </div>
 
-                <ScrollArea className="max-h-[60vh] pr-4" type="always">
+                <ScrollArea className="flex-1 overflow-y-auto pr-4" type="always">
                   <div className="space-y-4 pr-2 pb-2">
                     {PERMISSION_SECTIONS.map(section => {
                       const headingId = `${role.id}-${section.id}-heading`;
