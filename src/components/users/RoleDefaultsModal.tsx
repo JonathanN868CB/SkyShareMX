@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { Info, Lock } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Info, Loader2, Lock } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { cn } from "@/shared/lib/utils";
+import { fetchRoleDefaults, updateRoleDefaults } from "@/lib/api/role-defaults";
+import type { RoleDefaultsMap } from "@/lib/api/role-defaults";
 import { toast } from "@/hooks/use-toast";
 
 interface RoleDefaultsModalProps {
@@ -154,27 +156,107 @@ function createDefaultPermissions(): RolePermissionState {
   }, {} as RolePermissionState);
 }
 
+function clonePermissionState(state: RolePermissionState): RolePermissionState {
+  return ROLE_CONFIG.reduce<RolePermissionState>((accumulator, role) => {
+    accumulator[role.id] = { ...state[role.id] };
+    return accumulator;
+  }, {} as RolePermissionState);
+}
+
+function mergeRemoteDefaults(remote: RoleDefaultsMap): RolePermissionState {
+  const fallback = createDefaultPermissions();
+  return ROLE_CONFIG.reduce<RolePermissionState>((accumulator, role) => {
+    const fallbackPermissions = fallback[role.id];
+    const remotePermissions = remote[role.id];
+    if (!remotePermissions) {
+      accumulator[role.id] = { ...fallbackPermissions };
+      return accumulator;
+    }
+
+    const merged = { ...fallbackPermissions };
+    for (const permissionId of PERMISSION_IDS) {
+      if (permissionId in remotePermissions) {
+        merged[permissionId] = Boolean(remotePermissions[permissionId]);
+      }
+    }
+
+    accumulator[role.id] = merged;
+    return accumulator;
+  }, {} as RolePermissionState);
+}
+
 export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps) {
   const [activeRole, setActiveRole] = useState<RoleKey>("admin");
+  const [persistedPermissions, setPersistedPermissions] = useState<RolePermissionState>(() => createDefaultPermissions());
   const [permissions, setPermissions] = useState<RolePermissionState>(() => createDefaultPermissions());
+  const persistedPermissionsRef = useRef<RolePermissionState>(persistedPermissions);
+  const [loadState, setLoadState] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    persistedPermissionsRef.current = persistedPermissions;
+  }, [persistedPermissions]);
 
   useEffect(() => {
     if (!open) {
       setActiveRole("admin");
-      setPermissions(createDefaultPermissions());
+      setPermissions(clonePermissionState(persistedPermissionsRef.current));
+      setIsSaving(false);
+      setLoadState("idle");
+      setLoadError(null);
+      return;
     }
+
+    let cancelled = false;
+
+    setPermissions(clonePermissionState(persistedPermissionsRef.current));
+    setLoadState("loading");
+    setLoadError(null);
+
+    (async () => {
+      try {
+        const remote = await fetchRoleDefaults();
+        if (cancelled) return;
+        const merged = mergeRemoteDefaults(remote);
+        setPersistedPermissions(merged);
+        setPermissions(clonePermissionState(merged));
+        setLoadState("success");
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to load role defaults", error);
+        const fallbackMessage = "Failed to load saved defaults. Showing fallback defaults instead.";
+        const message = error instanceof Error && error.message ? error.message : fallbackMessage;
+        const description =
+          message === fallbackMessage ? fallbackMessage : `${message}. Showing fallback defaults instead.`;
+        setLoadError(description);
+        setLoadState("error");
+        toast({
+          title: "Unable to load defaults",
+          description,
+          variant: "destructive",
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const activeRoleConfig = ROLE_CONFIG.find(role => role.id === activeRole) ?? ROLE_CONFIG[0];
-  const activeRoleDefaults = useMemo(() => buildRoleDefault(activeRole), [activeRole]);
+  const isActiveRoleReadOnly = Boolean(activeRoleConfig.readOnly);
+  const isLoading = loadState === "loading";
+  const isError = loadState === "error";
+  const interactionLocked = isLoading || isSaving;
 
   const isRoleDirty = useMemo(() => {
     const current = permissions[activeRole];
-    return Object.keys(activeRoleDefaults).some(permissionId => current[permissionId] !== activeRoleDefaults[permissionId]);
-  }, [activeRole, activeRoleDefaults, permissions]);
+    const baseline = persistedPermissions[activeRole];
+    return PERMISSION_IDS.some(permissionId => current[permissionId] !== baseline[permissionId]);
+  }, [activeRole, permissions, persistedPermissions]);
 
-  const isActiveRoleReadOnly = Boolean(activeRoleConfig.readOnly);
-  const saveDisabled = isActiveRoleReadOnly ? false : !isRoleDirty;
+  const saveDisabled = isActiveRoleReadOnly ? interactionLocked : !isRoleDirty || interactionLocked;
 
   const updateRolePermissions = (role: RoleKey, updates: Record<string, boolean>) => {
     setPermissions(previous => ({
@@ -185,13 +267,13 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
 
   const togglePermission = (role: RoleKey, permissionId: string, value: boolean) => {
     const roleConfig = ROLE_CONFIG.find(item => item.id === role);
-    if (roleConfig?.readOnly) return;
+    if (roleConfig?.readOnly || interactionLocked) return;
     updateRolePermissions(role, { [permissionId]: value });
   };
 
   const toggleSection = (role: RoleKey, permissionIds: string[], value: boolean) => {
     const roleConfig = ROLE_CONFIG.find(item => item.id === role);
-    if (roleConfig?.readOnly) return;
+    if (roleConfig?.readOnly || interactionLocked) return;
     const updates = permissionIds.reduce<Record<string, boolean>>((accumulator, permissionId) => {
       accumulator[permissionId] = value;
       return accumulator;
@@ -200,23 +282,70 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
   };
 
   const handleResetRole = () => {
-    if (isActiveRoleReadOnly) return;
+    if (isActiveRoleReadOnly || interactionLocked) return;
     setPermissions(previous => ({
       ...previous,
-      [activeRole]: buildRoleDefault(activeRole),
+      [activeRole]: { ...persistedPermissions[activeRole] },
     }));
   };
 
   const handleCancel = () => {
+    setPermissions(clonePermissionState(persistedPermissions));
     onOpenChange(false);
   };
 
-  const handleSave = () => {
-    toast({
-      title: "Permissions updated",
-      description: `${activeRoleConfig.label} defaults saved.`,
+  const handleSave = async () => {
+    if (isActiveRoleReadOnly) {
+      toast({
+        title: "Permissions updated",
+        description: `${activeRoleConfig.label} defaults saved.`,
+      });
+      onOpenChange(false);
+      return;
+    }
+
+    if (!isRoleDirty || interactionLocked) {
+      return;
+    }
+
+    const snapshot = { ...permissions[activeRole] };
+    const previousPersisted = clonePermissionState(persistedPermissions);
+
+    setIsSaving(true);
+    setPersistedPermissions(current => {
+      const next = clonePermissionState(current);
+      next[activeRole] = { ...snapshot };
+      return next;
     });
-    onOpenChange(false);
+
+    try {
+      const result = await updateRoleDefaults(activeRole, snapshot);
+      if (result?.permissions) {
+        setPersistedPermissions(current => {
+          const next = clonePermissionState(current);
+          const merged = mergeRemoteDefaults({ [activeRole]: result.permissions } as RoleDefaultsMap);
+          next[activeRole] = merged[activeRole];
+          return next;
+        });
+      }
+      toast({
+        title: "Permissions updated",
+        description: `${activeRoleConfig.label} defaults saved.`,
+      });
+      onOpenChange(false);
+    } catch (error) {
+      console.error("Failed to save role defaults", error);
+      setPersistedPermissions(previousPersisted);
+      const message =
+        error instanceof Error && error.message ? error.message : "Failed to save role defaults";
+      toast({
+        title: "Unable to save defaults",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -228,6 +357,25 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
             Configure access and workflow defaults for each role. Updates apply to future Google sign-ins automatically.
           </DialogDescription>
         </DialogHeader>
+
+        {(isLoading || (isError && loadError)) && (
+          <div className="space-y-2">
+            {isLoading && (
+              <div
+                data-testid="role-defaults-loading"
+                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600"
+              >
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                <span>Loading saved defaults…</span>
+              </div>
+            )}
+            {isError && loadError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" data-testid="role-defaults-error">
+                {loadError}
+              </div>
+            )}
+          </div>
+        )}
 
         <Tabs value={activeRole} onValueChange={value => setActiveRole(value as RoleKey)} className="space-y-6">
           <TabsList className="flex w-full flex-wrap gap-2 rounded-full bg-slate-100 p-1 sm:w-auto">
@@ -245,6 +393,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
           {ROLE_CONFIG.map(role => {
             const rolePermissions = permissions[role.id];
             const isReadOnly = Boolean(role.readOnly);
+            const disableForRole = isReadOnly || interactionLocked;
             return (
               <TabsContent key={role.id} value={role.id} className="space-y-6">
                 <div
@@ -281,7 +430,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                             variant="ghost"
                             size="sm"
                             onClick={() => toggleSection(role.id, permissionIds, !allSelected)}
-                            disabled={isReadOnly}
+                            disabled={disableForRole}
                             className="rounded-full px-3 text-xs font-medium text-slate-600 hover:bg-slate-100"
                           >
                             {selectAllLabel}
@@ -299,13 +448,13 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                                 checked
                                   ? "border-primary/50 bg-primary/5 shadow-sm"
                                   : "border-slate-200 bg-white hover:border-primary/40 hover:bg-primary/5",
-                                isReadOnly && "cursor-default opacity-70 hover:border-slate-200 hover:bg-white",
+                                disableForRole && "cursor-default opacity-70 hover:border-slate-200 hover:bg-white",
                               )}
                             >
                               <Checkbox
                                 checked={checked}
                                 onCheckedChange={value => togglePermission(role.id, permission.id, value === true)}
-                                disabled={isReadOnly}
+                                disabled={disableForRole}
                               />
                               <span className="font-medium text-slate-700">{permission.label}</span>
                             </label>
@@ -325,7 +474,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
             type="button"
             variant="outline"
             onClick={handleResetRole}
-            disabled={isActiveRoleReadOnly || !isRoleDirty}
+            disabled={isActiveRoleReadOnly || !isRoleDirty || interactionLocked}
             className="rounded-full border-slate-200 text-slate-700 hover:bg-slate-100"
           >
             Reset Role to Defaults
@@ -335,7 +484,14 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
               Cancel
             </Button>
             <Button type="button" onClick={handleSave} disabled={saveDisabled} className="rounded-full px-5">
-              Save
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Saving…
+                </>
+              ) : (
+                "Save"
+              )}
             </Button>
           </div>
         </div>
