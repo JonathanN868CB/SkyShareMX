@@ -26,20 +26,20 @@ const ROLE_CONFIG = [
   {
     id: "manager",
     label: "Manager",
-    noticeTitle: "Manager defaults",
-    noticeDescription: "Managers oversee day-to-day schedules, approvals, and training workflows.",
+    noticeTitle: "",
+    noticeDescription: "",
   },
   {
     id: "technician",
     label: "Technician",
-    noticeTitle: "Technician defaults",
-    noticeDescription: "Technicians focus on inspections, logbooks, and maintenance documentation.",
+    noticeTitle: "",
+    noticeDescription: "",
   },
   {
     id: "viewer",
     label: "Viewer",
-    noticeTitle: "Viewer defaults",
-    noticeDescription: "Viewers can monitor aircraft activity without making changes.",
+    noticeTitle: "",
+    noticeDescription: "",
   },
 ] as const;
 
@@ -370,29 +370,35 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
                 value={role.id}
                 className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden focus-visible:outline-none"
               >
-                <div
-                  className={cn(
-                    "flex items-start gap-3 rounded-xl border px-4 py-3 text-sm",
-                    isReadOnly
-                      ? "border-slate-200 bg-slate-50 text-slate-700"
-                      : "border-primary/30 bg-primary/5 text-slate-700",
-                  )}
-                >
-                  {isReadOnly ? (
-                    <Lock className="mt-0.5 h-4 w-4 text-slate-500" aria-hidden />
-                  ) : (
-                    <Info className="mt-0.5 h-4 w-4 text-primary" aria-hidden />
-                  )}
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-slate-900">{role.noticeTitle}</p>
-                    <p className="text-sm text-slate-600">{role.noticeDescription}</p>
-                    {isReadOnly && (
-                      <p className="text-xs text-slate-500">
-                        Admin permissions are fixed for now—adjust the other roles to tailor access levels.
-                      </p>
+                {(isReadOnly || Boolean(role.noticeTitle || role.noticeDescription)) && (
+                  <div
+                    className={cn(
+                      "flex items-start gap-3 rounded-xl border px-4 py-3 text-sm",
+                      isReadOnly
+                        ? "border-slate-200 bg-slate-50 text-slate-700"
+                        : "border-primary/30 bg-primary/5 text-slate-700",
                     )}
+                  >
+                    {isReadOnly ? (
+                      <Lock className="mt-0.5 h-4 w-4 text-slate-500" aria-hidden />
+                    ) : (
+                      <Info className="mt-0.5 h-4 w-4 text-primary" aria-hidden />
+                    )}
+                    <div className="space-y-1">
+                      {role.noticeTitle && (
+                        <p className="text-sm font-semibold text-slate-900">{role.noticeTitle}</p>
+                      )}
+                      {role.noticeDescription && (
+                        <p className="text-sm text-slate-600">{role.noticeDescription}</p>
+                      )}
+                      {isReadOnly && (
+                        <p className="text-xs text-slate-500">
+                          Admin permissions are fixed for now—adjust the other roles to tailor access levels.
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <ScrollArea className="flex-1 overflow-y-auto pr-4" type="always">
                   <div className="space-y-4 pr-2 pb-2">
