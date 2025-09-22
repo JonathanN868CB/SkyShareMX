@@ -63,6 +63,16 @@ describe("RoleDefaultsModal", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it("does not show a redundant manager notice", async () => {
+    render(<RoleDefaultsModal open={true} onOpenChange={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("tab", { name: /manager/i }));
+
+    expect(screen.queryByText(/manager defaults/i)).toBeNull();
+    expect(screen.queryByText(/managers oversee day-to-day schedules/i)).toBeNull();
+  });
+
   it("falls back to none when a snapshot omits a permission", async () => {
     const user = userEvent.setup();
     const snapshot = {
