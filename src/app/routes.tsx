@@ -5,6 +5,7 @@ import { createBrowserRouter, type RouteObject } from "react-router-dom";
 import { AppErrorBoundary } from "./ErrorBoundary";
 import { ProtectedRoute } from "@/features/auth";
 import { userManagementRoutes } from "@/features/user-management";
+import { TimedFallback } from "./TimedFallback";
 
 const AppLayout = lazy(() => import("./layout/Layout").then(module => ({ default: module.Layout })));
 
@@ -15,7 +16,7 @@ const AIAssistantLanding = lazy(() => import("@/pages/AIAssistantLanding"));
 const UnderConstructionPage = lazy(() => import("@/pages/UnderConstructionPage"));
 const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
-const suspenseFallback = <div>Loading…</div>;
+const suspenseFallback = <TimedFallback>Loading…</TimedFallback>;
 
 const withSuspense = (element: ReactNode) => <Suspense fallback={suspenseFallback}>{element}</Suspense>;
 

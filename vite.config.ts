@@ -15,4 +15,8 @@ export default defineConfig(() => ({
     },
     dedupe: ["react", "react-dom"],
   },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./vitest.setup.ts"],
+  },
 }));
