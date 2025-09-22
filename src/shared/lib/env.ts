@@ -247,7 +247,7 @@ export function getAdminEmails(): string[] {
   const configured = raw
     .split(",")
     .map(value => value.trim().toLowerCase())
-    .filter(value => value === MASTER_ADMIN_EMAIL);
+    .filter(Boolean);
 
   return Array.from(new Set([MASTER_ADMIN_EMAIL, ...configured]));
 }
