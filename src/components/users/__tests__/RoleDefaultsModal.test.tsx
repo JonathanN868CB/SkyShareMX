@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 
@@ -19,7 +19,23 @@ function getSectionByTitle(title: string) {
   return section;
 }
 
+function getPermissionGroup(sectionTitle: string, permissionLabel: string) {
+  const section = getSectionByTitle(sectionTitle);
+  return within(section).getByRole("group", { name: permissionLabel });
+}
+
 describe("RoleDefaultsModal", () => {
+  beforeAll(() => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
   beforeEach(() => {
     toastMock.mockReset();
   });
@@ -28,19 +44,21 @@ describe("RoleDefaultsModal", () => {
     cleanup();
   });
 
-  it("renders tri-state defaults for manager", async () => {
+  it("renders per-module defaults for manager", async () => {
     const onOpenChange = vi.fn();
     render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("tab", { name: /manager/i }));
 
-    const operationsSection = getSectionByTitle("Operations");
-    expect(within(operationsSection).getByRole("button", { name: "Read" }).getAttribute("data-state")).toBe("on");
-    expect(within(operationsSection).getByRole("button", { name: "Write" }).getAttribute("data-state")).toBe("off");
+    const operationsDocsLinks = getPermissionGroup("Operations", "Docs & Links");
+    expect(within(operationsDocsLinks).getByRole("radio", { name: "Write" }).getAttribute("data-state")).toBe("on");
 
-    const additionalSection = getSectionByTitle("Additional Permissions");
-    expect(within(additionalSection).getByRole("button", { name: "Write" }).getAttribute("data-state")).toBe("on");
+    const administrationUsers = getPermissionGroup("Administration", "Users");
+    expect(within(administrationUsers).getByRole("radio", { name: "Read" }).getAttribute("data-state")).toBe("on");
+
+    const administrationSettings = getPermissionGroup("Administration", "Settings");
+    expect(within(administrationSettings).getByRole("radio", { name: "None" }).getAttribute("data-state")).toBe("on");
 
     expect(onOpenChange).not.toHaveBeenCalled();
   });
@@ -48,12 +66,12 @@ describe("RoleDefaultsModal", () => {
   it("disables admin controls and shows notice", () => {
     render(<RoleDefaultsModal open={true} onOpenChange={vi.fn()} />);
 
-    const notice = screen.getByText(/admin permissions are fixed/i);
-    expect(notice).toBeInTheDocument();
+    const notice = screen.getByText(/adjust the other roles to tailor access levels/i);
+    expect(notice).toBeDefined();
 
-    const operationsSection = getSectionByTitle("Operations");
-    const writeButton = within(operationsSection).getByRole("button", { name: "Write" });
-    expect(writeButton).toBeDisabled();
+    const operationsDocsLinks = getPermissionGroup("Operations", "Docs & Links");
+    const writeButton = within(operationsDocsLinks).getByRole("radio", { name: "Write" }) as HTMLButtonElement;
+    expect(writeButton.disabled).toBe(true);
   });
 
   it("saves changes locally and logs the matrix", async () => {
@@ -63,18 +81,18 @@ describe("RoleDefaultsModal", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("tab", { name: /manager/i }));
-    const operationsSection = getSectionByTitle("Operations");
+    const settingsGroup = getPermissionGroup("Administration", "Settings");
 
-    await user.click(within(operationsSection).getByRole("button", { name: "Write" }));
+    await user.click(within(settingsGroup).getByRole("radio", { name: "Write" }));
 
-    const saveButton = screen.getByRole("button", { name: "Save" });
-    expect(saveButton).not.toBeDisabled();
+    const saveButton = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(false);
 
     await user.click(saveButton);
 
     expect(logSpy).toHaveBeenCalledWith(
       "Saved — local only (no DB yet)",
-      expect.objectContaining({ manager: expect.objectContaining({ operations: "write" }) }),
+      expect.objectContaining({ manager: expect.objectContaining({ settings: "write" }) }),
     );
     expect(toastMock).toHaveBeenCalledWith({ title: "Saved — local only (no DB yet)" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -83,10 +101,8 @@ describe("RoleDefaultsModal", () => {
     rerender(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
 
     await user.click(screen.getByRole("tab", { name: /manager/i }));
-    const reopenedOperationsSection = getSectionByTitle("Operations");
-    expect(
-      within(reopenedOperationsSection).getByRole("button", { name: "Write" }).getAttribute("data-state"),
-    ).toBe("on");
+    const reopenedSettingsGroup = getPermissionGroup("Administration", "Settings");
+    expect(within(reopenedSettingsGroup).getByRole("radio", { name: "Write" }).getAttribute("data-state")).toBe("on");
 
     logSpy.mockRestore();
   });
@@ -96,16 +112,16 @@ describe("RoleDefaultsModal", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("tab", { name: /viewer/i }));
-    const operationsSection = getSectionByTitle("Operations");
+    const docsLinksGroup = getPermissionGroup("Operations", "Docs & Links");
 
-    await user.click(within(operationsSection).getByRole("button", { name: "None" }));
+    await user.click(within(docsLinksGroup).getByRole("radio", { name: "None" }));
 
-    const resetButton = screen.getByRole("button", { name: /reset to initial defaults/i });
-    expect(resetButton).not.toBeDisabled();
+    const resetButton = screen.getByRole("button", { name: /reset to initial defaults/i }) as HTMLButtonElement;
+    expect(resetButton.disabled).toBe(false);
 
     await user.click(resetButton);
 
-    expect(within(operationsSection).getByRole("button", { name: "Read" }).getAttribute("data-state")).toBe("on");
+    expect(within(docsLinksGroup).getByRole("radio", { name: "Read" }).getAttribute("data-state")).toBe("on");
   });
 
   it("reverts unsaved changes when reopened", async () => {
@@ -114,14 +130,14 @@ describe("RoleDefaultsModal", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("tab", { name: /viewer/i }));
-    const operationsSection = getSectionByTitle("Operations");
-    await user.click(within(operationsSection).getByRole("button", { name: "None" }));
+    const docsLinksGroup = getPermissionGroup("Operations", "Docs & Links");
+    await user.click(within(docsLinksGroup).getByRole("radio", { name: "None" }));
 
     rerender(<RoleDefaultsModal open={false} onOpenChange={onOpenChange} />);
     rerender(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
 
     await user.click(screen.getByRole("tab", { name: /viewer/i }));
-    const reopenedSection = getSectionByTitle("Operations");
-    expect(within(reopenedSection).getByRole("button", { name: "Read" }).getAttribute("data-state")).toBe("on");
+    const reopenedDocsLinks = getPermissionGroup("Operations", "Docs & Links");
+    expect(within(reopenedDocsLinks).getByRole("radio", { name: "Read" }).getAttribute("data-state")).toBe("on");
   });
 });

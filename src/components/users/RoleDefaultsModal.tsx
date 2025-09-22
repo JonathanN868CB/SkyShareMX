@@ -102,6 +102,10 @@ const PERMISSION_SECTIONS = [
 
 type SectionKey = (typeof PERMISSION_SECTIONS)[number]["id"];
 
+type PermissionDefinition = (typeof PERMISSION_SECTIONS)[number]["permissions"][number];
+
+type PermissionKey = PermissionDefinition["id"];
+
 const ROLE_DEFAULT_SELECTIONS: Record<RoleKey, string[] | "all"> = {
   admin: "all",
   manager: [
@@ -142,9 +146,19 @@ const SECTION_PERMISSION_LOOKUP = PERMISSION_SECTIONS.reduce<Record<SectionKey, 
   {} as Record<SectionKey, string[]>,
 );
 
-const SECTION_IDS = PERMISSION_SECTIONS.map(section => section.id) as SectionKey[];
+const PERMISSION_SECTION_LOOKUP = PERMISSION_SECTIONS.reduce<Record<PermissionKey, SectionKey>>(
+  (accumulator, section) => {
+    section.permissions.forEach(permission => {
+      accumulator[permission.id] = section.id;
+    });
+    return accumulator;
+  },
+  {} as Record<PermissionKey, SectionKey>,
+);
 
-type RolePermissionMatrix = Record<RoleKey, Record<SectionKey, PermissionLevel>>;
+const PERMISSION_IDS = PERMISSION_SECTIONS.flatMap(section => section.permissions.map(permission => permission.id)) as PermissionKey[];
+
+type RolePermissionMatrix = Record<RoleKey, Record<PermissionKey, PermissionLevel>>;
 
 const PERMISSION_LEVELS: { value: PermissionLevel; label: string }[] = [
   { value: "none", label: "None" },
@@ -177,14 +191,38 @@ function deriveSectionLevel(role: RoleKey, sectionId: SectionKey): PermissionLev
   return "read";
 }
 
+function derivePermissionLevel(role: RoleKey, permissionId: PermissionKey): PermissionLevel {
+  if (role === "admin") {
+    return "write";
+  }
+
+  const selection = ROLE_DEFAULT_SELECTIONS[role];
+  if (selection === "all") {
+    return role === "viewer" ? "read" : "write";
+  }
+
+  const sectionId = PERMISSION_SECTION_LOOKUP[permissionId];
+  const sectionLevel = deriveSectionLevel(role, sectionId);
+
+  if (!selection.includes(permissionId)) {
+    return "none";
+  }
+
+  if (sectionLevel === "write") {
+    return role === "viewer" ? "read" : "write";
+  }
+
+  return "read";
+}
+
 function createInitialMatrix(): RolePermissionMatrix {
   return ROLE_CONFIG.reduce<RolePermissionMatrix>((rolesAccumulator, role) => {
-    rolesAccumulator[role.id] = PERMISSION_SECTIONS.reduce<Record<SectionKey, PermissionLevel>>(
-      (sectionsAccumulator, section) => {
-        sectionsAccumulator[section.id] = deriveSectionLevel(role.id, section.id);
-        return sectionsAccumulator;
+    rolesAccumulator[role.id] = PERMISSION_IDS.reduce<Record<PermissionKey, PermissionLevel>>(
+      (permissionsAccumulator, permissionId) => {
+        permissionsAccumulator[permissionId] = derivePermissionLevel(role.id, permissionId);
+        return permissionsAccumulator;
       },
-      {} as Record<SectionKey, PermissionLevel>,
+      {} as Record<PermissionKey, PermissionLevel>,
     );
     return rolesAccumulator;
   }, {} as RolePermissionMatrix);
@@ -198,7 +236,9 @@ function cloneMatrix(matrix: RolePermissionMatrix): RolePermissionMatrix {
 }
 
 function matricesEqual(first: RolePermissionMatrix, second: RolePermissionMatrix): boolean {
-  return ROLE_CONFIG.every(role => SECTION_IDS.every(sectionId => first[role.id][sectionId] === second[role.id][sectionId]));
+  return ROLE_CONFIG.every(role =>
+    PERMISSION_IDS.every(permissionId => first[role.id][permissionId] === second[role.id][permissionId]),
+  );
 }
 
 export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps) {
@@ -224,7 +264,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
   const hasChanges = useMemo(() => !matricesEqual(matrix, savedMatrix), [matrix, savedMatrix]);
   const canReset = useMemo(() => !matricesEqual(matrix, initialMatrix), [matrix, initialMatrix]);
 
-  const updateSectionLevel = (role: RoleKey, sectionId: SectionKey, level: PermissionLevel) => {
+  const updatePermissionLevel = (role: RoleKey, permissionId: PermissionKey, level: PermissionLevel) => {
     const roleConfig = ROLE_CONFIG.find(item => item.id === role);
     if (roleConfig?.readOnly) return;
 
@@ -232,7 +272,7 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
       ...previous,
       [role]: {
         ...previous[role],
-        [sectionId]: level,
+        [permissionId]: level,
       },
     }));
   };
@@ -309,11 +349,10 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                   </div>
                 </div>
 
-                <ScrollArea className="max-h-[60vh] pr-4">
+                <ScrollArea className="max-h-[60vh] pr-4" type="always">
                   <div className="space-y-4 pr-2 pb-2">
                     {PERMISSION_SECTIONS.map(section => {
                       const headingId = `${role.id}-${section.id}-heading`;
-                      const sectionLevel = matrix[role.id][section.id];
 
                       return (
                         <section
@@ -321,47 +360,58 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                           className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
                           aria-labelledby={headingId}
                         >
-                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="space-y-2">
+                          <div className="space-y-4">
+                            <div className="space-y-1">
                               <h3 id={headingId} className="text-sm font-semibold text-slate-900">
                                 {section.title}
                               </h3>
-                              <ul className="list-disc space-y-1 pl-5 text-xs text-slate-500">
-                                {section.permissions.map(permission => (
-                                  <li key={permission.id}>{permission.label}</li>
-                                ))}
-                              </ul>
+                              <p className="text-xs text-slate-500">
+                                Adjust defaults for each module in this section.
+                              </p>
                             </div>
-                            <div className="flex items-center justify-end">
-                              <div
-                                className={cn(
-                                  "rounded-full border border-slate-200 bg-slate-50 p-1",
-                                  isReadOnly && "opacity-60",
-                                )}
-                              >
-                                <ToggleGroup
-                                  type="single"
-                                  value={sectionLevel}
-                                  onValueChange={value => {
-                                    if (!value) return;
-                                    updateSectionLevel(role.id, section.id, value as PermissionLevel);
-                                  }}
-                                  aria-labelledby={headingId}
-                                  className="gap-1"
-                                  disabled={isReadOnly}
-                                >
-                                  {PERMISSION_LEVELS.map(level => (
-                                    <ToggleGroupItem
-                                      key={level.value}
-                                      value={level.value}
-                                      disabled={isReadOnly}
-                                      className="rounded-full px-3 py-1 text-xs font-medium text-slate-600 transition data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-                                    >
-                                      {level.label}
-                                    </ToggleGroupItem>
-                                  ))}
-                                </ToggleGroup>
-                              </div>
+
+                            <div className="space-y-3">
+                              {section.permissions.map(permission => {
+                                const permissionLabelId = `${role.id}-${section.id}-${permission.id}-label`;
+                                const permissionLevel = matrix[role.id][permission.id];
+
+                                return (
+                                  <div
+                                    key={`${role.id}-${permission.id}`}
+                                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 sm:flex-row sm:items-center sm:justify-between"
+                                  >
+                                    <div className="space-y-0.5">
+                                      <p id={permissionLabelId} className="text-sm font-medium text-slate-900">
+                                        {permission.label}
+                                      </p>
+                                    </div>
+                                    <div className={cn("flex items-center justify-end", isReadOnly && "opacity-60")}> 
+                                      <ToggleGroup
+                                        type="single"
+                                        value={permissionLevel}
+                                        onValueChange={value => {
+                                          if (!value) return;
+                                          updatePermissionLevel(role.id, permission.id, value as PermissionLevel);
+                                        }}
+                                        aria-labelledby={permissionLabelId}
+                                        className="gap-1"
+                                        disabled={isReadOnly}
+                                      >
+                                        {PERMISSION_LEVELS.map(level => (
+                                          <ToggleGroupItem
+                                            key={level.value}
+                                            value={level.value}
+                                            disabled={isReadOnly}
+                                            className="rounded-full px-3 py-1 text-xs font-medium text-slate-600 transition data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                                          >
+                                            {level.label}
+                                          </ToggleGroupItem>
+                                        ))}
+                                      </ToggleGroup>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         </section>
