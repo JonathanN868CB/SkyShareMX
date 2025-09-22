@@ -63,6 +63,27 @@ describe("RoleDefaultsModal", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it("falls back to none when a snapshot omits a permission", async () => {
+    const user = userEvent.setup();
+    const snapshot = {
+      manager: {
+        dashboard: "read",
+      },
+    } as const;
+
+    render(
+      <RoleDefaultsModal open={true} onOpenChange={vi.fn()} initialMatrixSnapshot={snapshot} />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: /manager/i }));
+
+    const dashboardGroup = getPermissionGroup("Overview", "Dashboard");
+    expect(within(dashboardGroup).getByRole("radio", { name: "Read" }).getAttribute("data-state")).toBe("on");
+
+    const docsLinksGroup = getPermissionGroup("Operations", "Docs & Links");
+    expect(within(docsLinksGroup).getByRole("radio", { name: "None" }).getAttribute("data-state")).toBe("on");
+  });
+
   it("disables admin controls and shows notice", () => {
     render(<RoleDefaultsModal open={true} onOpenChange={vi.fn()} />);
 
