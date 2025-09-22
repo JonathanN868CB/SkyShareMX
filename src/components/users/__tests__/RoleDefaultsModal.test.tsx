@@ -1,183 +1,127 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
-import type { RoleDefaultSnapshot, RoleDefaultsMap } from "@/lib/api/role-defaults";
-import type { Role } from "@/lib/types/users";
 
-const fetchRoleDefaultsMock = vi.fn<[], Promise<RoleDefaultsMap>>();
-const updateRoleDefaultsMock = vi.fn<
-  [Role, Record<string, boolean>],
-  Promise<RoleDefaultSnapshot>
->();
 const toastMock = vi.fn();
-
-vi.mock("@/lib/api/role-defaults", () => ({
-  fetchRoleDefaults: () => fetchRoleDefaultsMock(),
-  updateRoleDefaults: (role: Role, permissions: Record<string, boolean>) =>
-    updateRoleDefaultsMock(role, permissions),
-}));
 
 vi.mock("@/hooks/use-toast", () => ({
   toast: (options: unknown) => toastMock(options),
 }));
 
+function getSectionByTitle(title: string) {
+  const heading = screen.getByRole("heading", { name: title });
+  const section = heading.closest("section");
+  if (!section) {
+    throw new Error(`Unable to find section for ${title}`);
+  }
+  return section;
+}
+
 describe("RoleDefaultsModal", () => {
-  const onOpenChange = vi.fn();
-
   beforeEach(() => {
-    fetchRoleDefaultsMock.mockReset();
-    updateRoleDefaultsMock.mockReset();
     toastMock.mockReset();
-    onOpenChange.mockReset();
-
-    fetchRoleDefaultsMock.mockResolvedValue({});
-    updateRoleDefaultsMock.mockResolvedValue({
-      role: "viewer",
-      permissions: {},
-      updatedAt: new Date().toISOString(),
-    });
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it("merges fetched defaults when opened", async () => {
-    fetchRoleDefaultsMock.mockResolvedValue({ manager: { "ai-assistant": false } });
-
+  it("renders tri-state defaults for manager", async () => {
+    const onOpenChange = vi.fn();
     render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
-
-    await waitFor(() => expect(fetchRoleDefaultsMock).toHaveBeenCalledTimes(1));
-
     const user = userEvent.setup();
+
     await user.click(screen.getByRole("tab", { name: /manager/i }));
 
-    await waitFor(() => {
-      const aiAssistantCheckbox = screen.getByRole("checkbox", { name: /ai assistant/i });
-      expect(aiAssistantCheckbox.getAttribute("data-state")).toBe("unchecked");
-    });
+    const operationsSection = getSectionByTitle("Operations");
+    expect(within(operationsSection).getByRole("button", { name: "Read" }).getAttribute("data-state")).toBe("on");
+    expect(within(operationsSection).getByRole("button", { name: "Write" }).getAttribute("data-state")).toBe("off");
+
+    const additionalSection = getSectionByTitle("Additional Permissions");
+    expect(within(additionalSection).getByRole("button", { name: "Write" }).getAttribute("data-state")).toBe("on");
+
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("shows a fallback error message when loading fails", async () => {
-    fetchRoleDefaultsMock.mockRejectedValue(new Error("load failed"));
+  it("disables admin controls and shows notice", () => {
+    render(<RoleDefaultsModal open={true} onOpenChange={vi.fn()} />);
 
-    render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
+    const notice = screen.getByText(/admin permissions are fixed/i);
+    expect(notice).toBeInTheDocument();
 
-    const errorBanner = await screen.findByTestId("role-defaults-error");
-    expect(errorBanner.textContent).toContain("load failed");
-    expect(errorBanner.textContent).toContain("Showing fallback defaults instead.");
-
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          variant: "destructive",
-        }),
-      ),
-    );
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: /viewer/i }));
-
-    await waitFor(() => {
-      const docsLinksCheckbox = screen.getByRole("checkbox", { name: /docs & links/i });
-      expect(docsLinksCheckbox.getAttribute("data-state")).toBe("checked");
-    });
+    const operationsSection = getSectionByTitle("Operations");
+    const writeButton = within(operationsSection).getByRole("button", { name: "Write" });
+    expect(writeButton).toBeDisabled();
   });
 
-  it("disables the save button while persisting changes", async () => {
-    render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
-
-    await waitFor(() => expect(fetchRoleDefaultsMock).toHaveBeenCalledTimes(1));
-
+  it("saves changes locally and logs the matrix", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const onOpenChange = vi.fn();
+    const { rerender } = render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: /viewer/i }));
 
-    const docsLinksCheckbox = screen.getByRole("checkbox", { name: /docs & links/i });
-    expect(docsLinksCheckbox.getAttribute("data-state")).toBe("checked");
+    await user.click(screen.getByRole("tab", { name: /manager/i }));
+    const operationsSection = getSectionByTitle("Operations");
 
-    await user.click(docsLinksCheckbox);
+    await user.click(within(operationsSection).getByRole("button", { name: "Write" }));
 
-    await waitFor(() => {
-      const checkbox = screen.getByRole("checkbox", { name: /docs & links/i });
-      expect(checkbox.getAttribute("data-state")).toBe("unchecked");
-    });
-
-    const saveButton = screen.getByRole("button", { name: /save/i });
-    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
-
-    let resolveUpdate: ((value: RoleDefaultSnapshot) => void) | undefined;
-    const updatePromise = new Promise<RoleDefaultSnapshot>(resolve => {
-      resolveUpdate = resolve;
-    });
-    updateRoleDefaultsMock.mockReturnValueOnce(updatePromise);
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    expect(saveButton).not.toBeDisabled();
 
     await user.click(saveButton);
 
-    await waitFor(() => expect(updateRoleDefaultsMock).toHaveBeenCalledTimes(1));
-    expect(updateRoleDefaultsMock).toHaveBeenCalledWith(
-      "viewer",
-      expect.objectContaining({
-        "docs-links": false,
-      }),
+    expect(logSpy).toHaveBeenCalledWith(
+      "Saved — local only (no DB yet)",
+      expect.objectContaining({ manager: expect.objectContaining({ operations: "write" }) }),
     );
+    expect(toastMock).toHaveBeenCalledWith({ title: "Saved — local only (no DB yet)" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
 
-    await waitFor(() => {
-      const savingButton = screen.getByRole("button", { name: /saving/i });
-      expect((savingButton as HTMLButtonElement).disabled).toBe(true);
-    });
+    rerender(<RoleDefaultsModal open={false} onOpenChange={onOpenChange} />);
+    rerender(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
 
-    resolveUpdate?.({
-      role: "viewer",
-      permissions: { "docs-links": false },
-      updatedAt: new Date().toISOString(),
-    });
+    await user.click(screen.getByRole("tab", { name: /manager/i }));
+    const reopenedOperationsSection = getSectionByTitle("Operations");
+    expect(
+      within(reopenedOperationsSection).getByRole("button", { name: "Write" }).getAttribute("data-state"),
+    ).toBe("on");
 
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Permissions updated",
-        }),
-      ),
-    );
+    logSpy.mockRestore();
   });
 
-  it("keeps local changes and shows an error when saving fails", async () => {
-    render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
-
-    await waitFor(() => expect(fetchRoleDefaultsMock).toHaveBeenCalledTimes(1));
-
+  it("resets to initial defaults", async () => {
+    render(<RoleDefaultsModal open={true} onOpenChange={vi.fn()} />);
     const user = userEvent.setup();
+
     await user.click(screen.getByRole("tab", { name: /viewer/i }));
+    const operationsSection = getSectionByTitle("Operations");
 
-    const docsLinksCheckbox = screen.getByRole("checkbox", { name: /docs & links/i });
-    await user.click(docsLinksCheckbox);
+    await user.click(within(operationsSection).getByRole("button", { name: "None" }));
 
-    await waitFor(() => {
-      const checkbox = screen.getByRole("checkbox", { name: /docs & links/i });
-      expect(checkbox.getAttribute("data-state")).toBe("unchecked");
-    });
+    const resetButton = screen.getByRole("button", { name: /reset to initial defaults/i });
+    expect(resetButton).not.toBeDisabled();
 
-    updateRoleDefaultsMock.mockRejectedValueOnce(new Error("network error"));
+    await user.click(resetButton);
 
-    const saveButton = screen.getByRole("button", { name: /save/i });
-    await user.click(saveButton);
+    expect(within(operationsSection).getByRole("button", { name: "Read" }).getAttribute("data-state")).toBe("on");
+  });
 
-    await waitFor(() => expect(updateRoleDefaultsMock).toHaveBeenCalledTimes(1));
+  it("reverts unsaved changes when reopened", async () => {
+    const onOpenChange = vi.fn();
+    const { rerender } = render(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
+    const user = userEvent.setup();
 
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Unable to save defaults",
-          description: "network error",
-        }),
-      ),
-    );
+    await user.click(screen.getByRole("tab", { name: /viewer/i }));
+    const operationsSection = getSectionByTitle("Operations");
+    await user.click(within(operationsSection).getByRole("button", { name: "None" }));
 
-    const checkboxAfterFailure = screen.getByRole("checkbox", { name: /docs & links/i });
-    expect(checkboxAfterFailure.getAttribute("data-state")).toBe("unchecked");
-    expect(onOpenChange.mock.calls.some(call => call[0] === false)).toBe(false);
+    rerender(<RoleDefaultsModal open={false} onOpenChange={onOpenChange} />);
+    rerender(<RoleDefaultsModal open={true} onOpenChange={onOpenChange} />);
+
+    await user.click(screen.getByRole("tab", { name: /viewer/i }));
+    const reopenedSection = getSectionByTitle("Operations");
+    expect(within(reopenedSection).getByRole("button", { name: "Read" }).getAttribute("data-state")).toBe("on");
   });
 });
