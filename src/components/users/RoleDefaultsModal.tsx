@@ -348,7 +348,7 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
         <Tabs
           value={activeRole}
           onValueChange={value => setActiveRole(value as RoleKey)}
-          className="flex min-h-0 flex-col gap-6"
+          className="flex min-h-0 flex-1 flex-col gap-6"
         >
           <TabsList className="flex w-full flex-wrap gap-2 rounded-full bg-slate-100 p-1 sm:w-auto">
             {ROLE_CONFIG.map(role => (
@@ -400,7 +400,7 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
                   </div>
                 )}
 
-                <ScrollArea className="flex-1 overflow-y-auto pr-4" type="always">
+                <ScrollArea className="flex-1 min-h-0 overflow-y-auto pr-4" type="always">
                   <div className="space-y-4 pr-2 pb-2">
                     {PERMISSION_SECTIONS.map(section => {
                       const headingId = `${role.id}-${section.id}-heading`;
