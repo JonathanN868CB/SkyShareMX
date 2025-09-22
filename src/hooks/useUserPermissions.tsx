@@ -12,6 +12,7 @@ import type { Tables } from "@/entities/supabase";
 import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/shared/lib/env";
 import { toast } from "@/hooks/use-toast";
 import { isSkyshare } from "@/lib/domainGate";
+import { bootstrapAuth } from "@/lib/authBootstrap";
 
 const DOMAIN_DENIED_MESSAGE = "Google account must be @skyshare.com.";
 
@@ -265,8 +266,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   );
 
   useEffect(() => {
-    const devBypass = isDevBypassActive();
-    if (devBypass) {
+    if (isDevBypassActive()) {
       console.log("🚧 PermissionProvider: Dev bypass active, granting full access");
       setUser(null);
       setProfile(null);
@@ -276,74 +276,37 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       return () => {};
     }
 
-    let isActive = true;
-    let optimisticSessionApplied = false;
+    let isMounted = true;
 
-    const handleHydrationFailure = async () => {
-      if (!isActive) {
-        return;
-      }
-
-      await handleSession(null);
-
-      toast({
-        title: "Session expired",
-        description: "Please sign in again.",
-        variant: "destructive",
-      });
-
-      if (typeof window !== "undefined" && window.location.pathname !== "/") {
-        window.location.replace("/");
-      }
-    };
-
-    const persistedSessionPromise = (async () => {
-      try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
-
-        if (error) {
-          console.error("Error fetching persisted session:", error);
-          await handleHydrationFailure();
-          return null;
+    const teardown = bootstrapAuth(supabase, {
+      onSession: async session => {
+        if (!isMounted) {
+          return;
         }
-
-        if (!isActive) {
-          return session ?? null;
+        await handleSession(session);
+      },
+      onReady: () => {
+        if (!isMounted) {
+          return;
         }
-
-        await handleSession(session ?? null);
-        optimisticSessionApplied = true;
-
-        return session ?? null;
-      } catch (error) {
-        console.error("Unexpected error hydrating session:", error);
-        await handleHydrationFailure();
-        return null;
-      }
-    })();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "INITIAL_SESSION") {
-        await persistedSessionPromise;
-        if (!optimisticSessionApplied) {
-          await handleSession(session);
-          optimisticSessionApplied = true;
+        setLoading(false);
+      },
+      onError: error => {
+        console.error("Error bootstrapping authentication:", error);
+        if (!isMounted) {
+          return;
         }
-
-        return;
-      }
-
-      await handleSession(session);
+        toast({
+          title: "Authentication error",
+          description: "We couldn't restore your session. Please sign in again.",
+          variant: "destructive",
+        });
+      },
     });
 
     return () => {
-      isActive = false;
-      subscription.unsubscribe();
+      isMounted = false;
+      teardown();
     };
   }, [handleSession]);
 
