@@ -15,11 +15,15 @@ const mocks = vi.hoisted(() => ({
   signOutMock: vi.fn<[], Promise<{ error: null }>>(() => Promise.resolve({ error: null })),
   getSessionMock: vi.fn<[], Promise<{ data: { session: Session | null } | null; error: unknown }>>(),
   state: {
+    authChangeHandler: null as ((event: AuthChangeEvent, session: Session | null) => void) | null,
     profileData: null as Tables<"profiles"> | null,
     profileError: null as unknown,
     profileUpsertError: null as unknown,
+    profilePromise: null as Promise<{ data: Tables<"profiles"> | null; error: unknown }> | null,
     permissionsData: [] as Array<{ section: Tables<"user_permissions">["section"] }>,
     permissionsError: null as unknown,
+    permissionsPromise:
+      null as Promise<{ data: Array<{ section: Tables<"user_permissions">["section"] }>; error: unknown }> | null,
   },
 }));
 
@@ -42,9 +46,19 @@ vi.mock("@/shared/lib/api", () => ({
   supabase: {
     auth: {
       getSession: mocks.getSessionMock,
-      onAuthStateChange: (_callback: (event: AuthChangeEvent, session: Session | null) => void) => ({
-        data: { subscription: { unsubscribe: mocks.unsubscribeMock } },
-      }),
+      onAuthStateChange: (callback: (event: AuthChangeEvent, session: Session | null) => void) => {
+        mocks.state.authChangeHandler = callback;
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => {
+                mocks.state.authChangeHandler = null;
+                mocks.unsubscribeMock();
+              },
+            },
+          },
+        };
+      },
       signOut: mocks.signOutMock,
     },
     from: (table: string) => {
@@ -53,6 +67,7 @@ vi.mock("@/shared/lib/api", () => ({
           select: () => ({
             eq: () => ({
               maybeSingle: () =>
+                mocks.state.profilePromise ??
                 Promise.resolve({ data: mocks.state.profileData, error: mocks.state.profileError }),
             }),
           }),
@@ -62,7 +77,9 @@ vi.mock("@/shared/lib/api", () => ({
       if (table === "user_permissions") {
         return {
           select: () => ({
-            eq: () => Promise.resolve({ data: mocks.state.permissionsData, error: mocks.state.permissionsError }),
+            eq: () =>
+              mocks.state.permissionsPromise ??
+              Promise.resolve({ data: mocks.state.permissionsData, error: mocks.state.permissionsError }),
           }),
         };
       }
@@ -86,11 +103,19 @@ const {
   state,
 } = mocks;
 
-function Observer({ onChange }: { onChange: (state: { loading: boolean; user: User | null }) => void }) {
-  const { loading, user } = useUserPermissions();
+function Observer({
+  onChange,
+}: {
+  onChange: (state: {
+    loading: boolean;
+    user: User | null;
+    permissions: Tables<"user_permissions">["section"][];
+  }) => void;
+}) {
+  const { loading, user, permissions } = useUserPermissions();
   useEffect(() => {
-    onChange({ loading, user });
-  }, [loading, user, onChange]);
+    onChange({ loading, user, permissions });
+  }, [loading, permissions, user, onChange]);
   return null;
 }
 
@@ -114,6 +139,7 @@ describe("PermissionProvider", () => {
     unsubscribeMock.mockReset();
     signOutMock.mockClear();
     getSessionMock.mockReset();
+    state.authChangeHandler = null;
     state.profileData = {
       id: "profile-1",
       user_id: "user-1",
@@ -132,12 +158,17 @@ describe("PermissionProvider", () => {
     } as Tables<"profiles">;
     state.profileError = null;
     state.profileUpsertError = null;
+    state.profilePromise = null;
     state.permissionsData = [{ section: "Overview" }];
     state.permissionsError = null;
+    state.permissionsPromise = null;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    state.authChangeHandler = null;
+    state.profilePromise = null;
+    state.permissionsPromise = null;
   });
 
   it("settles loading with a valid session", async () => {
@@ -149,7 +180,11 @@ describe("PermissionProvider", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    const states: Array<{ loading: boolean; user: User | null }> = [];
+    const states: Array<{
+      loading: boolean;
+      user: User | null;
+      permissions: Tables<"user_permissions">["section"][];
+    }> = [];
 
     await act(async () => {
       root.render(
@@ -180,7 +215,11 @@ describe("PermissionProvider", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    const states: Array<{ loading: boolean; user: User | null }> = [];
+    const states: Array<{
+      loading: boolean;
+      user: User | null;
+      permissions: Tables<"user_permissions">["section"][];
+    }> = [];
 
     await act(async () => {
       root.render(
@@ -211,7 +250,11 @@ describe("PermissionProvider", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    const states: Array<{ loading: boolean; user: User | null }> = [];
+    const states: Array<{
+      loading: boolean;
+      user: User | null;
+      permissions: Tables<"user_permissions">["section"][];
+    }> = [];
 
     await act(async () => {
       root.render(
@@ -228,6 +271,66 @@ describe("PermissionProvider", () => {
     const lastState = states.at(-1);
     expect(lastState?.loading).toBe(false);
     expect(lastState?.user).toBeNull();
+    expectAuthLogEmitted();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("clears state on SIGNED_OUT when profile loading hangs", async () => {
+    getSessionMock.mockResolvedValue({ data: { session: null }, error: null });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const states: Array<{
+      loading: boolean;
+      user: User | null;
+      permissions: Tables<"user_permissions">["section"][];
+    }> = [];
+
+    await act(async () => {
+      root.render(
+        <PermissionProvider>
+          <Observer onChange={state => states.push(state)} />
+        </PermissionProvider>,
+      );
+    });
+
+    await tick();
+
+    const session = {
+      user: { id: "user-1", email: "pilot@skyshare.com" },
+    } as Session;
+
+    state.profilePromise = new Promise(() => {}) as Promise<{
+      data: Tables<"profiles"> | null;
+      error: unknown;
+    }>;
+
+    await act(async () => {
+      state.authChangeHandler?.("SIGNED_IN", session);
+    });
+
+    await tick();
+
+    expect(states.some(entry => entry.user?.id === "user-1")).toBe(true);
+    expect(states.some(entry => entry.loading)).toBe(true);
+
+    await act(async () => {
+      state.authChangeHandler?.("SIGNED_OUT", null);
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      await tick();
+    }
+
+    const finalState = states.at(-1);
+    expect(finalState?.user).toBeNull();
+    expect(finalState?.permissions).toEqual([]);
+    expect(finalState?.loading).toBe(false);
     expectAuthLogEmitted();
 
     await act(async () => {
