@@ -18,14 +18,6 @@ import { bootstrapAuth } from "@/lib/authBootstrap";
 
 const DOMAIN_DENIED_MESSAGE = "Google account must be @skyshare.com.";
 
-const ROLE_ENUM_BY_TEXT: Record<UserProfile["role"], UserProfile["role_enum"]> = {
-  admin: "Admin",
-  technician: "Technician",
-  qc: "Manager",
-  viewer: "Read-Only",
-};
-
-const READ_ONLY_FALLBACK_EMAIL = "jonathan@skyshare.com";
 type UserProfile = Tables<"profiles">;
 type AppSection = Tables<"user_permissions">["section"];
 
@@ -35,6 +27,8 @@ const DEV_PERMISSIONS: AppSection[] = [
   "Administration",
   "Development",
 ];
+
+const PROMOTE_ALLOWLISTED_ENDPOINT = "/.netlify/functions/promote-allowlisted-user";
 
 interface PermissionContextType {
   user: User | null;
@@ -80,16 +74,6 @@ function deriveFullName(user: User, fallback?: string | null) {
 function determineReadOnly(profile: UserProfile | null) {
   if (!profile) return false;
   return profile.is_readonly || profile.role === "viewer";
-}
-
-function resolveAdminEnum(email: string, existingEnum?: UserProfile["role_enum"]) {
-  if (existingEnum === "Super Admin") {
-    return existingEnum;
-  }
-  if (email === READ_ONLY_FALLBACK_EMAIL) {
-    return "Super Admin";
-  }
-  return "Admin";
 }
 
 export function PermissionProvider({ children }: { children: React.ReactNode }) {
@@ -152,7 +136,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
       const { data: existingProfile, error } = await supabase
         .from("profiles")
-        .select("id, role, role_enum, is_readonly, full_name, email")
+        .select("id, full_name, email")
         .eq("user_id", authUser.id)
         .maybeSingle();
 
@@ -160,61 +144,48 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         throw error;
       }
 
-      const existingRole = existingProfile?.role ?? "viewer";
-      const safeRole: UserProfile["role"] = ["admin", "technician", "qc", "viewer"].includes(existingRole as string)
-        ? (existingRole as UserProfile["role"])
-        : "viewer";
-
       const isAllowListed = adminEmailSet.has(normalizedEmail);
-
-      let resolvedRole = safeRole;
-      let resolvedReadOnly = existingProfile?.is_readonly ?? true;
-      let resolvedEnum = existingProfile?.role_enum ?? ROLE_ENUM_BY_TEXT[resolvedRole];
-
-      if (!existingProfile) {
-        resolvedRole = isAllowListed ? "admin" : "viewer";
-        resolvedReadOnly = !isAllowListed;
-        resolvedEnum = isAllowListed
-          ? resolveAdminEnum(normalizedEmail, existingProfile?.role_enum)
-          : ROLE_ENUM_BY_TEXT[resolvedRole];
-      }
-
-      if (isAllowListed) {
-        resolvedRole = "admin";
-        resolvedReadOnly = false;
-        resolvedEnum = resolveAdminEnum(normalizedEmail, existingProfile?.role_enum);
-      } else {
-        resolvedEnum = ROLE_ENUM_BY_TEXT[resolvedRole] ?? resolvedEnum;
-      }
-
       if (!isAllowListed) {
-        return;
+        return false;
+      }
+
+      const accessToken = activeSession.access_token;
+      if (!accessToken) {
+        throw new Error("Missing access token for allow-listed promotion");
       }
 
       const fullName = deriveFullName(authUser, existingProfile?.full_name);
 
-      const { error: upsertError } = await supabase
-        .from("profiles")
-        .upsert(
-          {
-            user_id: authUser.id,
-            email: authUser.email ?? existingProfile?.email ?? normalizedEmail,
-            full_name: fullName,
-            role: resolvedRole,
-            role_enum: resolvedEnum,
-            is_readonly: resolvedReadOnly,
-            status: existingProfile ? undefined : "Active",
-            last_login: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" },
-        );
+      const response = await fetch(PROMOTE_ALLOWLISTED_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          userId: authUser.id,
+          email: authUser.email ?? existingProfile?.email ?? normalizedEmail,
+          fullName,
+        }),
+      });
 
-      if (upsertError) {
-        throw upsertError;
+      if (!response.ok) {
+        let message = `Failed to promote allow-listed user (${response.status})`;
+        try {
+          const payload = await response.json();
+          if (payload && typeof payload.error === "string" && payload.error.trim().length > 0) {
+            message = payload.error.trim();
+          }
+        } catch (parseError) {
+          console.error("Failed to parse allow-list promotion error", parseError);
+        }
+        throw new Error(message);
       }
+
+      await loadProfileAndPermissions(authUser.id);
+      return true;
     },
-    [adminEmailSet],
+    [adminEmailSet, loadProfileAndPermissions],
   );
 
   const handleSession = useCallback(
@@ -261,8 +232,10 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         return;
       }
 
+      let allowListPromotionApplied = false;
+
       try {
-        await ensureProfile(activeSession);
+        allowListPromotionApplied = await ensureProfile(activeSession);
       } catch (error) {
         console.error("Error ensuring profile (continuing with load attempt):", error);
         appendAuthLog(
@@ -271,7 +244,9 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       }
 
       try {
-        await loadProfileAndPermissions(activeSession.user.id);
+        if (!allowListPromotionApplied) {
+          await loadProfileAndPermissions(activeSession.user.id);
+        }
       } catch (error) {
         console.error("Error loading profile and permissions:", error);
         appendAuthLog(
