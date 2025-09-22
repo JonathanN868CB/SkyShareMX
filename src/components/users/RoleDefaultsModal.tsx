@@ -1,31 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Info, Loader2, Lock } from "lucide-react";
+import { Info, Lock } from "lucide-react";
 
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
-import { Checkbox } from "@/shared/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { cn } from "@/shared/lib/utils";
-import { fetchRoleDefaults, updateRoleDefaults } from "@/lib/api/role-defaults";
-import type { RoleDefaultsMap } from "@/lib/api/role-defaults";
 import { toast } from "@/hooks/use-toast";
 
 interface RoleDefaultsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-type RoleKey = typeof ROLE_CONFIG[number]["id"];
-
-interface PermissionDefinition {
-  id: string;
-  label: string;
-}
-
-interface PermissionSection {
-  id: string;
-  title: string;
-  permissions: PermissionDefinition[];
 }
 
 const ROLE_CONFIG = [
@@ -56,7 +48,11 @@ const ROLE_CONFIG = [
   },
 ] as const;
 
-const PERMISSION_SECTIONS: PermissionSection[] = [
+type RoleKey = (typeof ROLE_CONFIG)[number]["id"];
+
+type PermissionLevel = "none" | "read" | "write";
+
+const PERMISSION_SECTIONS = [
   {
     id: "overview",
     title: "Overview",
@@ -102,7 +98,9 @@ const PERMISSION_SECTIONS: PermissionSection[] = [
       { id: "view-pmi", label: "Can view PMI" },
     ],
   },
-];
+] as const;
+
+type SectionKey = (typeof PERMISSION_SECTIONS)[number]["id"];
 
 const ROLE_DEFAULT_SELECTIONS: Record<RoleKey, string[] | "all"> = {
   admin: "all",
@@ -136,246 +134,139 @@ const ROLE_DEFAULT_SELECTIONS: Record<RoleKey, string[] | "all"> = {
   viewer: ["dashboard", "aircraft-info", "docs-links"],
 };
 
-const PERMISSION_IDS = PERMISSION_SECTIONS.flatMap(section => section.permissions.map(permission => permission.id));
+const SECTION_PERMISSION_LOOKUP = PERMISSION_SECTIONS.reduce<Record<SectionKey, string[]>>(
+  (accumulator, section) => {
+    accumulator[section.id] = section.permissions.map(permission => permission.id);
+    return accumulator;
+  },
+  {} as Record<SectionKey, string[]>,
+);
 
-type RolePermissionState = Record<RoleKey, Record<string, boolean>>;
+const SECTION_IDS = PERMISSION_SECTIONS.map(section => section.id) as SectionKey[];
 
-function buildRoleDefault(role: RoleKey): Record<string, boolean> {
+type RolePermissionMatrix = Record<RoleKey, Record<SectionKey, PermissionLevel>>;
+
+const PERMISSION_LEVELS: { value: PermissionLevel; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "read", label: "Read" },
+  { value: "write", label: "Write" },
+];
+
+function deriveSectionLevel(role: RoleKey, sectionId: SectionKey): PermissionLevel {
+  if (role === "admin") {
+    return "write";
+  }
+
   const selection = ROLE_DEFAULT_SELECTIONS[role];
-  return PERMISSION_IDS.reduce<Record<string, boolean>>((accumulator, permissionId) => {
-    const isSelected = selection === "all" ? true : selection.includes(permissionId);
-    accumulator[permissionId] = isSelected;
-    return accumulator;
-  }, {});
+  const permissionIds = SECTION_PERMISSION_LOOKUP[sectionId] ?? [];
+
+  if (selection === "all") {
+    return role === "viewer" ? "read" : "write";
+  }
+
+  const selectedCount = permissionIds.filter(id => selection.includes(id)).length;
+
+  if (selectedCount === 0) {
+    return "none";
+  }
+
+  if (selectedCount === permissionIds.length) {
+    return role === "viewer" ? "read" : "write";
+  }
+
+  return "read";
 }
 
-function createDefaultPermissions(): RolePermissionState {
-  return ROLE_CONFIG.reduce<RolePermissionState>((accumulator, role) => {
-    accumulator[role.id] = buildRoleDefault(role.id);
-    return accumulator;
-  }, {} as RolePermissionState);
+function createInitialMatrix(): RolePermissionMatrix {
+  return ROLE_CONFIG.reduce<RolePermissionMatrix>((rolesAccumulator, role) => {
+    rolesAccumulator[role.id] = PERMISSION_SECTIONS.reduce<Record<SectionKey, PermissionLevel>>(
+      (sectionsAccumulator, section) => {
+        sectionsAccumulator[section.id] = deriveSectionLevel(role.id, section.id);
+        return sectionsAccumulator;
+      },
+      {} as Record<SectionKey, PermissionLevel>,
+    );
+    return rolesAccumulator;
+  }, {} as RolePermissionMatrix);
 }
 
-function clonePermissionState(state: RolePermissionState): RolePermissionState {
-  return ROLE_CONFIG.reduce<RolePermissionState>((accumulator, role) => {
-    accumulator[role.id] = { ...state[role.id] };
-    return accumulator;
-  }, {} as RolePermissionState);
+function cloneMatrix(matrix: RolePermissionMatrix): RolePermissionMatrix {
+  return ROLE_CONFIG.reduce<RolePermissionMatrix>((rolesAccumulator, role) => {
+    rolesAccumulator[role.id] = { ...matrix[role.id] };
+    return rolesAccumulator;
+  }, {} as RolePermissionMatrix);
 }
 
-function mergeRemoteDefaults(remote: RoleDefaultsMap): RolePermissionState {
-  const fallback = createDefaultPermissions();
-  return ROLE_CONFIG.reduce<RolePermissionState>((accumulator, role) => {
-    const fallbackPermissions = fallback[role.id];
-    const remotePermissions = remote[role.id];
-    if (!remotePermissions) {
-      accumulator[role.id] = { ...fallbackPermissions };
-      return accumulator;
-    }
-
-    const merged = { ...fallbackPermissions };
-    for (const permissionId of PERMISSION_IDS) {
-      if (permissionId in remotePermissions) {
-        merged[permissionId] = Boolean(remotePermissions[permissionId]);
-      }
-    }
-
-    accumulator[role.id] = merged;
-    return accumulator;
-  }, {} as RolePermissionState);
+function matricesEqual(first: RolePermissionMatrix, second: RolePermissionMatrix): boolean {
+  return ROLE_CONFIG.every(role => SECTION_IDS.every(sectionId => first[role.id][sectionId] === second[role.id][sectionId]));
 }
 
 export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps) {
-  const [activeRole, setActiveRole] = useState<RoleKey>("admin");
-  const [persistedPermissions, setPersistedPermissions] = useState<RolePermissionState>(() => createDefaultPermissions());
-  const [permissions, setPermissions] = useState<RolePermissionState>(() => createDefaultPermissions());
-  const persistedPermissionsRef = useRef<RolePermissionState>(persistedPermissions);
-  const [loadState, setLoadState] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const initialMatrixRef = useRef<RolePermissionMatrix>();
 
-  useEffect(() => {
-    persistedPermissionsRef.current = persistedPermissions;
-  }, [persistedPermissions]);
+  if (!initialMatrixRef.current) {
+    initialMatrixRef.current = createInitialMatrix();
+  }
+
+  const [activeRole, setActiveRole] = useState<RoleKey>("admin");
+  const [savedMatrix, setSavedMatrix] = useState<RolePermissionMatrix>(() => cloneMatrix(initialMatrixRef.current!));
+  const [matrix, setMatrix] = useState<RolePermissionMatrix>(() => cloneMatrix(initialMatrixRef.current!));
+
+  const initialMatrix = initialMatrixRef.current!;
 
   useEffect(() => {
     if (!open) {
       setActiveRole("admin");
-      setPermissions(clonePermissionState(persistedPermissionsRef.current));
-      setIsSaving(false);
-      setLoadState("idle");
-      setLoadError(null);
-      return;
     }
+    setMatrix(cloneMatrix(savedMatrix));
+  }, [open, savedMatrix]);
 
-    let cancelled = false;
+  const hasChanges = useMemo(() => !matricesEqual(matrix, savedMatrix), [matrix, savedMatrix]);
+  const canReset = useMemo(() => !matricesEqual(matrix, initialMatrix), [matrix, initialMatrix]);
 
-    setPermissions(clonePermissionState(persistedPermissionsRef.current));
-    setLoadState("loading");
-    setLoadError(null);
-
-    (async () => {
-      try {
-        const remote = await fetchRoleDefaults();
-        if (cancelled) return;
-        const merged = mergeRemoteDefaults(remote);
-        setPersistedPermissions(merged);
-        setPermissions(clonePermissionState(merged));
-        setLoadState("success");
-      } catch (error) {
-        if (cancelled) return;
-        console.error("Failed to load role defaults", error);
-        const fallbackMessage = "Failed to load saved defaults. Showing fallback defaults instead.";
-        const message = error instanceof Error && error.message ? error.message : fallbackMessage;
-        const description =
-          message === fallbackMessage ? fallbackMessage : `${message}. Showing fallback defaults instead.`;
-        setLoadError(description);
-        setLoadState("error");
-        toast({
-          title: "Unable to load defaults",
-          description,
-          variant: "destructive",
-        });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  const activeRoleConfig = ROLE_CONFIG.find(role => role.id === activeRole) ?? ROLE_CONFIG[0];
-  const isActiveRoleReadOnly = Boolean(activeRoleConfig.readOnly);
-  const isLoading = loadState === "loading";
-  const isError = loadState === "error";
-  const interactionLocked = isLoading || isSaving;
-
-  const isRoleDirty = useMemo(() => {
-    const current = permissions[activeRole];
-    const baseline = persistedPermissions[activeRole];
-    return PERMISSION_IDS.some(permissionId => current[permissionId] !== baseline[permissionId]);
-  }, [activeRole, permissions, persistedPermissions]);
-
-  const saveDisabled = isActiveRoleReadOnly ? interactionLocked : !isRoleDirty || interactionLocked;
-
-  const updateRolePermissions = (role: RoleKey, updates: Record<string, boolean>) => {
-    setPermissions(previous => ({
-      ...previous,
-      [role]: { ...previous[role], ...updates },
-    }));
-  };
-
-  const togglePermission = (role: RoleKey, permissionId: string, value: boolean) => {
+  const updateSectionLevel = (role: RoleKey, sectionId: SectionKey, level: PermissionLevel) => {
     const roleConfig = ROLE_CONFIG.find(item => item.id === role);
-    if (roleConfig?.readOnly || interactionLocked) return;
-    updateRolePermissions(role, { [permissionId]: value });
-  };
+    if (roleConfig?.readOnly) return;
 
-  const toggleSection = (role: RoleKey, permissionIds: string[], value: boolean) => {
-    const roleConfig = ROLE_CONFIG.find(item => item.id === role);
-    if (roleConfig?.readOnly || interactionLocked) return;
-    const updates = permissionIds.reduce<Record<string, boolean>>((accumulator, permissionId) => {
-      accumulator[permissionId] = value;
-      return accumulator;
-    }, {});
-    updateRolePermissions(role, updates);
-  };
-
-  const handleResetRole = () => {
-    if (isActiveRoleReadOnly || interactionLocked) return;
-    setPermissions(previous => ({
+    setMatrix(previous => ({
       ...previous,
-      [activeRole]: { ...persistedPermissions[activeRole] },
+      [role]: {
+        ...previous[role],
+        [sectionId]: level,
+      },
     }));
   };
 
   const handleCancel = () => {
-    setPermissions(clonePermissionState(persistedPermissions));
+    setMatrix(cloneMatrix(savedMatrix));
     onOpenChange(false);
   };
 
-  const handleSave = async () => {
-    if (isActiveRoleReadOnly) {
-      toast({
-        title: "Permissions updated",
-        description: `${activeRoleConfig.label} defaults saved.`,
-      });
-      onOpenChange(false);
-      return;
-    }
+  const handleReset = () => {
+    if (!initialMatrix) return;
+    setMatrix(cloneMatrix(initialMatrix));
+  };
 
-    if (!isRoleDirty || interactionLocked) {
-      return;
-    }
+  const handleSave = () => {
+    if (!hasChanges) return;
 
-    const snapshot = { ...permissions[activeRole] };
-    const previousPersisted = clonePermissionState(persistedPermissions);
-
-    setIsSaving(true);
-    setPersistedPermissions(current => {
-      const next = clonePermissionState(current);
-      next[activeRole] = { ...snapshot };
-      return next;
-    });
-
-    try {
-      const result = await updateRoleDefaults(activeRole, snapshot);
-      if (result?.permissions) {
-        setPersistedPermissions(current => {
-          const next = clonePermissionState(current);
-          const merged = mergeRemoteDefaults({ [activeRole]: result.permissions } as RoleDefaultsMap);
-          next[activeRole] = merged[activeRole];
-          return next;
-        });
-      }
-      toast({
-        title: "Permissions updated",
-        description: `${activeRoleConfig.label} defaults saved.`,
-      });
-      onOpenChange(false);
-    } catch (error) {
-      console.error("Failed to save role defaults", error);
-      setPersistedPermissions(previousPersisted);
-      const message =
-        error instanceof Error && error.message ? error.message : "Failed to save role defaults";
-      toast({
-        title: "Unable to save defaults",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
+    setSavedMatrix(cloneMatrix(matrix));
+    console.log("Saved — local only (no DB yet)", matrix);
+    toast({ title: "Saved — local only (no DB yet)" });
+    // TODO(supabase): persist role defaults
+    // TODO: enforce in route guards
+    onOpenChange(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl space-y-6">
+      <DialogContent className="max-w-5xl overflow-hidden">
         <DialogHeader className="space-y-2">
           <DialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Permissions</DialogTitle>
           <DialogDescription>
             Configure access and workflow defaults for each role. Updates apply to future Google sign-ins automatically.
           </DialogDescription>
         </DialogHeader>
-
-        {(isLoading || (isError && loadError)) && (
-          <div className="space-y-2">
-            {isLoading && (
-              <div
-                data-testid="role-defaults-loading"
-                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600"
-              >
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                <span>Loading saved defaults…</span>
-              </div>
-            )}
-            {isError && loadError && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" data-testid="role-defaults-error">
-                {loadError}
-              </div>
-            )}
-          </div>
-        )}
 
         <Tabs value={activeRole} onValueChange={value => setActiveRole(value as RoleKey)} className="space-y-6">
           <TabsList className="flex w-full flex-wrap gap-2 rounded-full bg-slate-100 p-1 sm:w-auto">
@@ -391,11 +282,9 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
           </TabsList>
 
           {ROLE_CONFIG.map(role => {
-            const rolePermissions = permissions[role.id];
             const isReadOnly = Boolean(role.readOnly);
-            const disableForRole = isReadOnly || interactionLocked;
             return (
-              <TabsContent key={role.id} value={role.id} className="space-y-6">
+              <TabsContent key={role.id} value={role.id} className="space-y-6 focus-visible:outline-none">
                 <div
                   className={cn(
                     "flex items-start gap-3 rounded-xl border px-4 py-3 text-sm",
@@ -412,58 +301,74 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
                   <div className="space-y-1">
                     <p className="text-sm font-semibold text-slate-900">{role.noticeTitle}</p>
                     <p className="text-sm text-slate-600">{role.noticeDescription}</p>
+                    {isReadOnly && (
+                      <p className="text-xs text-slate-500">
+                        Admin permissions are fixed for now—adjust the other roles to tailor access levels.
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                {PERMISSION_SECTIONS.map(section => {
-                  const permissionIds = section.permissions.map(permission => permission.id);
-                  const allSelected = permissionIds.every(id => rolePermissions[id]);
-                  const selectAllLabel = allSelected ? "Clear All" : "Select All";
+                <ScrollArea className="max-h-[60vh] pr-4">
+                  <div className="space-y-4 pr-2 pb-2">
+                    {PERMISSION_SECTIONS.map(section => {
+                      const headingId = `${role.id}-${section.id}-heading`;
+                      const sectionLevel = matrix[role.id][section.id];
 
-                  return (
-                    <div key={section.id} className="space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <h3 className="text-sm font-semibold text-slate-900">{section.title}</h3>
-                        {section.permissions.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleSection(role.id, permissionIds, !allSelected)}
-                            disabled={disableForRole}
-                            className="rounded-full px-3 text-xs font-medium text-slate-600 hover:bg-slate-100"
-                          >
-                            {selectAllLabel}
-                          </Button>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {section.permissions.map(permission => {
-                          const checked = rolePermissions[permission.id];
-                          return (
-                            <label
-                              key={permission.id}
-                              className={cn(
-                                "flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition",
-                                checked
-                                  ? "border-primary/50 bg-primary/5 shadow-sm"
-                                  : "border-slate-200 bg-white hover:border-primary/40 hover:bg-primary/5",
-                                disableForRole && "cursor-default opacity-70 hover:border-slate-200 hover:bg-white",
-                              )}
-                            >
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={value => togglePermission(role.id, permission.id, value === true)}
-                                disabled={disableForRole}
-                              />
-                              <span className="font-medium text-slate-700">{permission.label}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
+                      return (
+                        <section
+                          key={`${role.id}-${section.id}`}
+                          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                          aria-labelledby={headingId}
+                        >
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="space-y-2">
+                              <h3 id={headingId} className="text-sm font-semibold text-slate-900">
+                                {section.title}
+                              </h3>
+                              <ul className="list-disc space-y-1 pl-5 text-xs text-slate-500">
+                                {section.permissions.map(permission => (
+                                  <li key={permission.id}>{permission.label}</li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div className="flex items-center justify-end">
+                              <div
+                                className={cn(
+                                  "rounded-full border border-slate-200 bg-slate-50 p-1",
+                                  isReadOnly && "opacity-60",
+                                )}
+                              >
+                                <ToggleGroup
+                                  type="single"
+                                  value={sectionLevel}
+                                  onValueChange={value => {
+                                    if (!value) return;
+                                    updateSectionLevel(role.id, section.id, value as PermissionLevel);
+                                  }}
+                                  aria-labelledby={headingId}
+                                  className="gap-1"
+                                  disabled={isReadOnly}
+                                >
+                                  {PERMISSION_LEVELS.map(level => (
+                                    <ToggleGroupItem
+                                      key={level.value}
+                                      value={level.value}
+                                      disabled={isReadOnly}
+                                      className="rounded-full px-3 py-1 text-xs font-medium text-slate-600 transition data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                                    >
+                                      {level.label}
+                                    </ToggleGroupItem>
+                                  ))}
+                                </ToggleGroup>
+                              </div>
+                            </div>
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               </TabsContent>
             );
           })}
@@ -473,25 +378,18 @@ export function RoleDefaultsModal({ open, onOpenChange }: RoleDefaultsModalProps
           <Button
             type="button"
             variant="outline"
-            onClick={handleResetRole}
-            disabled={isActiveRoleReadOnly || !isRoleDirty || interactionLocked}
+            onClick={handleReset}
+            disabled={!canReset}
             className="rounded-full border-slate-200 text-slate-700 hover:bg-slate-100"
           >
-            Reset Role to Defaults
+            Reset to Initial Defaults
           </Button>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="ghost" onClick={handleCancel} className="text-slate-600 hover:bg-slate-100">
               Cancel
             </Button>
-            <Button type="button" onClick={handleSave} disabled={saveDisabled} className="rounded-full px-5">
-              {isSaving ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  Saving…
-                </>
-              ) : (
-                "Save"
-              )}
+            <Button type="button" onClick={handleSave} disabled={!hasChanges} className="rounded-full px-5">
+              Save
             </Button>
           </div>
         </div>
