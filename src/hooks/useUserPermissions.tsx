@@ -157,6 +157,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   const isMountedRef = useRef(false);
   const loadingRef = useRef(true);
   const sessionAbortRef = useRef<AbortController | null>(null);
+  const sessionFingerprintRef = useRef<string | null>(null);
 
   const adminEmails = useMemo(() => getAdminEmails(), []);
   const adminEmailSet = useMemo(() => new Set(adminEmails), [adminEmails]);
@@ -307,6 +308,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
       if (!activeSession) {
         sessionAbortRef.current?.abort();
         sessionAbortRef.current = null;
+        sessionFingerprintRef.current = null;
         setUser(null);
         setProfile(null);
         setPermissions([]);
@@ -316,8 +318,25 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         return;
       }
 
+      const nextFingerprint = `${activeSession.user.id}:${activeSession.access_token ?? ""}`;
+      const previousFingerprint = sessionFingerprintRef.current;
+      const previousController = sessionAbortRef.current;
+
+      if (
+        previousFingerprint === nextFingerprint &&
+        previousController &&
+        !previousController.signal.aborted
+      ) {
+        appendAuthLog(
+          `PermissionProvider duplicate session ignored for ${activeSession.user.id}`,
+        );
+        return;
+      }
+
+      sessionFingerprintRef.current = nextFingerprint;
+
       const controller = new AbortController();
-      sessionAbortRef.current?.abort();
+      previousController?.abort();
       sessionAbortRef.current = controller;
 
       const sessionId = activeSession.user.id;

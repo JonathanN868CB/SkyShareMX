@@ -94,7 +94,16 @@ export function bootstrapAuth(client: SupabaseClient, handlers: Handlers) {
         initialSessionHandled = true;
         invokeSessionHandler(session ?? null, "INITIAL_SESSION");
         appendAuthLog("INITIAL_SESSION handled");
+      } else {
+        appendAuthLog("INITIAL_SESSION duplicate ignored");
       }
+      return;
+    }
+    if (
+      !initialSessionHandled &&
+      (event === "SIGNED_IN" || event === "TOKEN_REFRESHED")
+    ) {
+      appendAuthLog(`onAuthStateChange: ${event} deferred until INITIAL_SESSION`);
       return;
     }
     invokeSessionHandler(session ?? null, event);
