@@ -4,11 +4,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/shared/lib/api";
 import type { Tables } from "@/entities/supabase";
+import { appendAuthLog } from "@/debug";
 import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/shared/lib/env";
 import { toast } from "@/hooks/use-toast";
 import { isSkyshare } from "@/lib/domainGate";
@@ -97,9 +99,15 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   const [loading, setLoading] = useState(true);
   // TODO: Rename these viewer-specific flags to match customer-facing terminology.
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const isMountedRef = useRef(false);
+  const loadingRef = useRef(true);
 
   const adminEmails = useMemo(() => getAdminEmails(), []);
   const adminEmailSet = useMemo(() => new Set(adminEmails), [adminEmails]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
 
   const loadProfileAndPermissions = useCallback(
     async (userId: string) => {
@@ -211,22 +219,31 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
   const handleSession = useCallback(
     async (activeSession: Session | null) => {
+      appendAuthLog(
+        activeSession
+          ? `PermissionProvider handleSession: session ${activeSession.user.id}`
+          : "PermissionProvider handleSession: null session",
+      );
+
       if (!activeSession) {
         setUser(null);
         setProfile(null);
         setPermissions([]);
         setIsReadOnly(false);
         setLoading(false);
+        appendAuthLog("PermissionProvider session cleared; loading=false");
         return;
       }
 
       setLoading(true);
+      appendAuthLog(`PermissionProvider loading=true for ${activeSession.user.id}`);
       setUser(activeSession.user);
 
       const normalizedEmail = normalizeEmail(activeSession.user.email);
       const allowedDomain = isSkyshare(normalizedEmail);
 
       if (!allowedDomain) {
+        appendAuthLog("PermissionProvider invalid email domain → sign out");
         await supabase.auth.signOut();
         setDomainDeniedMessage(DOMAIN_DENIED_MESSAGE);
         toast({
@@ -239,6 +256,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         setPermissions([]);
         setIsReadOnly(false);
         setLoading(false);
+        appendAuthLog("PermissionProvider loading=false after domain denial");
         window.location.replace("/");
         return;
       }
@@ -247,12 +265,20 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         await ensureProfile(activeSession);
       } catch (error) {
         console.error("Error ensuring profile (continuing with load attempt):", error);
+        appendAuthLog(
+          `PermissionProvider ensureProfile error: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
 
       try {
         await loadProfileAndPermissions(activeSession.user.id);
       } catch (error) {
         console.error("Error loading profile and permissions:", error);
+        appendAuthLog(
+          `PermissionProvider loadProfileAndPermissions error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
         toast({
           title: "Authentication error",
           description: "We couldn't load your profile. Please try again.",
@@ -260,53 +286,84 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         });
       } finally {
         setLoading(false);
+        appendAuthLog(`PermissionProvider loading=false after session ${activeSession.user.id}`);
       }
     },
     [ensureProfile, loadProfileAndPermissions],
   );
 
   useEffect(() => {
-    if (isDevBypassActive()) {
-      console.log("🚧 PermissionProvider: Dev bypass active, granting full access");
+    appendAuthLog("PermissionProvider mount");
+    isMountedRef.current = true;
+
+    const devBypass = isDevBypassActive();
+    const timer =
+      typeof window !== "undefined"
+        ? window.setTimeout(() => {
+            if (isMountedRef.current && loadingRef.current) {
+              appendAuthLog("PermissionProvider safety flip");
+              setLoading(false);
+            }
+          }, 2000)
+        : undefined;
+
+    if (devBypass) {
+      appendAuthLog("PermissionProvider dev bypass active");
       setUser(null);
       setProfile(null);
       setPermissions(DEV_PERMISSIONS);
       setIsReadOnly(false);
       setLoading(false);
-      return () => {};
     }
 
-    let isMounted = true;
+    let teardown: (() => void) | undefined;
 
-    const teardown = bootstrapAuth(supabase, {
-      onSession: async session => {
-        if (!isMounted) {
-          return;
-        }
-        await handleSession(session);
-      },
-      onReady: () => {
-        if (!isMounted) {
-          return;
-        }
-        setLoading(false);
-      },
-      onError: error => {
-        console.error("Error bootstrapping authentication:", error);
-        if (!isMounted) {
-          return;
-        }
-        toast({
-          title: "Authentication error",
-          description: "We couldn't restore your session. Please sign in again.",
-          variant: "destructive",
-        });
-      },
-    });
+    if (!devBypass) {
+      teardown = bootstrapAuth(supabase, {
+        onSession: async session => {
+          appendAuthLog(
+            session
+              ? `PermissionProvider session event: ${session.user.id}`
+              : "PermissionProvider session event: null",
+          );
+          if (!isMountedRef.current) {
+            appendAuthLog("PermissionProvider session ignored after unmount");
+            return;
+          }
+          await handleSession(session);
+        },
+        onReady: () => {
+          appendAuthLog("PermissionProvider onReady");
+          if (!isMountedRef.current) {
+            return;
+          }
+          setLoading(false);
+        },
+        onError: error => {
+          appendAuthLog(
+            `PermissionProvider bootstrap error: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          console.error("Error bootstrapping authentication:", error);
+          if (!isMountedRef.current) {
+            return;
+          }
+          toast({
+            title: "Authentication error",
+            description: "We couldn't restore your session. Please sign in again.",
+            variant: "destructive",
+          });
+          setLoading(false);
+        },
+      });
+    }
 
     return () => {
-      isMounted = false;
-      teardown();
+      appendAuthLog("PermissionProvider unmount");
+      isMountedRef.current = false;
+      if (typeof window !== "undefined" && timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+      teardown?.();
     };
   }, [handleSession]);
 

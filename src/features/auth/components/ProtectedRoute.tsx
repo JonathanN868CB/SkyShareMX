@@ -1,71 +1,78 @@
-import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import { useEffect, useRef } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { supabase } from "@/shared/lib/api";
-import {
-  enableDevBypass,
-  isDevBypassActive,
-  isDevBypassAllowed,
-  isDevEnvironment,
-  rememberReturnTo,
-} from "@/shared/lib/env";
+
+import { appendAuthLog } from "@/debug";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { isDevBypassActive, rememberReturnTo } from "@/shared/lib/env";
+
+const hiddenWrapperStyle: CSSProperties = {
+  position: "absolute",
+  width: 0,
+  height: 0,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+};
 
 export default function ProtectedRoute({ children }: { children: JSX.Element }) {
-  const initialBypass = isDevBypassActive();
   const location = useLocation();
-
-  const [loading, setLoading] = useState(!initialBypass);
-  const [hasSession, setHasSession] = useState(initialBypass);
+  const { loading, user } = useUserPermissions();
+  const devBypass = isDevBypassActive();
+  const hasAccess = devBypass || Boolean(user);
+  const recordedReturn = useRef(false);
 
   useEffect(() => {
-    // Check if we're in development mode with multiple fallbacks (same logic as Login)
-    const isDev = isDevEnvironment();
-    const devBypassAllowed = isDevBypassAllowed();
-    const devBypass = isDevBypassActive();
+    appendAuthLog(`ProtectedRoute mount (${location.pathname})`);
+    return () => {
+      appendAuthLog("ProtectedRoute unmount");
+    };
+  }, [location.pathname]);
 
-    console.log("🔒 ProtectedRoute: Dev check", {
-      isDev,
-      devBypass,
-      devBypassAllowed,
-      hostname: window.location.hostname,
-    });
+  useEffect(() => {
+    appendAuthLog(
+      `ProtectedRoute state change: loading=${loading ? "true" : "false"}, devBypass=${
+        devBypass ? "true" : "false"
+      }, user=${user ? user.id ?? "present" : "null"}`,
+    );
+  }, [loading, devBypass, user]);
 
-    if (devBypass) {
-      console.log("🚧 ProtectedRoute: Dev bypass active, allowing access");
-      setHasSession(true);
-      setLoading(false);
+  useEffect(() => {
+    if (loading) {
+      appendAuthLog("ProtectedRoute decision: show loader");
       return;
     }
 
-    const checkSession = async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (data.session) {
-          setHasSession(true);
-        } else {
-          const intendedPath = `${location.pathname}${location.search}${location.hash}`;
-          rememberReturnTo(intendedPath);
-          if (devBypassAllowed) {
-            console.log(
-              "🚧 ProtectedRoute: No session in preview/dev, enabling dev bypass automatically",
-            );
-            enableDevBypass();
-            setHasSession(true);
-          } else {
-            setHasSession(false);
-          }
-        }
-      } catch (error) {
-        console.error("🔒 ProtectedRoute: Failed to retrieve session", error);
-        setHasSession(false);
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (hasAccess) {
+      appendAuthLog("ProtectedRoute decision: render children");
+      recordedReturn.current = false;
+      return;
+    }
 
-    checkSession();
-  }, [location.hash, location.pathname, location.search]);
+    appendAuthLog("ProtectedRoute decision: redirect to /");
+    if (!recordedReturn.current) {
+      const intendedPath = `${location.pathname}${location.search}${location.hash}`;
+      rememberReturnTo(intendedPath);
+      recordedReturn.current = true;
+      appendAuthLog(`ProtectedRoute rememberReturnTo: ${intendedPath}`);
+    }
+  }, [loading, hasAccess, location.pathname, location.search, location.hash]);
 
-  if (loading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
-  if (!hasSession) return <Navigate to="/" replace />;
+  if (loading) {
+    return (
+      <>
+        <div className="p-6 text-sm text-muted-foreground" aria-live="polite">
+          Loading…
+        </div>
+        <div style={hiddenWrapperStyle} aria-hidden>
+          {children}
+        </div>
+      </>
+    );
+  }
+
+  if (!hasAccess) {
+    return <Navigate to="/" replace />;
+  }
+
   return children;
 }
