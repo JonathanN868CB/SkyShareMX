@@ -1,17 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Info, Lock } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/shared/ui/dialog";
 import { Button } from "@/shared/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
-import { ScrollArea } from "@/shared/ui/scroll-area";
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/shared/ui/breadcrumb";
 import { cn } from "@/shared/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -163,12 +157,6 @@ function isPermissionLevel(value: unknown): value is PermissionLevel {
   return value === "none" || value === "read" || value === "write";
 }
 
-interface RoleDefaultsModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  initialMatrixSnapshot?: RolePermissionMatrixSnapshot;
-}
-
 const PERMISSION_LEVELS: { value: PermissionLevel; label: string }[] = [
   { value: "none", label: "None" },
   { value: "read", label: "Read" },
@@ -260,7 +248,8 @@ function matricesEqual(first: RolePermissionMatrix, second: RolePermissionMatrix
   );
 }
 
-export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }: RoleDefaultsModalProps) {
+export default function RoleDefaultsPage() {
+  const navigate = useNavigate();
   const initialMatrixRef = useRef<RolePermissionMatrix>();
 
   if (!initialMatrixRef.current) {
@@ -268,34 +257,10 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
   }
 
   const [activeRole, setActiveRole] = useState<RoleKey>("admin");
-  const [savedMatrix, setSavedMatrix] = useState<RolePermissionMatrix>(() =>
-    cloneMatrix(initialMatrixSnapshot ?? initialMatrixRef.current!),
-  );
-  const [matrix, setMatrix] = useState<RolePermissionMatrix>(() =>
-    cloneMatrix(initialMatrixSnapshot ?? initialMatrixRef.current!),
-  );
+  const [savedMatrix, setSavedMatrix] = useState<RolePermissionMatrix>(() => cloneMatrix(initialMatrixRef.current!));
+  const [matrix, setMatrix] = useState<RolePermissionMatrix>(() => cloneMatrix(initialMatrixRef.current!));
 
   const initialMatrix = initialMatrixRef.current!;
-
-  useEffect(() => {
-    if (!initialMatrixSnapshot) {
-      return;
-    }
-
-    const normalizedSavedMatrix = cloneMatrix(initialMatrixSnapshot);
-    const normalizedMatrix = cloneMatrix(initialMatrixSnapshot);
-
-    setSavedMatrix(previous => (matricesEqual(previous, normalizedSavedMatrix) ? previous : normalizedSavedMatrix));
-    setMatrix(previous => (matricesEqual(previous, normalizedMatrix) ? previous : normalizedMatrix));
-  }, [initialMatrixSnapshot]);
-
-  useEffect(() => {
-    if (!open) {
-      setActiveRole("admin");
-    }
-    const normalizedMatrix = cloneMatrix(savedMatrix);
-    setMatrix(previous => (matricesEqual(previous, normalizedMatrix) ? previous : normalizedMatrix));
-  }, [open, savedMatrix]);
 
   const hasChanges = useMemo(() => !matricesEqual(matrix, savedMatrix), [matrix, savedMatrix]);
   const canReset = useMemo(() => !matricesEqual(matrix, initialMatrix), [matrix, initialMatrix]);
@@ -313,14 +278,13 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
     }));
   };
 
-  const handleCancel = () => {
-    setMatrix(cloneMatrix(savedMatrix));
-    onOpenChange(false);
+  const handleReset = () => {
+    setMatrix(cloneMatrix(initialMatrix));
   };
 
-  const handleReset = () => {
-    if (!initialMatrix) return;
-    setMatrix(cloneMatrix(initialMatrix));
+  const handleCancel = () => {
+    setMatrix(cloneMatrix(savedMatrix));
+    navigate("/app/admin/users");
   };
 
   const handleSave = () => {
@@ -330,56 +294,66 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
     setSavedMatrix(normalizedMatrix);
     console.log("Saved — local only (no DB yet)", normalizedMatrix);
     toast({ title: "Saved — local only (no DB yet)" });
-    // TODO(supabase): persist role defaults
-    // TODO: enforce in route guards
-    onOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-w-5xl min-h-[70vh] max-h-[85vh] overflow-hidden grid-rows-[auto_minmax(0,_1fr)_auto]"
-        style={{ height: "min(85vh, calc(100vh - 4rem))" }}
-      >
-        <DialogHeader className="space-y-2">
-          <DialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Permissions</DialogTitle>
-          <DialogDescription>
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 text-slate-900">
+      <div className="space-y-3">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <Link to="/app/admin/users">Users</Link>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Role Defaults</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        <div className="space-y-1">
+          <h1 className="text-3xl font-semibold tracking-tight">Role Defaults</h1>
+          <p className="text-base text-slate-600">
             Configure access and workflow defaults for each role. Updates apply to future Google sign-ins automatically.
-          </DialogDescription>
-        </DialogHeader>
+          </p>
+        </div>
+      </div>
 
-        <Tabs
-          value={activeRole}
-          onValueChange={value => setActiveRole(value as RoleKey)}
-          className="flex min-h-0 flex-1 flex-col gap-6"
-        >
-          <TabsList className="flex w-full flex-wrap gap-2 rounded-full bg-slate-100 p-1 sm:w-auto">
-            {ROLE_CONFIG.map(role => (
-              <TabsTrigger
-                key={role.id}
-                value={role.id}
-                className="rounded-full px-4 py-2 text-sm font-medium text-slate-600 transition data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm"
-              >
-                {role.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+      <Tabs
+        value={activeRole}
+        onValueChange={value => setActiveRole(value as RoleKey)}
+        className="grid h-[min(100dvh-4rem,900px)] grid-rows-[auto,1fr,auto] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+      >
+        <div className="space-y-4 border-b border-slate-200 px-6 py-4 sm:px-8">
+          <p className="text-sm text-slate-600">
+            Choose a role to review module-level defaults. These permissions apply the next time teammates sign in with Google.
+          </p>
+          <div className="overflow-x-auto pb-1">
+            <TabsList className="flex w-full min-w-max gap-2 rounded-full bg-slate-100 p-1 text-slate-600">
+              {ROLE_CONFIG.map(role => (
+                <TabsTrigger
+                  key={role.id}
+                  value={role.id}
+                  className="rounded-full px-4 py-2 text-sm font-medium transition data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm"
+                >
+                  {role.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
+        </div>
 
+        <div className="overflow-y-auto px-6 pb-6 pt-4 sm:px-8">
           {ROLE_CONFIG.map(role => {
             const isReadOnly = Boolean(role.readOnly);
             return (
-              <TabsContent
-                key={role.id}
-                value={role.id}
-                className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden focus-visible:outline-none"
-              >
+              <TabsContent key={role.id} value={role.id} className="space-y-4 focus-visible:outline-none">
                 {(isReadOnly || Boolean(role.noticeTitle || role.noticeDescription)) && (
                   <div
                     className={cn(
                       "flex items-start gap-3 rounded-xl border px-4 py-3 text-sm",
-                      isReadOnly
-                        ? "border-slate-200 bg-slate-50 text-slate-700"
-                        : "border-primary/30 bg-primary/5 text-slate-700",
+                      isReadOnly ? "border-slate-200 bg-slate-50 text-slate-700" : "border-primary/30 bg-primary/5 text-slate-700",
                     )}
                   >
                     {isReadOnly ? (
@@ -403,88 +377,85 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
                   </div>
                 )}
 
-                <ScrollArea className="flex-1 min-h-0 overflow-y-auto pr-4" type="always">
-                  <div className="space-y-4 pr-2 pb-2">
-                    {PERMISSION_SECTIONS.map(section => {
-                      const headingId = `${role.id}-${section.id}-heading`;
+                <div className="space-y-4">
+                  {PERMISSION_SECTIONS.map(section => {
+                    const headingId = `${role.id}-${section.id}-heading`;
 
-                      return (
-                        <section
-                          key={`${role.id}-${section.id}`}
-                          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-                          aria-labelledby={headingId}
-                        >
-                          <div className="space-y-4">
-                            <div className="space-y-1">
-                              <h3 id={headingId} className="text-sm font-semibold text-slate-900">
-                                {section.title}
-                              </h3>
-                              <p className="text-xs text-slate-500">
-                                Adjust defaults for each module in this section.
-                              </p>
-                            </div>
-
-                            <div className="space-y-3">
-                              {section.permissions.map(permission => {
-                                const permissionLabelId = `${role.id}-${section.id}-${permission.id}-label`;
-                                const permissionLevel = matrix[role.id]?.[permission.id] ?? "none";
-
-                                return (
-                                  <div
-                                    key={`${role.id}-${permission.id}`}
-                                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 sm:flex-row sm:items-center sm:justify-between"
-                                  >
-                                    <div className="space-y-0.5">
-                                      <p id={permissionLabelId} className="text-sm font-medium text-slate-900">
-                                        {permission.label}
-                                      </p>
-                                    </div>
-                                    <div className={cn("flex items-center justify-end", isReadOnly && "opacity-60")}> 
-                                      <ToggleGroup
-                                        type="single"
-                                        value={permissionLevel}
-                                        onValueChange={value => {
-                                          if (!value) return;
-                                          updatePermissionLevel(role.id, permission.id, value as PermissionLevel);
-                                        }}
-                                        aria-labelledby={permissionLabelId}
-                                        className="gap-1"
-                                        disabled={isReadOnly}
-                                      >
-                                        {PERMISSION_LEVELS.map(level => (
-                                          <ToggleGroupItem
-                                            key={level.value}
-                                            value={level.value}
-                                            disabled={isReadOnly}
-                                            className="rounded-full px-3 py-1 text-xs font-medium text-slate-600 transition data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-                                          >
-                                            {level.label}
-                                          </ToggleGroupItem>
-                                        ))}
-                                      </ToggleGroup>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                    return (
+                      <section
+                        key={`${role.id}-${section.id}`}
+                        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                        aria-labelledby={headingId}
+                      >
+                        <div className="space-y-4">
+                          <div className="space-y-1">
+                            <h3 id={headingId} className="text-sm font-semibold text-slate-900">
+                              {section.title}
+                            </h3>
+                            <p className="text-xs text-slate-500">Adjust defaults for each module in this section.</p>
                           </div>
-                        </section>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
+
+                          <div className="space-y-3">
+                            {section.permissions.map(permission => {
+                              const permissionLabelId = `${role.id}-${section.id}-${permission.id}-label`;
+                              const permissionLevel = matrix[role.id]?.[permission.id] ?? "none";
+
+                              return (
+                                <div
+                                  key={`${role.id}-${permission.id}`}
+                                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 sm:flex-row sm:items-center sm:justify-between"
+                                >
+                                  <div className="space-y-0.5">
+                                    <p id={permissionLabelId} className="text-sm font-medium text-slate-900">
+                                      {permission.label}
+                                    </p>
+                                  </div>
+                                  <div className={cn("flex items-center justify-end", isReadOnly && "opacity-60")}>
+                                    <ToggleGroup
+                                      type="single"
+                                      value={permissionLevel}
+                                      onValueChange={value => {
+                                        if (!value) return;
+                                        updatePermissionLevel(role.id, permission.id, value as PermissionLevel);
+                                      }}
+                                      aria-labelledby={permissionLabelId}
+                                      className="gap-1"
+                                      disabled={isReadOnly}
+                                    >
+                                      {PERMISSION_LEVELS.map(level => (
+                                        <ToggleGroupItem
+                                          key={level.value}
+                                          value={level.value}
+                                          disabled={isReadOnly}
+                                          className="rounded-full px-3 py-1 text-xs font-medium text-slate-600 transition data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                                        >
+                                          {level.label}
+                                        </ToggleGroupItem>
+                                      ))}
+                                    </ToggleGroup>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
               </TabsContent>
             );
           })}
-        </Tabs>
+        </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4 sm:px-8">
           <Button
             type="button"
             variant="outline"
+            size="sm"
             onClick={handleReset}
             disabled={!canReset}
-            className="rounded-full border-slate-200 text-slate-700 hover:bg-slate-100"
+            className="border-slate-200 text-slate-700 hover:bg-slate-100"
           >
             Reset to Initial Defaults
           </Button>
@@ -497,7 +468,7 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
             </Button>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </Tabs>
+    </div>
   );
 }
