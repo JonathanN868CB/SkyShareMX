@@ -2,7 +2,7 @@ import { buildAuthorizedHeaders } from "@/lib/api/users";
 
 const ROLE_DEFAULTS_ENDPOINT = "/.netlify/functions/role-defaults";
 
-const ROLE_KEYS = ["manager", "technician", "viewer"] as const;
+const ROLE_KEYS = ["admin", "manager", "technician", "viewer"] as const;
 const PERMISSION_LEVEL_VALUES = ["none", "read", "write"] as const;
 
 export type RoleKey = (typeof ROLE_KEYS)[number];
