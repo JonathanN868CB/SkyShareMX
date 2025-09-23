@@ -1,17 +1,17 @@
-import type { Role } from "@/lib/types/users";
 import { buildAuthorizedHeaders } from "@/lib/api/users";
 
 const ROLE_DEFAULTS_ENDPOINT = "/.netlify/functions/role-defaults";
 
-export type RolePermissionSnapshot = Record<string, boolean>;
+const ROLE_KEYS = ["manager", "technician", "viewer"] as const;
+const PERMISSION_LEVEL_VALUES = ["none", "read", "write"] as const;
 
-export interface RoleDefaultSnapshot {
-  role: Role;
-  permissions: RolePermissionSnapshot;
-  updatedAt: string;
-}
+export type RoleKey = (typeof ROLE_KEYS)[number];
+export type PermissionLevel = (typeof PERMISSION_LEVEL_VALUES)[number];
 
-export type RoleDefaultsMap = Partial<Record<Role, RolePermissionSnapshot>>;
+export type RoleDefaultsMap = Record<RoleKey, Record<string, PermissionLevel>>;
+
+const VALID_ROLE_KEYS = new Set<RoleKey>(ROLE_KEYS);
+const VALID_PERMISSION_LEVELS = new Set<PermissionLevel>(PERMISSION_LEVEL_VALUES);
 
 function assertClientSide() {
   if (typeof window === "undefined" && typeof fetch === "undefined") {
@@ -35,52 +35,70 @@ async function handleResponse(response: Response) {
   return payload;
 }
 
-function normalizePermissions(input: unknown): RolePermissionSnapshot {
-  if (!input || typeof input !== "object") {
+function createEmptyRoleDefaultsMap(): RoleDefaultsMap {
+  return ROLE_KEYS.reduce<RoleDefaultsMap>((accumulator, role) => {
+    accumulator[role] = {};
+    return accumulator;
+  }, {} as RoleDefaultsMap);
+}
+
+function coerceRoleKey(value: unknown): RoleKey | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return VALID_ROLE_KEYS.has(normalized as RoleKey) ? (normalized as RoleKey) : null;
+}
+
+function isPermissionLevel(value: unknown): value is PermissionLevel {
+  return typeof value === "string" && VALID_PERMISSION_LEVELS.has(value as PermissionLevel);
+}
+
+function normalizePermissionLevel(value: unknown): PermissionLevel | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return isPermissionLevel(normalized) ? (normalized as PermissionLevel) : null;
+}
+
+function parseSections(value: unknown): Record<string, PermissionLevel> {
+  if (!value || typeof value !== "object") {
     return {};
   }
 
-  const entries: Array<[string, boolean]> = [];
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    if (typeof value === "boolean") {
-      entries.push([key, value]);
+  const entries: Array<[string, PermissionLevel]> = [];
+  for (const [section, level] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedSection = section.trim();
+    const normalizedLevel = normalizePermissionLevel(level);
+
+    if (normalizedSection && normalizedLevel) {
+      entries.push([normalizedSection, normalizedLevel]);
     }
   }
 
   return Object.fromEntries(entries);
 }
 
-function coerceRole(value: unknown): Role | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "admin" || normalized === "manager" || normalized === "technician" || normalized === "viewer") {
-    return normalized as Role;
-  }
-
-  return null;
-}
-
 function parseRoleDefaults(payload: unknown): RoleDefaultsMap {
-  if (!Array.isArray(payload)) {
-    return {};
+  const map = createEmptyRoleDefaultsMap();
+
+  if (!payload || typeof payload !== "object") {
+    return map;
   }
 
-  return payload.reduce<RoleDefaultsMap>((accumulator, entry) => {
-    if (!entry || typeof entry !== "object") {
-      return accumulator;
-    }
-
-    const role = coerceRole((entry as Record<string, unknown>).role);
+  for (const [roleKey, sections] of Object.entries(payload as Record<string, unknown>)) {
+    const role = coerceRoleKey(roleKey);
     if (!role) {
-      return accumulator;
+      continue;
     }
 
-    accumulator[role] = normalizePermissions((entry as Record<string, unknown>).permissions);
-    return accumulator;
-  }, {});
+    map[role] = parseSections(sections);
+  }
+
+  return map;
 }
 
 export async function fetchRoleDefaults(): Promise<RoleDefaultsMap> {
@@ -96,7 +114,25 @@ export async function fetchRoleDefaults(): Promise<RoleDefaultsMap> {
   return parseRoleDefaults((payload as Record<string, unknown>).roleDefaults);
 }
 
-export async function updateRoleDefaults(role: Role, permissions: RolePermissionSnapshot): Promise<RoleDefaultSnapshot> {
+function serializeChanges(changes: Array<{ section: string; level: PermissionLevel }>) {
+  const deduped = new Map<string, PermissionLevel>();
+
+  for (const change of changes) {
+    const section = typeof change.section === "string" ? change.section.trim() : "";
+    const level = normalizePermissionLevel(change.level);
+
+    if (section && level) {
+      deduped.set(section, level);
+    }
+  }
+
+  return Array.from(deduped.entries(), ([section, level]) => ({ section, level }));
+}
+
+export async function updateRoleDefaults(
+  role: RoleKey,
+  changes: Array<{ section: string; level: PermissionLevel }>,
+): Promise<void> {
   assertClientSide();
 
   const response = await fetch(ROLE_DEFAULTS_ENDPOINT, {
@@ -107,27 +143,9 @@ export async function updateRoleDefaults(role: Role, permissions: RolePermission
     }),
     body: JSON.stringify({
       role,
-      permissions: normalizePermissions(permissions),
+      changes: serializeChanges(changes),
     }),
   });
 
-  const payload = await handleResponse(response);
-  const record = (payload as Record<string, unknown>).roleDefault;
-  if (!record || typeof record !== "object") {
-    throw new Error("Unexpected response shape");
-  }
-
-  const parsedRole = coerceRole((record as Record<string, unknown>).role);
-  if (!parsedRole) {
-    throw new Error("Unexpected response role");
-  }
-
-  const updatedAtValue =
-    (record as Record<string, unknown>).updatedAt ?? (record as Record<string, unknown>).updated_at;
-
-  return {
-    role: parsedRole,
-    permissions: normalizePermissions((record as Record<string, unknown>).permissions),
-    updatedAt: typeof updatedAtValue === "string" ? updatedAtValue : "",
-  } satisfies RoleDefaultSnapshot;
+  await handleResponse(response);
 }
