@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 
-import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 import { UsersFilters } from "@/components/users/UsersFilters";
 import { UsersTable } from "@/components/users/UsersTable";
 import { useIsSuperAdmin } from "@/features/auth/index";
@@ -32,7 +31,6 @@ export default function UsersPage() {
 
   const [pendingRoles, setPendingRoles] = useState<Set<string>>(new Set());
   const [pendingStatuses, setPendingStatuses] = useState<Set<string>>(new Set());
-  const [roleDefaultsOpen, setRoleDefaultsOpen] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const location = useLocation();
@@ -279,10 +277,10 @@ export default function UsersPage() {
       <Button
         type="button"
         variant="outline"
-        onClick={() => setRoleDefaultsOpen(true)}
         className="h-10 rounded-full border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-100"
+        asChild
       >
-        Role Defaults
+        <Link to="/app/users/role-defaults">Role Defaults</Link>
       </Button>
     </div>
   ) : null;
@@ -338,8 +336,6 @@ export default function UsersPage() {
         headerActions={headerActions}
         filters={filters}
       />
-
-      {canManage && <RoleDefaultsModal open={roleDefaultsOpen} onOpenChange={setRoleDefaultsOpen} />}
     </div>
   );
 }
