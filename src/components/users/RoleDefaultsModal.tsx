@@ -339,7 +339,7 @@ export function RoleDefaultsModal({ open, onOpenChange, initialMatrixSnapshot }:
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="max-w-5xl min-h-[70vh] max-h-[85vh] overflow-hidden grid-rows-[auto_minmax(0,_1fr)_auto]"
-        style={{ height: "clamp(32rem, 70vh, 85vh)" }}
+        style={{ height: "min(85vh, calc(100vh - 4rem))" }}
       >
         <DialogHeader className="space-y-2">
           <DialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Permissions</DialogTitle>
