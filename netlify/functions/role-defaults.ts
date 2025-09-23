@@ -5,6 +5,7 @@ const ROLE_DEFAULTS_QUERY =
   "select role::text as role, section, level::text as level from public.role_default_permissions";
 
 const ROLE_DEFAULT_ROLES = ["manager", "technician", "viewer"] as const;
+const IMMUTABLE_ROLES = new Set(["admin"]);
 
 type RoleDefaultsRole = (typeof ROLE_DEFAULT_ROLES)[number];
 
@@ -89,6 +90,15 @@ function normalizeLevel(value: unknown): PermissionLevel | null {
   return VALID_PERMISSION_LEVELS.has(normalized as PermissionLevel) ? (normalized as PermissionLevel) : null;
 }
 
+function isImmutableRole(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 && IMMUTABLE_ROLES.has(normalized);
+}
+
 function mapRowsToRoleDefaults(rows: RoleDefaultRow[] | null | undefined): RoleDefaultsMap {
   const roleDefaults = createEmptyRoleDefaultsMap();
 
@@ -154,6 +164,49 @@ function dedupeChanges(changes: RoleDefaultChange[]): RoleDefaultChange[] {
 
 function coerceRoleForUpdate(value: unknown): RoleDefaultsRole | null {
   return normalizeRole(value);
+}
+
+function isAdminPermissionsFixedError(error: unknown): boolean {
+  if (!error || (typeof error !== "object" && !(error instanceof Error))) {
+    return false;
+  }
+
+  const errorObject = (error as Record<string, unknown>) ?? {};
+  const code = typeof errorObject.code === "string" ? errorObject.code : undefined;
+
+  const messageParts: string[] = [];
+
+  if (typeof errorObject.message === "string") {
+    messageParts.push(errorObject.message);
+  } else if (error instanceof Error && typeof error.message === "string") {
+    messageParts.push(error.message);
+  }
+
+  if (typeof errorObject.details === "string") {
+    messageParts.push(errorObject.details);
+  }
+
+  if (typeof errorObject.hint === "string") {
+    messageParts.push(errorObject.hint);
+  }
+
+  const normalizedMessages = messageParts.map(part => part.toLowerCase());
+
+  if (normalizedMessages.some(part => part.includes("admin permissions are fixed"))) {
+    return true;
+  }
+
+  if (code === "23514") {
+    if (normalizedMessages.some(part => part.includes("role_default_permissions") && part.includes("admin"))) {
+      return true;
+    }
+
+    if (normalizedMessages.some(part => part.includes("role_default_permissions_role_check"))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function buildUpsertStatement(role: RoleDefaultsRole, changes: RoleDefaultChange[]) {
@@ -319,6 +372,10 @@ async function handleUpsert(
     return jsonResponse(400, { error: "Invalid JSON payload" });
   }
 
+  if (isImmutableRole(payload.role)) {
+    return jsonResponse(400, { error: "Admin permissions are fixed" });
+  }
+
   const role = coerceRoleForUpdate(payload.role);
   if (!role) {
     return jsonResponse(400, { error: "A supported role is required" });
@@ -339,6 +396,10 @@ async function handleUpsert(
   const { error } = await executeSql<null>(supabase, sql, params);
 
   if (error) {
+    if (isAdminPermissionsFixedError(error)) {
+      return jsonResponse(400, { error: "Admin permissions are fixed" });
+    }
+
     console.error("Failed to save role default permissions", error);
     return jsonResponse(500, { error: "Failed to save role defaults" });
   }
