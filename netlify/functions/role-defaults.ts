@@ -1,9 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 
 import type { Database } from "../../src/entities/supabase";
-import { ROLES } from "../../src/lib/types/users";
+const ROLE_DEFAULTS_QUERY =
+  "select role::text as role, section, level::text as level from public.role_default_permissions";
 
-type Role = (typeof ROLES)[number];
+const ROLE_DEFAULT_ROLES = ["manager", "technician", "viewer"] as const;
+
+type RoleDefaultsRole = (typeof ROLE_DEFAULT_ROLES)[number];
+
+type PermissionLevel = "none" | "read" | "write";
+
+type RoleDefaultsMap = Record<RoleDefaultsRole, Record<string, PermissionLevel>>;
 
 interface HandlerEvent {
   httpMethod: string;
@@ -17,19 +24,25 @@ interface HandlerResponse {
   body?: string;
 }
 
-interface RoleDefaultRecord {
-  role: Role;
-  permissions: Record<string, boolean>;
-  updatedAt: string;
-}
-
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, PUT, PATCH, OPTIONS",
 };
 
-const VALID_ROLES = new Set<Role>(ROLES);
+const VALID_ROLE_DEFAULT_ROLES = new Set<RoleDefaultsRole>(ROLE_DEFAULT_ROLES);
+const VALID_PERMISSION_LEVELS = new Set<PermissionLevel>(["none", "read", "write"]);
+
+interface RoleDefaultRow {
+  role: unknown;
+  section: unknown;
+  level: unknown;
+}
+
+interface RoleDefaultChange {
+  section: string;
+  level: PermissionLevel;
+}
 
 function jsonResponse(statusCode: number, payload: Record<string, unknown>): HandlerResponse {
   return {
@@ -37,6 +50,148 @@ function jsonResponse(statusCode: number, payload: Record<string, unknown>): Han
     headers: { ...corsHeaders, "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   } satisfies HandlerResponse;
+}
+
+function createEmptyRoleDefaultsMap(): RoleDefaultsMap {
+  return {
+    manager: {},
+    technician: {},
+    viewer: {},
+  } satisfies RoleDefaultsMap;
+}
+
+function normalizeRole(value: unknown): RoleDefaultsRole | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized && VALID_ROLE_DEFAULT_ROLES.has(normalized as RoleDefaultsRole)
+    ? (normalized as RoleDefaultsRole)
+    : null;
+}
+
+function normalizeSection(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeLevel(value: unknown): PermissionLevel | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return VALID_PERMISSION_LEVELS.has(normalized as PermissionLevel) ? (normalized as PermissionLevel) : null;
+}
+
+function mapRowsToRoleDefaults(rows: RoleDefaultRow[] | null | undefined): RoleDefaultsMap {
+  const roleDefaults = createEmptyRoleDefaultsMap();
+
+  if (!Array.isArray(rows)) {
+    return roleDefaults;
+  }
+
+  for (const row of rows) {
+    const role = normalizeRole(row.role);
+    const section = normalizeSection(row.section);
+    const level = normalizeLevel(row.level);
+
+    if (role && section && level) {
+      roleDefaults[role][section] = level;
+    }
+  }
+
+  return roleDefaults;
+}
+
+function coerceChange(entry: unknown): RoleDefaultChange | null {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const section = normalizeSection((entry as Record<string, unknown>).section);
+  const level = normalizeLevel((entry as Record<string, unknown>).level);
+
+  if (!section || !level) {
+    return null;
+  }
+
+  return { section, level } satisfies RoleDefaultChange;
+}
+
+function parseChanges(value: unknown): RoleDefaultChange[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const parsed: RoleDefaultChange[] = [];
+
+  for (const entry of value) {
+    const change = coerceChange(entry);
+    if (!change) {
+      return null;
+    }
+    parsed.push(change);
+  }
+
+  return parsed;
+}
+
+function dedupeChanges(changes: RoleDefaultChange[]): RoleDefaultChange[] {
+  const deduped = new Map<string, PermissionLevel>();
+
+  for (const change of changes) {
+    deduped.set(change.section, change.level);
+  }
+
+  return Array.from(deduped.entries(), ([section, level]) => ({ section, level } satisfies RoleDefaultChange));
+}
+
+function coerceRoleForUpdate(value: unknown): RoleDefaultsRole | null {
+  return normalizeRole(value);
+}
+
+function buildUpsertStatement(role: RoleDefaultsRole, changes: RoleDefaultChange[]) {
+  const placeholders: string[] = [];
+  const params: Array<string> = [];
+
+  changes.forEach((change, index) => {
+    const offset = index * 3;
+    placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
+    params.push(role, change.section, change.level);
+  });
+
+  const sql =
+    "insert into public.role_default_permissions (role, section, level) values " +
+    placeholders.join(", ") +
+    " on conflict (role, section) do update set level = excluded.level";
+
+  return { sql, params };
+}
+
+async function executeSql<T>(
+  supabase: ReturnType<typeof resolveSupabase>,
+  sql: string,
+  params: unknown[] = [],
+): Promise<{ data: T | null; error: unknown | null }> {
+  try {
+    const response = await (supabase as unknown as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+    }).rpc("query", { query: sql, params });
+
+    if (response.error) {
+      return { data: null, error: response.error };
+    }
+
+    return { data: (response.data as T) ?? null, error: null };
+  } catch (error) {
+    return { data: null, error };
+  }
 }
 
 function resolveSupabase() {
@@ -135,66 +290,15 @@ async function requireAdmin(
   return { userId };
 }
 
-function sanitizeRole(value: unknown): Role | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-
-  return VALID_ROLES.has(normalized as Role) ? (normalized as Role) : null;
-}
-
-function sanitizePermissions(value: unknown): Record<string, boolean> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const entries: Array<[string, boolean]> = [];
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof key !== "string") continue;
-    if (typeof raw === "boolean") {
-      entries.push([key, raw]);
-      continue;
-    }
-    if (raw === "true" || raw === "false") {
-      entries.push([key, raw === "true"]);
-    }
-  }
-
-  return Object.fromEntries(entries);
-}
-
-function mapRow(row: Database["public"]["Tables"]["role_default_permissions"]["Row"]): RoleDefaultRecord | null {
-  const role = sanitizeRole(row.role);
-  if (!role) {
-    return null;
-  }
-
-  return {
-    role,
-    permissions: sanitizePermissions(row.permissions),
-    updatedAt: row.updated_at,
-  } satisfies RoleDefaultRecord;
-}
-
 async function handleGet(supabase: ReturnType<typeof resolveSupabase>) {
-  const { data, error } = await supabase
-    .from("role_default_permissions")
-    .select("role, permissions, updated_at")
-    .order("role", { ascending: true });
+  const { data, error } = await executeSql<RoleDefaultRow[]>(supabase, ROLE_DEFAULTS_QUERY);
 
   if (error) {
     console.error("Failed to load role default permissions", error);
     return jsonResponse(500, { error: "Failed to load saved defaults" });
   }
 
-  const roleDefaults = (data ?? [])
-    .map(mapRow)
-    .filter((row): row is RoleDefaultRecord => Boolean(row));
+  const roleDefaults = mapRowsToRoleDefaults(data ?? []);
 
   return jsonResponse(200, { roleDefaults });
 }
@@ -215,36 +319,31 @@ async function handleUpsert(
     return jsonResponse(400, { error: "Invalid JSON payload" });
   }
 
-  const role = sanitizeRole(payload.role);
+  const role = coerceRoleForUpdate(payload.role);
   if (!role) {
     return jsonResponse(400, { error: "A supported role is required" });
   }
 
-  const permissions = sanitizePermissions(payload.permissions);
+  const parsedChanges = parseChanges(payload.changes);
+  if (!parsedChanges) {
+    return jsonResponse(400, { error: "Each change entry must include a section and level" });
+  }
 
-  const { data, error } = await supabase
-    .from("role_default_permissions")
-    .upsert(
-      { role, permissions },
-      {
-        onConflict: "role",
-        ignoreDuplicates: false,
-      },
-    )
-    .select("role, permissions, updated_at")
-    .maybeSingle();
+  const changes = dedupeChanges(parsedChanges);
 
-  if (error || !data) {
+  if (changes.length === 0) {
+    return jsonResponse(200, { success: true });
+  }
+
+  const { sql, params } = buildUpsertStatement(role, changes);
+  const { error } = await executeSql<null>(supabase, sql, params);
+
+  if (error) {
     console.error("Failed to save role default permissions", error);
     return jsonResponse(500, { error: "Failed to save role defaults" });
   }
 
-  const mapped = mapRow(data);
-  if (!mapped) {
-    return jsonResponse(500, { error: "Failed to parse role defaults" });
-  }
-
-  return jsonResponse(200, { roleDefault: mapped });
+  return jsonResponse(200, { success: true });
 }
 
 export async function handler(event: HandlerEvent): Promise<HandlerResponse> {
