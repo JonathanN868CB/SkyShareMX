@@ -1,4 +1,4 @@
-import { Loader2, Check } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import type { Role } from "@/lib/types/users";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
@@ -41,10 +41,9 @@ export function RoleDropdown({ value, onChange, disabled = false, loading = fals
           <SelectItem
             key={option}
             value={option}
-            className="flex cursor-pointer items-center justify-between text-sm"
+            className="cursor-pointer py-2 pl-8 pr-3 text-sm text-slate-700"
           >
-            <span>{roleLabels[option]}</span>
-            {value === option && <Check className="h-4 w-4 text-primary" aria-hidden />}
+            {roleLabels[option]}
           </SelectItem>
         ))}
       </SelectContent>
