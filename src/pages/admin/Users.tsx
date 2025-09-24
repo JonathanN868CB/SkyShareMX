@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 
-import { RoleDefaultsModal } from "@/components/users/RoleDefaultsModal";
 import { UsersFilters } from "@/components/users/UsersFilters";
 import { UsersTable } from "@/components/users/UsersTable";
 import { useIsSuperAdmin } from "@/features/auth/index";
@@ -31,11 +31,14 @@ export default function UsersPage() {
 
   const [pendingRoles, setPendingRoles] = useState<Set<string>>(new Set());
   const [pendingStatuses, setPendingStatuses] = useState<Set<string>>(new Set());
-  const [roleDefaultsOpen, setRoleDefaultsOpen] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
-  const { isSuper: isSuperAdmin } = useIsSuperAdmin();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { isSuper: isSuperAdmin, loading: authLoading } = useIsSuperAdmin();
   const canManage = isSuperAdmin;
+  const mockOptIn = useMemo(() => new URLSearchParams(location.search).get("mock") === "1", [location.search]);
+  const initialFetchRef = useRef(true);
 
   const buildQuery = useCallback((): UsersQuery => ({
     search: search.trim() || undefined,
@@ -50,49 +53,63 @@ export default function UsersPage() {
     setTotal(response.total);
   }, []);
 
-  const loadUsers = useCallback(async (query: UsersQuery, { refresh = false } = {}) => {
-    setError(null);
-    if (refresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-
-    try {
-      const response = await listUsers(query);
-      applyResponse(response);
-      setMockMode(false);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unable to load users";
-      setError(message);
-      const unauthorized = /401|403|unauthorized|forbidden/i.test(message);
-      if (unauthorized) {
-        setUsers([]);
-        setTotal(0);
-        setMockMode(false);
-        return;
-      }
-
-      const fallback = getMockUsers(query);
-      applyResponse(fallback);
-      setMockMode(prev => {
-        if (!prev) {
-          notify({
-            title: "Using mock data",
-            description: "Live data is unavailable. Showing mock users so you can continue exploring the UI.",
-          });
-        }
-        return true;
-      });
-      setMockBannerDismissed(false);
-    } finally {
+  const loadUsers = useCallback(
+    async (query: UsersQuery, { refresh = false } = {}) => {
+      setError(null);
       if (refresh) {
-        setRefreshing(false);
+        setRefreshing(true);
       } else {
-        setLoading(false);
+        setLoading(true);
       }
-    }
-  }, [applyResponse]);
+
+      try {
+        const response = await listUsers(query);
+        applyResponse(response);
+        setMockMode(false);
+      } catch (requestError) {
+        const message = requestError instanceof Error ? requestError.message : "Unable to load users";
+        const unauthorized = /401|403|unauthorized|forbidden/i.test(message);
+
+        if (unauthorized) {
+          setError("Your session expired. Please sign in again.");
+          setUsers([]);
+          setTotal(0);
+          setMockMode(false);
+          if (initialFetchRef.current && !authLoading) {
+            navigate("/", { replace: true });
+          }
+          return;
+        }
+
+        setError(message);
+
+        if (!mockOptIn) {
+          return;
+        }
+
+        const fallback = getMockUsers(query);
+        applyResponse(fallback);
+        setMockMode(prev => {
+          if (!prev) {
+            notify({
+              title: "Using mock data",
+              description: "Live data is unavailable. Showing mock users so you can continue exploring the UI.",
+            });
+          }
+          return true;
+        });
+        setMockBannerDismissed(false);
+      } finally {
+        if (refresh) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        initialFetchRef.current = false;
+      }
+    },
+    [applyResponse, authLoading, mockOptIn, navigate],
+  );
 
   useEffect(() => {
     const query = buildQuery();
@@ -260,10 +277,10 @@ export default function UsersPage() {
       <Button
         type="button"
         variant="outline"
-        onClick={() => setRoleDefaultsOpen(true)}
         className="h-10 rounded-full border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-100"
+        asChild
       >
-        Role Defaults
+        <Link to="/app/users/role-defaults">Role Defaults</Link>
       </Button>
     </div>
   ) : null;
@@ -319,8 +336,6 @@ export default function UsersPage() {
         headerActions={headerActions}
         filters={filters}
       />
-
-      {canManage && <RoleDefaultsModal open={roleDefaultsOpen} onOpenChange={setRoleDefaultsOpen} />}
     </div>
   );
 }

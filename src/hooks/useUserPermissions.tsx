@@ -4,25 +4,20 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/shared/lib/api";
 import type { Tables } from "@/entities/supabase";
+import { appendAuthLog } from "@/debug";
 import { getAdminEmails, isDevBypassActive, setDomainDeniedMessage } from "@/shared/lib/env";
 import { toast } from "@/hooks/use-toast";
 import { isSkyshare } from "@/lib/domainGate";
+import { bootstrapAuth } from "@/lib/authBootstrap";
 
 const DOMAIN_DENIED_MESSAGE = "Google account must be @skyshare.com.";
 
-const ROLE_ENUM_BY_TEXT: Record<UserProfile["role"], UserProfile["role_enum"]> = {
-  admin: "Admin",
-  technician: "Technician",
-  qc: "Manager",
-  viewer: "Read-Only",
-};
-
-const READ_ONLY_FALLBACK_EMAIL = "jonathan@skyshare.com";
 type UserProfile = Tables<"profiles">;
 type AppSection = Tables<"user_permissions">["section"];
 
@@ -32,6 +27,79 @@ const DEV_PERMISSIONS: AppSection[] = [
   "Administration",
   "Development",
 ];
+
+const PROMOTE_ALLOWLISTED_ENDPOINT = "/.netlify/functions/promote-allowlisted-user";
+
+const SESSION_TASK_TIMEOUT_MS = 5000;
+const SESSION_ABORT_ERROR_NAME = "PermissionProviderAbortError";
+const SESSION_TIMEOUT_ERROR_NAME = "PermissionProviderTimeoutError";
+
+function createAbortError(label: string) {
+  const error = new Error(`${label} aborted`);
+  error.name = SESSION_ABORT_ERROR_NAME;
+  return error;
+}
+
+function createTimeoutError(label: string, timeoutMs: number) {
+  const error = new Error(`${label} timed out after ${timeoutMs}ms`);
+  error.name = SESSION_TIMEOUT_ERROR_NAME;
+  return error;
+}
+
+function isAbortError(error: unknown): error is Error {
+  return error instanceof Error && error.name === SESSION_ABORT_ERROR_NAME;
+}
+
+function isTimeoutError(error: unknown): error is Error {
+  return error instanceof Error && error.name === SESSION_TIMEOUT_ERROR_NAME;
+}
+
+async function withAbortableTimeout<T>({
+  parentSignal,
+  label,
+  timeoutMs = SESSION_TASK_TIMEOUT_MS,
+  task,
+}: {
+  parentSignal: AbortSignal;
+  label: string;
+  timeoutMs?: number;
+  task: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  if (parentSignal.aborted) {
+    throw createAbortError(label);
+  }
+
+  const taskController = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortHandler: (() => void) | null = null;
+
+  const waitPromise = new Promise<never>((_, reject) => {
+    abortHandler = () => {
+      taskController.abort();
+      reject(createAbortError(label));
+    };
+    parentSignal.addEventListener("abort", abortHandler!, { once: true });
+    timer = setTimeout(() => {
+      if (abortHandler) {
+        parentSignal.removeEventListener("abort", abortHandler);
+      }
+      appendAuthLog(`${label} timed out after ${timeoutMs}ms`);
+      taskController.abort();
+      reject(createTimeoutError(label, timeoutMs));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([task(taskController.signal), waitPromise]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    if (abortHandler) {
+      parentSignal.removeEventListener("abort", abortHandler);
+    }
+  }
+}
 
 interface PermissionContextType {
   user: User | null;
@@ -79,16 +147,6 @@ function determineReadOnly(profile: UserProfile | null) {
   return profile.is_readonly || profile.role === "viewer";
 }
 
-function resolveAdminEnum(email: string, existingEnum?: UserProfile["role_enum"]) {
-  if (existingEnum === "Super Admin") {
-    return existingEnum;
-  }
-  if (email === READ_ONLY_FALLBACK_EMAIL) {
-    return "Super Admin";
-  }
-  return "Admin";
-}
-
 export function PermissionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -96,12 +154,28 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   const [loading, setLoading] = useState(true);
   // TODO: Rename these viewer-specific flags to match customer-facing terminology.
   const [isReadOnly, setIsReadOnly] = useState(false);
+  const isMountedRef = useRef(false);
+  const loadingRef = useRef(true);
+  const sessionAbortRef = useRef<AbortController | null>(null);
+  const sessionFingerprintRef = useRef<string | null>(null);
 
   const adminEmails = useMemo(() => getAdminEmails(), []);
   const adminEmailSet = useMemo(() => new Set(adminEmails), [adminEmails]);
 
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
   const loadProfileAndPermissions = useCallback(
-    async (userId: string) => {
+    async (userId: string, signal?: AbortSignal) => {
+      const ensureActive = () => {
+        if (signal?.aborted) {
+          throw createAbortError("PermissionProvider loadProfileAndPermissions");
+        }
+      };
+
+      ensureActive();
+
       const { data: fetchedProfile, error: profileError } = await supabase
         .from("profiles")
         .select(
@@ -110,22 +184,30 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         .eq("user_id", userId)
         .maybeSingle();
 
+      ensureActive();
+
       if (profileError) {
         throw profileError;
       }
 
+      ensureActive();
       setProfile(fetchedProfile ?? null);
       setIsReadOnly(determineReadOnly(fetchedProfile ?? null));
+
+      ensureActive();
 
       const { data: userPermissions, error: permissionsError } = await supabase
         .from("user_permissions")
         .select("section")
         .eq("user_id", userId);
 
+      ensureActive();
+
       if (permissionsError) {
         throw permissionsError;
       }
 
+      ensureActive();
       setPermissions(userPermissions?.map(p => p.section) ?? []);
 
       return fetchedProfile;
@@ -134,156 +216,319 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
   );
 
   const ensureProfile = useCallback(
-    async (activeSession: Session) => {
+    async (activeSession: Session, signal?: AbortSignal) => {
+      const ensureActive = () => {
+        if (signal?.aborted) {
+          throw createAbortError("PermissionProvider ensureProfile");
+        }
+      };
+
+      ensureActive();
+
       const authUser = activeSession.user;
       const normalizedEmail = normalizeEmail(authUser.email);
       if (!isSkyshare(normalizedEmail)) {
         throw new Error("Invalid email domain");
       }
 
+      ensureActive();
+
       const { data: existingProfile, error } = await supabase
         .from("profiles")
-        .select("id, role, role_enum, is_readonly, full_name, email")
+        .select("id, full_name, email")
         .eq("user_id", authUser.id)
         .maybeSingle();
+
+      ensureActive();
 
       if (error) {
         throw error;
       }
 
-      const existingRole = existingProfile?.role ?? "viewer";
-      const safeRole: UserProfile["role"] = ["admin", "technician", "qc", "viewer"].includes(existingRole as string)
-        ? (existingRole as UserProfile["role"])
-        : "viewer";
-
       const isAllowListed = adminEmailSet.has(normalizedEmail);
-
-      let resolvedRole = safeRole;
-      let resolvedReadOnly = existingProfile?.is_readonly ?? true;
-      let resolvedEnum = existingProfile?.role_enum ?? ROLE_ENUM_BY_TEXT[resolvedRole];
-
-      if (!existingProfile) {
-        resolvedRole = isAllowListed ? "admin" : "viewer";
-        resolvedReadOnly = !isAllowListed;
-        resolvedEnum = isAllowListed
-          ? resolveAdminEnum(normalizedEmail, existingProfile?.role_enum)
-          : ROLE_ENUM_BY_TEXT[resolvedRole];
-      }
-
-      if (isAllowListed) {
-        resolvedRole = "admin";
-        resolvedReadOnly = false;
-        resolvedEnum = resolveAdminEnum(normalizedEmail, existingProfile?.role_enum);
-      } else {
-        resolvedEnum = ROLE_ENUM_BY_TEXT[resolvedRole] ?? resolvedEnum;
-      }
-
       if (!isAllowListed) {
-        return;
+        return false;
       }
+
+      const accessToken = activeSession.access_token;
+      if (!accessToken) {
+        throw new Error("Missing access token for allow-listed promotion");
+      }
+
+      ensureActive();
 
       const fullName = deriveFullName(authUser, existingProfile?.full_name);
 
-      const { error: upsertError } = await supabase
-        .from("profiles")
-        .upsert(
-          {
-            user_id: authUser.id,
-            email: authUser.email ?? existingProfile?.email ?? normalizedEmail,
-            full_name: fullName,
-            role: resolvedRole,
-            role_enum: resolvedEnum,
-            is_readonly: resolvedReadOnly,
-            status: existingProfile ? undefined : "Active",
-            last_login: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" },
-        );
+      const response = await fetch(PROMOTE_ALLOWLISTED_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          userId: authUser.id,
+          email: authUser.email ?? existingProfile?.email ?? normalizedEmail,
+          fullName,
+        }),
+        signal,
+      });
 
-      if (upsertError) {
-        throw upsertError;
+      ensureActive();
+
+      if (!response.ok) {
+        let message = `Failed to promote allow-listed user (${response.status})`;
+        try {
+          const payload = await response.json();
+          ensureActive();
+          if (payload && typeof payload.error === "string" && payload.error.trim().length > 0) {
+            message = payload.error.trim();
+          }
+        } catch (parseError) {
+          console.error("Failed to parse allow-list promotion error", parseError);
+        }
+        throw new Error(message);
       }
+
+      ensureActive();
+
+      await loadProfileAndPermissions(authUser.id, signal);
+      return true;
     },
-    [adminEmailSet],
+    [adminEmailSet, loadProfileAndPermissions],
   );
 
   const handleSession = useCallback(
     async (activeSession: Session | null) => {
+      appendAuthLog(
+        activeSession
+          ? `PermissionProvider handleSession: session ${activeSession.user.id}`
+          : "PermissionProvider handleSession: null session",
+      );
+
       if (!activeSession) {
+        sessionAbortRef.current?.abort();
+        sessionAbortRef.current = null;
+        sessionFingerprintRef.current = null;
         setUser(null);
         setProfile(null);
         setPermissions([]);
         setIsReadOnly(false);
         setLoading(false);
+        appendAuthLog("PermissionProvider session cleared; loading=false");
         return;
       }
+
+      const nextFingerprint = `${activeSession.user.id}:${activeSession.access_token ?? ""}`;
+      const previousFingerprint = sessionFingerprintRef.current;
+      const previousController = sessionAbortRef.current;
+
+      if (
+        previousFingerprint === nextFingerprint &&
+        previousController &&
+        !previousController.signal.aborted
+      ) {
+        appendAuthLog(
+          `PermissionProvider duplicate session ignored for ${activeSession.user.id}`,
+        );
+        return;
+      }
+
+      sessionFingerprintRef.current = nextFingerprint;
+
+      const controller = new AbortController();
+      previousController?.abort();
+      sessionAbortRef.current = controller;
+
+      const sessionId = activeSession.user.id;
 
       setLoading(true);
+      appendAuthLog(`PermissionProvider loading=true for ${sessionId}`);
       setUser(activeSession.user);
 
-      const normalizedEmail = normalizeEmail(activeSession.user.email);
-      const allowedDomain = isSkyshare(normalizedEmail);
-
-      if (!allowedDomain) {
-        await supabase.auth.signOut();
-        setDomainDeniedMessage(DOMAIN_DENIED_MESSAGE);
-        toast({
-          title: "Access denied",
-          description: DOMAIN_DENIED_MESSAGE,
-          variant: "destructive",
-        });
-        setUser(null);
-        setProfile(null);
-        setPermissions([]);
-        setIsReadOnly(false);
-        setLoading(false);
-        window.location.replace("/");
-        return;
-      }
-
       try {
-        await ensureProfile(activeSession);
-      } catch (error) {
-        console.error("Error ensuring profile (continuing with load attempt):", error);
-      }
+        const normalizedEmail = normalizeEmail(activeSession.user.email);
+        const allowedDomain = isSkyshare(normalizedEmail);
 
-      try {
-        await loadProfileAndPermissions(activeSession.user.id);
-      } catch (error) {
-        console.error("Error loading profile and permissions:", error);
-        toast({
-          title: "Authentication error",
-          description: "We couldn't load your profile. Please try again.",
-          variant: "destructive",
-        });
+        if (!allowedDomain) {
+          appendAuthLog("PermissionProvider invalid email domain → sign out");
+          await supabase.auth.signOut();
+          setDomainDeniedMessage(DOMAIN_DENIED_MESSAGE);
+          toast({
+            title: "Access denied",
+            description: DOMAIN_DENIED_MESSAGE,
+            variant: "destructive",
+          });
+          setUser(null);
+          setProfile(null);
+          setPermissions([]);
+          setIsReadOnly(false);
+          setLoading(false);
+          appendAuthLog("PermissionProvider loading=false after domain denial");
+          window.location.replace("/");
+          return;
+        }
+
+        let allowListPromotionApplied = false;
+
+        try {
+          allowListPromotionApplied = await withAbortableTimeout({
+            parentSignal: controller.signal,
+            label: "PermissionProvider ensureProfile",
+            task: signal => ensureProfile(activeSession, signal),
+          });
+        } catch (error) {
+          if (isAbortError(error)) {
+            appendAuthLog("PermissionProvider ensureProfile aborted");
+            return;
+          }
+          console.error("Error ensuring profile (continuing with load attempt):", error);
+          const message = error instanceof Error ? error.message : String(error);
+          const label = isTimeoutError(error)
+            ? "PermissionProvider ensureProfile timeout"
+            : "PermissionProvider ensureProfile error";
+          appendAuthLog(`${label}: ${message}`);
+        }
+
+        try {
+          if (!allowListPromotionApplied) {
+            await withAbortableTimeout({
+              parentSignal: controller.signal,
+              label: "PermissionProvider loadProfileAndPermissions",
+              task: signal => loadProfileAndPermissions(sessionId, signal),
+            });
+          }
+        } catch (error) {
+          if (isAbortError(error)) {
+            appendAuthLog("PermissionProvider loadProfileAndPermissions aborted");
+            return;
+          }
+          console.error("Error loading profile and permissions:", error);
+          const message = error instanceof Error ? error.message : String(error);
+          const label = isTimeoutError(error)
+            ? "PermissionProvider loadProfileAndPermissions timeout"
+            : "PermissionProvider loadProfileAndPermissions error";
+          appendAuthLog(`${label}: ${message}`);
+          toast({
+            title: "Authentication error",
+            description: "We couldn't load your profile. Please try again.",
+            variant: "destructive",
+          });
+        }
       } finally {
-        setLoading(false);
+        const isCurrent = sessionAbortRef.current === controller;
+        if (isCurrent) {
+          sessionAbortRef.current = null;
+          setLoading(false);
+          appendAuthLog(
+            `PermissionProvider loading=false after session ${sessionId}${
+              controller.signal.aborted ? " (aborted)" : ""
+            }`,
+          );
+        }
       }
     },
     [ensureProfile, loadProfileAndPermissions],
   );
 
   useEffect(() => {
+    appendAuthLog("PermissionProvider mount");
+    isMountedRef.current = true;
+
     const devBypass = isDevBypassActive();
+    let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleSafetyFlip = () => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      safetyTimer = window.setTimeout(() => {
+        if (!isMountedRef.current) {
+          return;
+        }
+        if (!loadingRef.current) {
+          return;
+        }
+
+        const activeController = sessionAbortRef.current;
+        if (activeController && !activeController.signal.aborted) {
+          appendAuthLog(
+            "PermissionProvider safety flip deferred; session handler active",
+          );
+          scheduleSafetyFlip();
+          return;
+        }
+
+        appendAuthLog("PermissionProvider safety flip");
+        setLoading(false);
+      }, 2000);
+    };
+
+    if (typeof window !== "undefined") {
+      scheduleSafetyFlip();
+    }
+
     if (devBypass) {
-      console.log("🚧 PermissionProvider: Dev bypass active, granting full access");
+      appendAuthLog("PermissionProvider dev bypass active");
       setUser(null);
       setProfile(null);
       setPermissions(DEV_PERMISSIONS);
       setIsReadOnly(false);
       setLoading(false);
-      return () => {};
     }
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      await handleSession(session);
-    });
+    let teardown: (() => void) | undefined;
+
+    if (!devBypass) {
+      teardown = bootstrapAuth(supabase, {
+        onSession: async session => {
+          appendAuthLog(
+            session
+              ? `PermissionProvider session event: ${session.user.id}`
+              : "PermissionProvider session event: null",
+          );
+          if (!isMountedRef.current) {
+            appendAuthLog("PermissionProvider session ignored after unmount");
+            return;
+          }
+          await handleSession(session);
+        },
+        onReady: () => {
+          appendAuthLog("PermissionProvider onReady");
+          if (!isMountedRef.current) {
+            return;
+          }
+          const activeController = sessionAbortRef.current;
+          if (activeController && !activeController.signal.aborted) {
+            appendAuthLog("PermissionProvider onReady skipped due to pending session handler");
+            return;
+          }
+          setLoading(false);
+        },
+        onError: error => {
+          appendAuthLog(
+            `PermissionProvider bootstrap error: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          console.error("Error bootstrapping authentication:", error);
+          if (!isMountedRef.current) {
+            return;
+          }
+          toast({
+            title: "Authentication error",
+            description: "We couldn't restore your session. Please sign in again.",
+            variant: "destructive",
+          });
+          setLoading(false);
+        },
+      });
+    }
 
     return () => {
-      subscription.unsubscribe();
+      appendAuthLog("PermissionProvider unmount");
+      isMountedRef.current = false;
+      if (typeof window !== "undefined" && safetyTimer !== undefined) {
+        window.clearTimeout(safetyTimer);
+      }
+      teardown?.();
     };
   }, [handleSession]);
 
