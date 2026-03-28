@@ -30,3 +30,6 @@ dist-ssr
 .env.local
 .envrc
 .envrc.local
+
+# Local Netlify folder
+.netlify
