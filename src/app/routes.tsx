@@ -1,78 +1,68 @@
-import type { ReactNode } from "react";
-import { Suspense, lazy } from "react";
-import { createBrowserRouter, type RouteObject } from "react-router-dom";
+import { Suspense, lazy } from "react"
+import { createBrowserRouter, type RouteObject } from "react-router-dom"
+import { ProtectedRoute } from "@/features/auth"
+import { AppErrorBoundary } from "./ErrorBoundary"
 
-import { AppErrorBoundary } from "./ErrorBoundary";
-import { ProtectedRoute } from "@/features/auth";
-import { userManagementRoutes } from "@/features/user-management";
-import { TimedFallback } from "./TimedFallback";
+const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
+const Login = lazy(() => import("@/pages/Login"))
+const AuthCallback = lazy(() => import("@/pages/AuthCallback"))
+const RequestAccess = lazy(() => import("@/pages/RequestAccess"))
+const Dashboard = lazy(() => import("@/pages/Dashboard"))
+const NotFound = lazy(() => import("@/pages/NotFound"))
 
-const AppLayout = lazy(() => import("./layout/Layout").then(module => ({ default: module.Layout })));
+const fallback = (
+  <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="text-muted-foreground text-sm">Loading…</div>
+  </div>
+)
 
-const LandingPage = lazy(() => import("@/pages/Landing"));
-const AuthCallbackPage = lazy(() => import("@/pages/AuthCallback"));
-const DashboardPage = lazy(() => import("@/pages/Dashboard"));
-const AIAssistantLanding = lazy(() => import("@/pages/AIAssistantLanding"));
-const UnderConstructionPage = lazy(() => import("@/pages/UnderConstructionPage"));
-const NotFoundPage = lazy(() => import("@/pages/NotFound"));
-
-const suspenseFallback = <TimedFallback>Loading…</TimedFallback>;
-
-const withSuspense = (element: ReactNode) => <Suspense fallback={suspenseFallback}>{element}</Suspense>;
-
-const withBoundary = (element: ReactNode) => (
-  <AppErrorBoundary>
-    {withSuspense(element)}
-  </AppErrorBoundary>
-);
-
-const featureChildren: RouteObject[] = userManagementRoutes.map(route => ({
-  ...route,
-  element: withBoundary(route.element),
-}));
+function wrap(element: React.ReactNode) {
+  return (
+    <AppErrorBoundary>
+      <Suspense fallback={fallback}>{element}</Suspense>
+    </AppErrorBoundary>
+  )
+}
 
 const routes: RouteObject[] = [
   {
     path: "/",
-    element: withBoundary(<LandingPage />),
+    element: wrap(<Login />),
   },
   {
     path: "/auth/callback",
-    element: withBoundary(<AuthCallbackPage />),
+    element: wrap(<AuthCallback />),
+  },
+  {
+    path: "/request-access",
+    element: wrap(<RequestAccess />),
   },
   {
     path: "/app",
     element: (
       <AppErrorBoundary>
         <ProtectedRoute>
-          {withSuspense(<AppLayout />)}
+          <Suspense fallback={fallback}>
+            <Layout />
+          </Suspense>
         </ProtectedRoute>
       </AppErrorBoundary>
     ),
     children: [
       {
         index: true,
-        element: withSuspense(<DashboardPage />),
-      },
-      {
-        path: "ai-assistant",
-        element: withSuspense(<AIAssistantLanding />),
-      },
-      ...featureChildren,
-      {
-        path: "under-construction",
-        element: withSuspense(<UnderConstructionPage />),
+        element: wrap(<Dashboard />),
       },
       {
         path: "*",
-        element: withBoundary(<NotFoundPage />),
+        element: wrap(<NotFound />),
       },
     ],
   },
   {
     path: "*",
-    element: withBoundary(<NotFoundPage />),
+    element: wrap(<NotFound />),
   },
-];
+]
 
-export const router = createBrowserRouter(routes);
+export const router = createBrowserRouter(routes)

@@ -1,28 +1,28 @@
-import { Outlet } from "react-router-dom";
-import { SidebarProvider, SidebarTrigger } from "@/shared/ui/sidebar";
-import { useReadOnlyReminder } from "@/hooks/useReadOnlyReminder";
-import { AppSidebar } from "./AppSidebar";
-import { Topbar } from "./Topbar";
+import { Outlet } from "react-router-dom"
+import { SidebarProvider, SidebarTrigger } from "@/shared/ui/sidebar"
+import { AppSidebar } from "./AppSidebar"
+import { Topbar } from "./Topbar"
 
 export function Layout() {
-  useReadOnlyReminder();
-
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full">
+      <div className="min-h-screen flex w-full bg-background">
         <AppSidebar />
-        <div className="flex-1 flex flex-col">
-          <header className="h-16 bg-topbar-bg border-b border-topbar-border flex items-center px-6">
-            <SidebarTrigger className="mr-4" />
-            <div className="flex-1">
-              <Topbar />
-            </div>
+        <div className="flex-1 flex flex-col min-w-0">
+          <header
+            className="h-14 flex items-center px-4 gap-3 flex-shrink-0 topbar-stripe"
+            style={{ background: "hsl(var(--topbar-bg))" }}
+          >
+            <SidebarTrigger className="text-white/40 hover:text-white/80 transition-colors" />
+            <Topbar />
           </header>
-          <main className="flex-1 p-6 bg-background">
-            <Outlet />
+          <main className="flex-1 p-6 overflow-auto diagonal-stripes">
+            <div className="max-w-7xl mx-auto">
+              <Outlet />
+            </div>
           </main>
         </div>
       </div>
     </SidebarProvider>
-  );
+  )
 }
