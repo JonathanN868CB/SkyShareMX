@@ -525,7 +525,7 @@ function RemoveUserDialog({
     if (!user || !session?.access_token) return
     setRemoving(true)
     try {
-      const res = await fetch(`/.netlify/functions/users-admin?id=${user.id}`, {
+      const res = await fetch(`/.netlify/functions/users-admin?id=${user.user_id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
