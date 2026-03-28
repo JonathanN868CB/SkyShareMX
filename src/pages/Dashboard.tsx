@@ -10,7 +10,7 @@ const kpiCards = [
     note: "Loading fleet data",
     icon: TrendingUp,
     accent: "var(--skyshare-gold)",
-    iconBg: "rgba(212,160,23,0.1)",
+    iconBg: "rgba(212,160,23,0.15)",
     border: "var(--skyshare-gold)",
   },
   {
@@ -19,7 +19,7 @@ const kpiCards = [
     note: "Next 30 days",
     icon: Wrench,
     accent: "var(--skyshare-blue-mid)",
-    iconBg: "rgba(70,100,129,0.15)",
+    iconBg: "rgba(70,100,129,0.2)",
     border: "var(--skyshare-blue-mid)",
   },
   {
@@ -28,7 +28,7 @@ const kpiCards = [
     note: "Across all aircraft",
     icon: Calendar,
     accent: "var(--skyshare-red)",
-    iconBg: "rgba(193,2,48,0.1)",
+    iconBg: "rgba(220,50,50,0.15)",
     border: "var(--skyshare-red)",
   },
   {
@@ -37,7 +37,7 @@ const kpiCards = [
     note: "Total documents",
     icon: FileText,
     accent: "var(--skyshare-success)",
-    iconBg: "rgba(16,185,129,0.1)",
+    iconBg: "rgba(16,185,129,0.15)",
     border: "var(--skyshare-success)",
   },
 ]
@@ -48,7 +48,7 @@ const activityCards = [
     description: "Next maintenance activities",
     icon: Calendar,
     accent: "var(--skyshare-gold)",
-    iconBg: "rgba(212,160,23,0.1)",
+    iconBg: "rgba(212,160,23,0.15)",
     empty: "Looks quiet for now — your maintenance events will appear here.",
   },
   {
@@ -56,7 +56,7 @@ const activityCards = [
     description: "Active inspection cycles",
     icon: Wrench,
     accent: "var(--skyshare-blue-mid)",
-    iconBg: "rgba(70,100,129,0.15)",
+    iconBg: "rgba(70,100,129,0.2)",
     empty: "No active checks right now. New inspections will show up here.",
   },
   {
@@ -64,7 +64,7 @@ const activityCards = [
     description: "Latest maintenance entries",
     icon: FileText,
     accent: "var(--skyshare-success)",
-    iconBg: "rgba(16,185,129,0.1)",
+    iconBg: "rgba(16,185,129,0.15)",
     empty: "Start documenting — your notes and updates will live here.",
   },
 ]
@@ -76,16 +76,24 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
 
-      {/* Hero heading */}
-      <div className="space-y-1 pb-4" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
+      {/* Hero heading with faint diagonal line bg */}
+      <div className="hero-area">
         <h1
-          className="text-2xl font-bold uppercase tracking-[0.08em] text-foreground"
-          style={{ fontFamily: "var(--font-heading)" }}
+          className="text-[2.6rem] leading-none text-foreground"
+          style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
         >
-          Welcome back, {firstName}
+          Welcome back, {firstName.toUpperCase()}
         </h1>
-        <p className="text-sm text-muted-foreground tracking-wide">
-          Maintenance operations overview
+        {/* Gold rule */}
+        <div
+          className="mt-2 mb-2"
+          style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }}
+        />
+        <p
+          className="text-sm text-muted-foreground"
+          style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}
+        >
+          Maintenance Operations Overview
         </p>
       </div>
 
@@ -94,13 +102,19 @@ export default function Dashboard() {
         {kpiCards.map(card => (
           <Card
             key={card.title}
-            className="shadow-sm"
+            className="card-elevated card-hoverable border-0"
             style={{ borderLeft: `3px solid ${card.border}` }}
           >
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle
-                className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground"
-                style={{ fontFamily: "var(--font-heading)" }}
+                className="text-muted-foreground"
+                style={{
+                  fontFamily: "var(--font-heading)",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  letterSpacing: "0.15em",
+                  textTransform: "uppercase",
+                }}
               >
                 {card.title}
               </CardTitle>
@@ -114,11 +128,16 @@ export default function Dashboard() {
             <CardContent>
               <div
                 className="text-3xl font-bold text-foreground"
-                style={{ fontFamily: "var(--font-heading)" }}
+                style={{ fontFamily: "var(--font-display)", cursor: "default" }}
               >
                 {card.value}
               </div>
-              <p className="text-xs text-muted-foreground mt-1 tracking-wide">{card.note}</p>
+              <p
+                className="text-xs text-muted-foreground mt-1"
+                style={{ letterSpacing: "0.05em", cursor: "default" }}
+              >
+                {card.note}
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -130,11 +149,20 @@ export default function Dashboard() {
       {/* Activity Cards */}
       <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
         {activityCards.map(card => (
-          <Card key={card.title} className="shadow-sm">
+          <Card
+            key={card.title}
+            className="card-elevated card-hoverable border-0"
+            style={{ borderTop: `2px solid var(--skyshare-gold)` }}
+          >
             <CardHeader className="pb-3" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
               <CardTitle
-                className="text-sm font-semibold uppercase tracking-[0.1em]"
-                style={{ fontFamily: "var(--font-heading)" }}
+                style={{
+                  fontFamily: "var(--font-heading)",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  letterSpacing: "0.15em",
+                  textTransform: "uppercase",
+                }}
               >
                 {card.title}
               </CardTitle>
@@ -148,14 +176,17 @@ export default function Dashboard() {
                 >
                   <card.icon className="h-5 w-5" style={{ color: card.accent }} />
                 </div>
-                <p className="text-xs text-muted-foreground leading-relaxed max-w-[200px] mx-auto">
+                <p
+                  className="text-xs leading-relaxed max-w-[200px] mx-auto"
+                  style={{ color: "rgba(255,255,255,0.35)" }}
+                >
                   {card.empty}
                 </p>
               </div>
               <div className="space-y-2">
-                <Skeleton className="h-3 w-full" />
-                <Skeleton className="h-3 w-4/5" />
-                <Skeleton className="h-3 w-3/5" />
+                <Skeleton className="h-3 w-full skeleton-gold" />
+                <Skeleton className="h-3 w-4/5 skeleton-gold" />
+                <Skeleton className="h-3 w-3/5 skeleton-gold" />
               </div>
             </CardContent>
           </Card>

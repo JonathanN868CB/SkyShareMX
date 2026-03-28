@@ -32,7 +32,31 @@ export default function AuthCallback() {
         .eq("user_id", session.user.id)
         .single()
 
-      if (!profile || profile.status === "Pending") {
+      if (!profile) {
+        navigate("/request-access?status=pending", { replace: true })
+        return
+      }
+
+      if (profile.status === "Pending") {
+        // Check if an admin has already approved an access request for this email
+        const { data: approved } = await supabase
+          .from("access_requests")
+          .select("id")
+          .eq("email", email)
+          .eq("status", "approved")
+          .limit(1)
+          .single()
+
+        if (approved) {
+          // Auto-activate the profile
+          await supabase
+            .from("profiles")
+            .update({ status: "Active", last_login: new Date().toISOString() })
+            .eq("user_id", session.user.id)
+          navigate("/app", { replace: true })
+          return
+        }
+
         navigate("/request-access?status=pending", { replace: true })
         return
       }

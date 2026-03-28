@@ -1,57 +1,58 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* ─────────────────────────────────────────
-   LIGHT MODE (default)
+   LIGHT MODE
 ───────────────────────────────────────── */
 @layer base {
   :root {
-    --background: 30 10% 96%;         /* #f6f6f6 */
-    --foreground: 345 2% 19%;         /* #302f31 */
+    --background: 37 20% 95%;         /* #F5F3EE warm cream */
+    --foreground: 345 2% 19%;         /* #302F31 */
 
-    --card: 0 0% 100%;
+    --card: 0 0% 100%;                /* pure white — pops against cream */
     --card-foreground: 345 2% 19%;
 
     --popover: 0 0% 100%;
     --popover-foreground: 345 2% 19%;
-    --popover-border: 0 0% 86%;
+    --popover-border: 37 10% 86%;
 
     --topbar-bg: 0 0% 100%;
-    --topbar-border: 0 0% 88%;
+    --topbar-border: 37 10% 88%;
 
-    /* Sidebar always dark */
+    /* Sidebar always dark — same in both modes */
     --sidebar-bg: 0 0% 9%;
     --sidebar-foreground: 0 0% 80%;
     --sidebar-hover: 0 0% 14%;
     --sidebar-border: 0 0% 14%;
     --sidebar-label: 0 0% 38%;
 
-    --primary: 42 81% 46%;            /* gold */
+    --primary: 42 81% 46%;
     --primary-foreground: 0 0% 8%;
     --primary-hover: 42 81% 40%;
 
-    --secondary: 30 8% 92%;
+    --secondary: 37 12% 90%;
     --secondary-foreground: 345 2% 19%;
 
-    --muted: 30 8% 92%;
+    --muted: 37 12% 90%;
     --muted-foreground: 0 0% 48%;
 
-    --accent: 42 60% 92%;
+    --accent: 42 40% 90%;
     --accent-foreground: 42 81% 32%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 0 0% 88%;
-    --input: 0 0% 88%;
+    --border: 37 10% 86%;
+    --input: 37 10% 86%;
     --ring: 42 81% 46%;
 
     --radius: 0.25rem;
 
     --font-heading: 'Montserrat', system-ui, sans-serif;
+    --font-display: 'Bebas Neue', 'Montserrat', system-ui, sans-serif;
     --font-body: 'Inter', system-ui, sans-serif;
 
     /* SkyShare Brand */
@@ -78,11 +79,11 @@
 ───────────────────────────────────────── */
 @layer base {
   .dark {
-    --background: 0 0% 12%;           /* #1e1e1e */
+    --background: 0 0% 12%;
     --foreground: 0 0% 100%;
 
-    --card: 0 0% 16%;                 /* #2a2a2a */
-    --card-foreground: 0 0% 100%;
+    --card: 0 0% 18%;                 /* #2e2e2e — distinct from #1e1e1e bg */
+    --card-foreground: 0 0% 95%;
 
     --popover: 0 0% 18%;
     --popover-foreground: 0 0% 100%;
@@ -91,7 +92,7 @@
     --topbar-bg: 0 0% 14%;
     --topbar-border: 0 0% 20%;
 
-    /* Sidebar same dark in both modes */
+    /* Sidebar same dark values */
     --sidebar-bg: 0 0% 9%;
     --sidebar-foreground: 0 0% 80%;
     --sidebar-hover: 0 0% 14%;
@@ -106,7 +107,7 @@
     --secondary-foreground: 0 0% 85%;
 
     --muted: 0 0% 20%;
-    --muted-foreground: 0 0% 55%;
+    --muted-foreground: 0 0% 53%;     /* ~#888 — card subtitles, notes */
 
     --accent: 0 0% 22%;
     --accent-foreground: 42 81% 46%;
@@ -121,7 +122,7 @@
 }
 
 /* ─────────────────────────────────────────
-   BASE STYLES
+   BASE
 ───────────────────────────────────────── */
 @layer base {
   * { @apply border-border; }
@@ -141,30 +142,47 @@
 }
 
 /* ─────────────────────────────────────────
-   UTILITY CLASSES
+   DARK MODE NOISE GRAIN OVERLAY
 ───────────────────────────────────────── */
-
-/* Crimson → navy gradient stripe */
-.stripe-divider {
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    var(--skyshare-crimson) 0%,
-    var(--skyshare-navy) 100%
-  );
+.dark body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 200px 200px;
 }
 
-/* Topbar shadow hint */
+/* ─────────────────────────────────────────
+   GRADIENT STRIPE DIVIDER
+───────────────────────────────────────── */
+.stripe-divider {
+  height: 2px;
+  background: linear-gradient(90deg, var(--skyshare-crimson) 0%, var(--skyshare-navy) 100%);
+}
+
+/* ─────────────────────────────────────────
+   TOPBAR
+───────────────────────────────────────── */
 .topbar-stripe {
   border-bottom: 1px solid hsl(var(--topbar-border));
   box-shadow: 0 1px 0 0 rgba(212, 160, 23, 0.06);
 }
 
-/* Active sidebar item gold bar */
-a.sidebar-link-active {
+/* ─────────────────────────────────────────
+   SIDEBAR NAV LINKS
+───────────────────────────────────────── */
+
+/* Active item: gold left bar */
+a.sidebar-nav-link {
   position: relative;
+  cursor: pointer;
 }
-a.sidebar-link-active::before {
+
+a.sidebar-nav-link.active::before {
   content: '';
   position: absolute;
   left: 0;
@@ -176,24 +194,106 @@ a.sidebar-link-active::before {
   background-color: var(--skyshare-gold);
 }
 
-/* Subtle diagonal stripe background */
-.diagonal-stripes {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    transparent,
-    transparent 8px,
-    rgba(212, 160, 23, 0.025) 8px,
-    rgba(212, 160, 23, 0.025) 16px
-  );
+/* Gold underline reveal on hover (non-active items) */
+a.sidebar-nav-link:not(.active)::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 12px;
+  width: 0;
+  height: 1px;
+  background: var(--skyshare-gold);
+  transition: width 0.2s ease;
 }
 
-/* Light-mode diagonal stripe (less visible on white) */
-:root .diagonal-stripes {
+a.sidebar-nav-link:not(.active):hover::after {
+  width: calc(100% - 24px);
+}
+
+/* ─────────────────────────────────────────
+   CARDS
+───────────────────────────────────────── */
+
+/* Light mode: elevated shadow, pure white */
+:root .card-elevated {
+  background: #ffffff;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  border-color: transparent;
+}
+
+/* Dark mode: subtle white edge + gold inner glow */
+.dark .card-elevated {
+  background: hsl(0 0% 18%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    inset 0 0 0 1px rgba(212, 160, 23, 0.15);
+  border-color: transparent;
+}
+
+/* Hoverable card interaction */
+.card-hoverable {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+:root .card-hoverable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+.dark .card-hoverable:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px rgba(212, 160, 23, 0.3);
+}
+
+/* ─────────────────────────────────────────
+   HERO AREA — faint diagonal line bg
+───────────────────────────────────────── */
+.hero-area {
   background-image: repeating-linear-gradient(
     -45deg,
     transparent,
-    transparent 12px,
-    rgba(212, 160, 23, 0.04) 12px,
-    rgba(212, 160, 23, 0.04) 24px
+    transparent 18px,
+    rgba(212, 160, 23, 0.04) 18px,
+    rgba(212, 160, 23, 0.04) 19px
   );
+  background-size: 27px 27px;
+  padding: 1.25rem 1.5rem;
+  margin: -1.5rem -1.5rem 0;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+/* ─────────────────────────────────────────
+   SKELETON — gold shimmer
+───────────────────────────────────────── */
+@keyframes skeleton-gold-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.skeleton-gold {
+  background-color: rgba(212, 160, 23, 0.18) !important;
+  animation: skeleton-gold-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite !important;
+}
+
+/* ─────────────────────────────────────────
+   SEARCH BAR — underline only
+───────────────────────────────────────── */
+.search-underline {
+  border: none !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: border-bottom-color 0.2s ease !important;
+}
+
+.search-underline:focus,
+.search-underline:focus-visible {
+  border-bottom-color: var(--skyshare-gold) !important;
+  box-shadow: none !important;
+  ring: 0 !important;
+  outline: none !important;
 }

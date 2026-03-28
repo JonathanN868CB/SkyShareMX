@@ -13,7 +13,7 @@ export default function Login() {
   }, [loading, session, navigate])
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 diagonal-stripes bg-background">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
       {/* Decorative gradient orbs */}
       <div
         className="absolute top-0 left-0 w-96 h-96 rounded-full opacity-10 blur-3xl pointer-events-none"
