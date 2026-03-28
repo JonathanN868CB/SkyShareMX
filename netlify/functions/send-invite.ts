@@ -202,7 +202,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const { data: callerProfile } = await adminClient
     .from("profiles")
     .select("role")
-    .eq("id", userData.user.id)
+    .eq("user_id", userData.user.id)
     .single();
 
   const callerRole = typeof callerProfile?.role === "string" ? callerProfile.role : "";
