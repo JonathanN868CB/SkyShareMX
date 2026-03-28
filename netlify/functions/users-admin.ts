@@ -110,7 +110,7 @@ async function requireAdmin(
   const userId = data.user.id;
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("user_id, role, role_enum, is_super_admin")
+    .select("user_id, role")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -119,11 +119,8 @@ async function requireAdmin(
     return jsonResponse(500, { error: "Unable to verify permissions" });
   }
 
-  const normalizedRole = typeof profile?.role === "string" ? profile.role.toLowerCase() : "";
-  const roleEnum = typeof profile?.role_enum === "string" ? profile.role_enum : "";
-  const isSuperAdmin = Boolean(profile?.is_super_admin) || roleEnum === "Super Admin";
-
-  if (normalizedRole !== "admin" && !isSuperAdmin) {
+  const role = typeof profile?.role === "string" ? profile.role : "";
+  if (role !== "Super Admin" && role !== "Admin") {
     return jsonResponse(403, { error: "Forbidden" });
   }
 
@@ -285,7 +282,7 @@ async function handleDelete(
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("user_id, email, role, is_super_admin")
+    .select("user_id, email, role")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -309,9 +306,8 @@ async function handleDelete(
   const hadAuthUser = Boolean(authData?.user);
   const profileEmail = normalizeEmail(profile?.email as string | undefined);
   const targetEmail = profileEmail || authEmail;
-  const profileRole = normalizeRole(profile?.role) ?? "";
-  const isSuperAdmin = Boolean(profile?.is_super_admin);
-  const isProtected = isSuperAdmin || targetEmail === MASTER_ADMIN_EMAIL || profileRole === "admin";
+  const profileRole = typeof profile?.role === "string" ? profile.role : "";
+  const isProtected = profileRole === "Super Admin" || targetEmail === MASTER_ADMIN_EMAIL;
 
   if (isProtected) {
     return jsonResponse(403, { error: "Admin accounts cannot be deleted" });

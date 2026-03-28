@@ -61,10 +61,10 @@ function buildInviteEmail(opts: {
   <title>You're invited to SkyShare MX</title>
 </head>
 <body style="margin:0;padding:0;background:#111111;font-family:'Inter',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111111;padding:40px 16px;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111111;padding:36px 14px;">
     <tr>
       <td align="center">
-        <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
+        <table width="504" cellpadding="0" cellspacing="0" border="0" style="max-width:504px;width:100%;">
 
           <!-- Header stripe -->
           <tr>
@@ -73,70 +73,62 @@ function buildInviteEmail(opts: {
 
           <!-- Card -->
           <tr>
-            <td style="background:#1a1a1a;border-radius:0 0 12px 12px;padding:40px 40px 32px;border:1px solid rgba(255,255,255,0.08);border-top:none;">
+            <td style="background:#1a1a1a;border-radius:0 0 4px 4px;padding:36px 43px 29px;border:1px solid rgba(255,255,255,0.08);border-top:none;">
 
               <!-- Logo / wordmark -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:29px;">
                 <tr>
                   <td>
-                    <span style="font-family:'Montserrat',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#d4a017;">SKYSHARE MX</span>
-                    <span style="font-family:'Montserrat',Arial,sans-serif;font-size:11px;font-weight:400;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.3);margin-left:10px;">Maintenance Portal</span>
+                    <span style="font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#d4a017;border-bottom:1px solid #d4a017;padding-bottom:2px;">SKYSHARE MX</span>
+                    <span style="font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:400;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.28);margin-left:11px;">Maintenance Portal</span>
                   </td>
                 </tr>
                 <tr>
-                  <td style="padding-top:8px;">
-                    <div style="height:1px;width:48px;background:#d4a017;"></div>
+                  <td style="padding-top:7px;">
+                    <div style="height:1px;width:43px;background:#d4a017;"></div>
                   </td>
                 </tr>
               </table>
 
               <!-- Heading -->
-              <h1 style="margin:0 0 8px;font-family:'Montserrat',Arial,sans-serif;font-size:26px;font-weight:800;letter-spacing:0.03em;color:#ffffff;line-height:1.2;">
-                You've been invited
+              <h1 style="margin:0 0 25px;font-family:'Georgia','Times New Roman',serif;font-size:27px;font-weight:400;font-style:italic;letter-spacing:0.03em;color:#ffffff;line-height:1.2;">
+                Welcome Aboard
               </h1>
-              <p style="margin:0 0 28px;font-family:'Montserrat',Arial,sans-serif;font-size:13px;color:rgba(255,255,255,0.45);letter-spacing:0.05em;text-transform:uppercase;">
-                to the SkyShare MX Maintenance Portal
-              </p>
 
               <!-- Body -->
-              <p style="margin:0 0 20px;font-size:15px;line-height:1.7;color:rgba(255,255,255,0.75);">
+              <p style="margin:0 0 50px;font-size:13px;line-height:1.7;color:rgba(255,255,255,0.75);">
                 <strong style="color:#ffffff;">${invitedByName}</strong> has invited you to join <strong style="color:#ffffff;">SkyShare MX</strong> as a <strong style="color:#d4a017;">${role}</strong>.
-              </p>
-              <p style="margin:0 0 32px;font-size:15px;line-height:1.7;color:rgba(255,255,255,0.55);">
-                Click the button below to accept your invitation and set up your account. This link expires in 24 hours.
               </p>
 
               <!-- CTA Button -->
-              <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:36px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:21px;">
                 <tr>
-                  <td style="border-radius:6px;background:#d4a017;">
-                    <a href="${acceptUrl}"
-                       style="display:inline-block;padding:14px 32px;font-family:'Montserrat',Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#111111;text-decoration:none;">
-                      Accept Invitation
-                    </a>
+                  <td align="center">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="border-radius:6px;background:#d4a017;">
+                          <a href="${acceptUrl}"
+                             style="display:inline-block;padding:13px 29px;font-family:'Montserrat',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#111111;text-decoration:none;">
+                            Accept Invitation &#8594;
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
               </table>
-
-              <!-- Divider -->
-              <div style="height:1px;background:rgba(255,255,255,0.08);margin-bottom:24px;"></div>
-
-              <!-- Fallback link -->
-              <p style="margin:0 0 6px;font-size:12px;color:rgba(255,255,255,0.3);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.05em;">
-                IF THE BUTTON DOESN'T WORK, COPY THIS LINK:
-              </p>
-              <p style="margin:0;font-size:12px;word-break:break-all;">
-                <a href="${acceptUrl}" style="color:#d4a017;text-decoration:none;">${acceptUrl}</a>
-              </p>
 
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="padding:24px 8px 0;text-align:center;">
-              <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.2);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.08em;">
-                © ${new Date().getFullYear()} SKYSHARE &nbsp;·&nbsp;
+            <td style="padding:22px 8px 0;text-align:center;">
+              <p style="margin:0 0 6px;font-size:10px;color:rgba(255,255,255,0.18);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.04em;line-height:1.6;">
+                This invitation expires in 24 hours. If you did not expect this email, you can safely ignore it.
+              </p>
+              <p style="margin:0;font-size:10px;color:rgba(255,255,255,0.2);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.08em;">
+                © ${new Date().getFullYear()} SKYSHARE &nbsp;<span style="color:#d4a017;">·</span>&nbsp;
                 <a href="${siteUrl}" style="color:rgba(255,255,255,0.25);text-decoration:none;">skysharemx.com</a>
               </p>
             </td>
