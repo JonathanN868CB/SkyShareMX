@@ -27,18 +27,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // On the OAuth callback page, getSession() may return null before the PKCE
+    // code has been exchanged. Keep loading=true here and let onAuthStateChange
+    // resolve it once Supabase fires SIGNED_IN — otherwise ProtectedRoute bounces
+    // to the login page for a brief flash.
+    const onCallbackPage = window.location.pathname === "/auth/callback"
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
-      if (session) fetchProfile(session.user.id)
-      else setLoading(false)
+      if (session) {
+        fetchProfile(session.user.id)
+      } else if (!onCallbackPage) {
+        setLoading(false)
+      }
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
-      if (session) fetchProfile(session.user.id)
-      else {
-        setProfile(null)
-        setLoading(false)
+      if (session) {
+        fetchProfile(session.user.id)
+      } else {
+        // INITIAL_SESSION null on the callback page just means the code hasn't
+        // been exchanged yet — keep loading. Any other event (SIGNED_OUT etc.)
+        // means we definitively have no session.
+        if (event !== "INITIAL_SESSION" || !onCallbackPage) {
+          setProfile(null)
+          setLoading(false)
+        }
       }
     })
 
