@@ -1,23 +1,18 @@
-import { RouterProvider } from "react-router-dom";
-import { PermissionProvider } from "@/hooks/useUserPermissions";
-import { AuthDebugOverlay } from "@/debug";
-import { AccessDeniedDialogProvider } from "@/shared/ui/access-denied-dialog";
-import { Toaster } from "@/shared/ui/toaster";
-import { Toaster as Sonner } from "@/shared/ui/sonner";
+import { RouterProvider } from "react-router-dom"
+import { ThemeProvider } from "next-themes"
+import { AuthProvider } from "@/features/auth"
+import { Toaster } from "@/shared/ui/toaster"
+import { Toaster as Sonner } from "@/shared/ui/sonner"
+import { router } from "./routes"
 
-import { router } from "./routes";
-
-export function App() {
+export default function App() {
   return (
-    <PermissionProvider>
-      <AccessDeniedDialogProvider>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <AuthProvider>
         <Toaster />
         <Sonner />
         <RouterProvider router={router} />
-        <AuthDebugOverlay />
-      </AccessDeniedDialogProvider>
-    </PermissionProvider>
-  );
+      </AuthProvider>
+    </ThemeProvider>
+  )
 }
-
-export default App;
