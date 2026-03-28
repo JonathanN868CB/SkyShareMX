@@ -1,69 +1,61 @@
-import { useEffect, useMemo } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { supabase } from "@/shared/lib/api";
-import { popReturnToFromStorage, sanitizeReturnTo } from "@/shared/lib/env";
+import { useEffect, useRef } from "react"
+import { useNavigate } from "react-router-dom"
+import { supabase } from "@/lib/supabase"
+import { isAllowedEmail } from "@/shared/lib/env"
 
 export default function AuthCallback() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const rawQueryReturnTo = useMemo(
-    () => new URLSearchParams(location.search).get("returnTo"),
-    [location.search],
-  );
-  const queryReturnTo = useMemo(
-    () => (rawQueryReturnTo ? sanitizeReturnTo(rawQueryReturnTo) : null),
-    [rawQueryReturnTo],
-  );
+  const navigate = useNavigate()
+  const handled = useRef(false)
 
   useEffect(() => {
-    let mounted = true;
-    const storedReturnTo = popReturnToFromStorage();
-    const preferredReturnTo = queryReturnTo ?? storedReturnTo;
-    const targetPath = preferredReturnTo && preferredReturnTo !== "/"
-      ? preferredReturnTo
-      : "/app";
+    if (handled.current) return
+    handled.current = true
 
-    const handleAuthCallback = async () => {
-      console.log("🔄 AuthCallback: Processing auth callback");
-
-      try {
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        const { data: sessionData } = await supabase.auth.getSession();
-        console.log(
-          "📋 AuthCallback: Session check:",
-          sessionData.session ? "✅ Found" : "❌ None",
-        );
-
-        if (sessionData.session && mounted) {
-          console.log("✅ AuthCallback: Authentication successful, redirecting");
-          navigate(targetPath, { replace: true });
-        } else {
-          console.log("❌ AuthCallback: No session found, redirecting to landing");
-          navigate("/", { replace: true });
-        }
-      } catch (error) {
-        console.error("❌ AuthCallback: Error:", error);
-        if (mounted) {
-          navigate("/", { replace: true });
-        }
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+      if (error || !session) {
+        navigate("/?error=auth_failed", { replace: true })
+        return
       }
-    };
 
-    handleAuthCallback();
+      const email = session.user.email ?? ""
 
-    return () => {
-      mounted = false;
-    };
-  }, [navigate, queryReturnTo]);
+      if (!isAllowedEmail(email)) {
+        await supabase.auth.signOut()
+        navigate("/?error=domain_denied", { replace: true })
+        return
+      }
+
+      // Fetch profile to check status
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("status")
+        .eq("user_id", session.user.id)
+        .single()
+
+      if (!profile || profile.status === "Pending") {
+        navigate("/request-access?status=pending", { replace: true })
+        return
+      }
+
+      if (profile.status === "Suspended" || profile.status === "Inactive") {
+        await supabase.auth.signOut()
+        navigate(`/?error=${profile.status.toLowerCase()}`, { replace: true })
+        return
+      }
+
+      // Update last_login
+      await supabase
+        .from("profiles")
+        .update({ last_login: new Date().toISOString() })
+        .eq("user_id", session.user.id)
+
+      navigate("/app", { replace: true })
+    })
+  }, [navigate])
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-        <p className="text-muted-foreground">Completing sign-in...</p>
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="text-muted-foreground text-sm">Signing you in…</div>
     </div>
-  );
+  )
 }
