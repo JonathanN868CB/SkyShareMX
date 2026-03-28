@@ -1,41 +1,41 @@
-import { Calendar, Wrench, FileText, TrendingUp } from "lucide-react"
+import { Calendar, Wrench, FileText, Users, ClipboardList, GraduationCap, AlertTriangle } from "lucide-react"
 import { useAuth } from "@/features/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/ui/card"
 import { Skeleton } from "@/shared/ui/skeleton"
 
 const kpiCards = [
   {
-    title: "Active Aircraft",
+    title: "Team Members",
     value: "—",
-    note: "Loading fleet data",
-    icon: TrendingUp,
+    note: "Active personnel",
+    icon: Users,
     accent: "var(--skyshare-gold)",
     iconBg: "rgba(212,160,23,0.15)",
     border: "var(--skyshare-gold)",
   },
   {
-    title: "Upcoming Checks",
+    title: "Reviews Due",
     value: "—",
     note: "Next 30 days",
-    icon: Wrench,
+    icon: ClipboardList,
     accent: "var(--skyshare-blue-mid)",
     iconBg: "rgba(70,100,129,0.2)",
     border: "var(--skyshare-blue-mid)",
   },
   {
-    title: "Open Issues",
+    title: "Open Action Items",
     value: "—",
-    note: "Across all aircraft",
-    icon: Calendar,
+    note: "Across all technicians",
+    icon: AlertTriangle,
     accent: "var(--skyshare-red)",
     iconBg: "rgba(220,50,50,0.15)",
     border: "var(--skyshare-red)",
   },
   {
-    title: "Documentation",
+    title: "Training Records",
     value: "—",
-    note: "Total documents",
-    icon: FileText,
+    note: "Logged this quarter",
+    icon: GraduationCap,
     accent: "var(--skyshare-success)",
     iconBg: "rgba(16,185,129,0.15)",
     border: "var(--skyshare-success)",
@@ -44,29 +44,34 @@ const kpiCards = [
 
 const activityCards = [
   {
-    title: "Upcoming Events",
-    description: "Next maintenance activities",
+    title: "Upcoming Reviews",
+    description: "Scheduled 4-1-1 sessions",
     icon: Calendar,
     accent: "var(--skyshare-gold)",
     iconBg: "rgba(212,160,23,0.15)",
-    empty: "Looks quiet for now — your maintenance events will appear here.",
+    empty: "No reviews scheduled yet. Sessions will appear here once assigned.",
   },
   {
-    title: "Open 14-Day Checks",
-    description: "Active inspection cycles",
+    title: "Action Items",
+    description: "Open items by technician",
     icon: Wrench,
     accent: "var(--skyshare-blue-mid)",
     iconBg: "rgba(70,100,129,0.2)",
-    empty: "No active checks right now. New inspections will show up here.",
+    empty: "No open action items. Assigned tasks will track here.",
   },
   {
-    title: "Recent Notes",
-    description: "Latest maintenance entries",
-    icon: FileText,
+    title: "Recent Training",
+    description: "Latest logged training activity",
+    icon: GraduationCap,
     accent: "var(--skyshare-success)",
     iconBg: "rgba(16,185,129,0.15)",
-    empty: "Start documenting — your notes and updates will live here.",
+    empty: "No training logged yet. Completed sessions will appear here.",
   },
+]
+
+const bulletinItems = [
+  { date: "Mar 28", text: "SkyShare MX portal is live. Welcome to the team intranet." },
+  { date: "Mar 28", text: "User management and invite system are fully operational." },
 ]
 
 export default function Dashboard() {
@@ -93,9 +98,28 @@ export default function Dashboard() {
           className="text-sm text-muted-foreground"
           style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}
         >
-          Maintenance Operations Overview
+          Team Operations &amp; Performance
         </p>
       </div>
+
+      {/* Director's Bulletin */}
+      <Card className="card-elevated border-0" style={{ borderLeft: "3px solid var(--skyshare-gold)" }}>
+        <CardHeader className="pb-2">
+          <CardTitle style={{ fontFamily: "var(--font-heading)", fontSize: "11px", fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--skyshare-gold)" }}>
+            Director's Bulletin
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 pt-0">
+          {bulletinItems.map((item, i) => (
+            <div key={i} className="flex gap-4 items-start text-sm">
+              <span style={{ fontFamily: "var(--font-heading)", fontSize: "10px", letterSpacing: "0.1em", color: "rgba(255,255,255,0.3)", whiteSpace: "nowrap", paddingTop: "2px" }}>
+                {item.date}
+              </span>
+              <span style={{ color: "rgba(255,255,255,0.65)", lineHeight: 1.6 }}>{item.text}</span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
