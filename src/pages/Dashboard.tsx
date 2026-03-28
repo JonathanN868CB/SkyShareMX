@@ -1,143 +1,166 @@
-import { Link } from "react-router-dom";
-import { Lock } from "lucide-react";
+import { Calendar, Wrench, FileText, TrendingUp } from "lucide-react"
+import { useAuth } from "@/features/auth"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/ui/card"
+import { Skeleton } from "@/shared/ui/skeleton"
 
-import type { Tables } from "@/entities/supabase";
-import { useUserPermissions } from "@/hooks/useUserPermissions";
-import { cn } from "@/shared/lib/utils";
-import { showAccessDenied } from "@/shared/ui/access-denied-dialog";
-import { Badge } from "@/shared/ui/badge";
+const kpiCards = [
+  {
+    title: "Active Aircraft",
+    value: "—",
+    note: "Loading fleet data",
+    icon: TrendingUp,
+    accent: "var(--skyshare-gold)",
+    iconBg: "rgba(212,160,23,0.1)",
+    border: "var(--skyshare-gold)",
+  },
+  {
+    title: "Upcoming Checks",
+    value: "—",
+    note: "Next 30 days",
+    icon: Wrench,
+    accent: "var(--skyshare-blue-mid)",
+    iconBg: "rgba(70,100,129,0.15)",
+    border: "var(--skyshare-blue-mid)",
+  },
+  {
+    title: "Open Issues",
+    value: "—",
+    note: "Across all aircraft",
+    icon: Calendar,
+    accent: "var(--skyshare-red)",
+    iconBg: "rgba(193,2,48,0.1)",
+    border: "var(--skyshare-red)",
+  },
+  {
+    title: "Documentation",
+    value: "—",
+    note: "Total documents",
+    icon: FileText,
+    accent: "var(--skyshare-success)",
+    iconBg: "rgba(16,185,129,0.1)",
+    border: "var(--skyshare-success)",
+  },
+]
 
-type AppSection = Tables<"user_permissions">["section"];
-
-type DashboardCard = {
-  key: string;
-  title: string;
-  description: string;
-  href: string;
-  requiresPermission?: AppSection;
-};
+const activityCards = [
+  {
+    title: "Upcoming Events",
+    description: "Next maintenance activities",
+    icon: Calendar,
+    accent: "var(--skyshare-gold)",
+    iconBg: "rgba(212,160,23,0.1)",
+    empty: "Looks quiet for now — your maintenance events will appear here.",
+  },
+  {
+    title: "Open 14-Day Checks",
+    description: "Active inspection cycles",
+    icon: Wrench,
+    accent: "var(--skyshare-blue-mid)",
+    iconBg: "rgba(70,100,129,0.15)",
+    empty: "No active checks right now. New inspections will show up here.",
+  },
+  {
+    title: "Recent Notes",
+    description: "Latest maintenance entries",
+    icon: FileText,
+    accent: "var(--skyshare-success)",
+    iconBg: "rgba(16,185,129,0.1)",
+    empty: "Start documenting — your notes and updates will live here.",
+  },
+]
 
 export default function Dashboard() {
-  const { hasPermission, loading } = useUserPermissions();
-
-  const cards: DashboardCard[] = [
-    {
-      key: "overview",
-      title: "Overview",
-      description:
-        "Monitor your fleet status and maintenance schedules at a glance.",
-      href: "/app",
-    },
-    {
-      key: "operations",
-      title: "Operations",
-      description: "Access maintenance tools, planning, and operational controls.",
-      href: "/app/under-construction",
-      requiresPermission: "Operations",
-    },
-    {
-      key: "administration",
-      title: "Administration",
-      description: "Manage users, settings, and system configurations.",
-      href: "/app/admin/users",
-      requiresPermission: "Administration",
-    },
-  ];
-
-  const cardCount = cards.length;
+  const { profile } = useAuth()
+  const firstName = profile?.first_name ?? profile?.full_name?.split(" ")[0] ?? "there"
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-heading font-bold text-foreground mb-2">
-          Welcome to SkyShare Maintenance Portal
+    <div className="space-y-8">
+
+      {/* Hero heading */}
+      <div className="space-y-1 pb-4" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
+        <h1
+          className="text-2xl font-bold uppercase tracking-[0.08em] text-foreground"
+          style={{ fontFamily: "var(--font-heading)" }}
+        >
+          Welcome back, {firstName}
         </h1>
-        <p className="text-lg text-muted-foreground">
-          Your central hub for aircraft maintenance operations and oversight.
+        <p className="text-sm text-muted-foreground tracking-wide">
+          Maintenance operations overview
         </p>
       </div>
 
-      <div
-        className={cn(
-          "grid gap-6",
-          "grid-cols-1",
-          cardCount >= 2 && "md:grid-cols-2",
-          cardCount >= 3 && "lg:grid-cols-3",
-          cardCount === 1 && "max-w-xl mx-auto",
-        )}
-      >
-        {cards.map(card => {
-          const isCheckingAccess = Boolean(card.requiresPermission) && loading;
-          const hasAccess =
-            !card.requiresPermission || hasPermission(card.requiresPermission);
-          const isLocked = Boolean(card.requiresPermission) && !loading && !hasAccess;
+      {/* KPI Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {kpiCards.map(card => (
+          <Card
+            key={card.title}
+            className="shadow-sm"
+            style={{ borderLeft: `3px solid ${card.border}` }}
+          >
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle
+                className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground"
+                style={{ fontFamily: "var(--font-heading)" }}
+              >
+                {card.title}
+              </CardTitle>
+              <div
+                className="h-8 w-8 rounded flex items-center justify-center flex-shrink-0"
+                style={{ background: card.iconBg }}
+              >
+                <card.icon className="h-4 w-4" style={{ color: card.accent }} />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div
+                className="text-3xl font-bold text-foreground"
+                style={{ fontFamily: "var(--font-heading)" }}
+              >
+                {card.value}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 tracking-wide">{card.note}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
-          const cardClasses = cn(
-            "group relative flex h-full w-full flex-col gap-6 rounded-lg border border-border bg-card p-6 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 cursor-pointer",
-            hasAccess
-              ? "hover:border-primary/60 hover:shadow-md focus-visible:ring-primary/40"
-              : "focus-visible:ring-destructive/30",
-            isLocked && "opacity-80",
-            isCheckingAccess && "cursor-progress",
-          );
+      {/* Stripe divider */}
+      <div className="stripe-divider" />
 
-          const bodyContent = (
-            <>
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="font-heading font-semibold text-lg text-foreground">
-                    {card.title}
-                  </h3>
-                  {isLocked && (
-                    <Badge
-                      variant="outline"
-                      className="flex items-center gap-1 border-border/60 text-muted-foreground"
-                    >
-                      <Lock aria-hidden className="h-3 w-3" />
-                      Locked
-                    </Badge>
-                  )}
+      {/* Activity Cards */}
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+        {activityCards.map(card => (
+          <Card key={card.title} className="shadow-sm">
+            <CardHeader className="pb-3" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
+              <CardTitle
+                className="text-sm font-semibold uppercase tracking-[0.1em]"
+                style={{ fontFamily: "var(--font-heading)" }}
+              >
+                {card.title}
+              </CardTitle>
+              <CardDescription className="text-xs">{card.description}</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-4">
+              <div className="text-center py-6">
+                <div
+                  className="h-11 w-11 rounded flex items-center justify-center mx-auto mb-3"
+                  style={{ background: card.iconBg }}
+                >
+                  <card.icon className="h-5 w-5" style={{ color: card.accent }} />
                 </div>
-                <p className="text-sm text-muted-foreground">{card.description}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed max-w-[200px] mx-auto">
+                  {card.empty}
+                </p>
               </div>
-              <div className="mt-auto text-sm font-medium text-muted-foreground">
-                {isCheckingAccess ? (
-                  <span className="text-muted-foreground/70">Checking access…</span>
-                ) : hasAccess ? (
-                  <span className="text-primary">Enter module →</span>
-                ) : (
-                  <span>Requires additional permissions</span>
-                )}
+              <div className="space-y-2">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-4/5" />
+                <Skeleton className="h-3 w-3/5" />
               </div>
-            </>
-          );
-
-          if (hasAccess) {
-            return (
-              <Link key={card.key} to={card.href} className={cardClasses}>
-                {bodyContent}
-              </Link>
-            );
-          }
-
-          return (
-            <button
-              key={card.key}
-              type="button"
-              className={cardClasses}
-              onClick={() => {
-                if (!isCheckingAccess) {
-                  showAccessDenied();
-                }
-              }}
-              disabled={isCheckingAccess}
-              aria-disabled={isCheckingAccess}
-            >
-              {bodyContent}
-            </button>
-          );
-        })}
+            </CardContent>
+          </Card>
+        ))}
       </div>
     </div>
-  );
+  )
 }

@@ -1,244 +1,189 @@
-import { useEffect, type MouseEvent as ReactMouseEvent } from "react";
-import { NavLink } from "react-router-dom";
-import { useUserPermissions } from "@/hooks/useUserPermissions";
-import { useIsSuperAdmin } from "@/features/auth";
-import logoAsset from "@/shared/assets/skyshare-logo.png";
-import { isDevBypassActive } from "@/shared/lib/env";
-import { cn } from "@/shared/lib/utils";
-import { showAccessDenied } from "@/shared/ui/access-denied-dialog";
+import { NavLink, useLocation } from "react-router-dom"
 import {
   Home,
   Plane,
   CheckSquare,
-  Calendar,
+  CalendarClock,
   ClipboardList,
   Settings,
   Users,
   Bell,
-  Palette,
   FileText,
-  Wrench,
   BookOpen,
-  FolderOpen,
+  Kanban,
   MessageSquare,
   Building,
-} from "lucide-react";
-
+  ShieldCheck,
+  GraduationCap,
+} from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSkeleton,
   useSidebar,
-} from "@/shared/ui/sidebar";
+} from "@/shared/ui/sidebar"
+import { useAuth } from "@/features/auth"
+import { cn } from "@/shared/lib/utils"
+import logoAsset from "@/shared/assets/skyshare-logo.png"
 
 const sidebarSections = [
   {
     title: "Overview",
-    permission: "Overview" as const,
     items: [
       { name: "Dashboard", path: "/app", icon: Home, exact: true },
-      { name: "Aircraft Info", path: "/app/under-construction", icon: Plane },
+      { name: "Aircraft Info", path: "/app/aircraft", icon: Plane },
       { name: "AI Assistant", path: "/app/ai-assistant", icon: MessageSquare },
     ],
   },
   {
     title: "Operations",
-    permission: "Operations" as const,
     items: [
-      { name: "Aircraft Conformity", path: "/app/under-construction", icon: CheckSquare },
-      { name: "14-Day Check", path: "/app/under-construction", icon: Calendar },
-      { name: "Maintenance Planning", path: "/app/under-construction", icon: ClipboardList },
-      { name: "Ten or More", path: "/app/under-construction", icon: Wrench },
+      { name: "Aircraft Conformity", path: "/app/conformity", icon: CheckSquare },
+      { name: "14-Day Check", path: "/app/14-day-check", icon: CalendarClock },
+      { name: "Maintenance Planning", path: "/app/planning", icon: ClipboardList },
+      { name: "Ten or More", path: "/app/ten-or-more", icon: ShieldCheck },
       { name: "Terminal-OGD", path: "/app/terminal-ogd", icon: Building },
-      { name: "Maintenance Control", path: "/app/under-construction", icon: Settings },
-      { name: "Projects", path: "/app/under-construction", icon: FolderOpen },
-      { name: "Training", path: "/app/under-construction", icon: BookOpen },
-      { name: "Docs and Links", path: "/app/under-construction", icon: FileText },
+      { name: "Projects", path: "/app/projects", icon: Kanban },
+      { name: "Training", path: "/app/training", icon: GraduationCap },
+      { name: "Docs & Links", path: "/app/docs", icon: FileText },
     ],
   },
   {
     title: "Administration",
-    permission: "Administration" as const,
+    adminOnly: true,
     items: [
-      { name: "Alerts & Notifications", path: "/app/under-construction", icon: Bell },
       { name: "Users", path: "/app/admin/users", icon: Users },
-      { name: "Settings", path: "/app/under-construction", icon: Settings },
+      { name: "Alerts & Notifications", path: "/app/admin/alerts", icon: Bell },
+      { name: "Settings", path: "/app/admin/settings", icon: Settings },
     ],
   },
-  {
-    title: "Development",
-    permission: "Development" as const,
-    items: [
-      { name: "Style Guide", path: "/app/under-construction", icon: Palette },
-    ],
-  },
-];
-
-const SAFE_SECTION_PERMISSIONS = new Set<
-  (typeof sidebarSections)[number]["permission"]
->(["Overview"]);
-
-type SidebarSection = (typeof sidebarSections)[number];
-type SidebarItem = SidebarSection["items"][number];
-type SectionPermissionState = "granted" | "denied" | "loading";
-type SidebarSectionWithAccess = SidebarSection & {
-  items: Array<SidebarItem & { canNavigate: boolean }>;
-  permissionState: SectionPermissionState;
-};
+]
 
 export function AppSidebar() {
-  const { state } = useSidebar();
-  const { hasPermission, loading } = useUserPermissions();
-  const { isSuper: isSuperAdmin } = useIsSuperAdmin();
-  const devBypassActive = isDevBypassActive();
+  const { state } = useSidebar()
+  const location = useLocation()
+  const { profile } = useAuth()
+  const collapsed = state === "collapsed"
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!devBypassActive && localStorage.getItem("dev-bypass")) {
-      localStorage.removeItem("dev-bypass");
-    }
-  }, [devBypassActive]);
-
-  const getNavCls = (isActive: boolean, canNavigate: boolean) =>
-    cn(
-      isActive
-        ? "bg-sidebar-active text-white font-medium"
-        : "text-sidebar-foreground hover:bg-sidebar-hover",
-      !canNavigate && "text-sidebar-foreground/50 hover:bg-transparent cursor-not-allowed",
-    );
-
-  const handleDeniedNavigation = (
-    event: ReactMouseEvent<HTMLAnchorElement>,
-    canNavigate: boolean,
-  ) => {
-    if (canNavigate) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    showAccessDenied();
-  };
-
-  const getSectionPermissionState = (
-    section: SidebarSection,
-  ): SectionPermissionState => {
-    if (devBypassActive) return "granted";
-    if (SAFE_SECTION_PERMISSIONS.has(section.permission)) return "granted";
-    if (loading) return "loading";
-    return hasPermission(section.permission) ? "granted" : "denied";
-  };
-
-  const processedSections: SidebarSectionWithAccess[] = sidebarSections
-    .map(section => {
-      const permissionState = getSectionPermissionState(section);
-
-      const itemsWithAccess = section.items.map(item => {
-        const requiresSuperAdmin = item.path === "/app/admin/users";
-        const canNavigate =
-          devBypassActive ||
-          SAFE_SECTION_PERMISSIONS.has(section.permission) ||
-          (permissionState === "granted" && (!requiresSuperAdmin || isSuperAdmin));
-
-        return { ...item, canNavigate };
-      });
-
-      return {
-        ...section,
-        items: itemsWithAccess,
-        permissionState,
-      };
-    })
-    .filter(section => section.items.length > 0);
+  const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
+  const visibleSections = sidebarSections.filter(s => !s.adminOnly || isAdmin)
 
   return (
-    <Sidebar className="bg-sidebar-bg border-r border-sidebar-hover">
-      <SidebarContent>
-        {/* Logo Area */}
-        <div className="px-4 py-4 border-b border-sidebar-hover">
-          <div className="flex items-center">
-            {state !== "collapsed" ? (
-              <>
-                <img
-                  src={logoAsset}
-                  alt="SkyShare Maintenance Portal" 
-                  className="h-6 w-auto object-contain select-none filter brightness-0 invert"
-                  draggable={false}
-                  onError={(e) => {
-                    // Fallback to text if image fails to load
-                    e.currentTarget.style.display = 'none';
-                    e.currentTarget.nextElementSibling!.classList.remove('sr-only');
-                  }}
-                />
-                <span className="sr-only font-heading font-bold text-sidebar-foreground">SkyShare Maintenance Portal</span>
-              </>
-            ) : (
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-sm">S</span>
-              </div>
+    <Sidebar
+      className="border-r-0"
+      style={{ background: "hsl(0 0% 9%)" }}
+    >
+      <SidebarContent className="gap-0">
+
+        {/* Logo block */}
+        <div
+          className="flex flex-col items-center justify-center py-6 px-4 gap-2"
+          style={{ borderBottom: "1px solid hsl(0 0% 14%)" }}
+        >
+          <img
+            src={logoAsset}
+            alt="SkyShare"
+            className={cn(
+              "object-contain select-none brightness-0 invert opacity-85",
+              collapsed ? "h-6 w-auto" : "h-10 w-auto"
             )}
-          </div>
+            draggable={false}
+          />
+          {!collapsed && (
+            <span
+              className="text-[9px] font-semibold tracking-[0.3em] uppercase"
+              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+            >
+              Maintenance
+            </span>
+          )}
         </div>
 
-        {/* Navigation */}
-        <div className="flex-1 p-4 space-y-6">
-          {processedSections.map(section => {
-            const showSkeleton =
-              section.permissionState === "loading" &&
-              !SAFE_SECTION_PERMISSIONS.has(section.permission);
+        {/* Stripe divider */}
+        <div className="stripe-divider" />
 
-            return (
-              <SidebarGroup key={section.title}>
-                <SidebarGroupLabel className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wide">
+        {/* Nav sections */}
+        <div className="flex-1 overflow-y-auto py-3">
+          {visibleSections.map((section, sectionIdx) => (
+            <SidebarGroup key={section.title} className={cn("px-2", sectionIdx > 0 && "mt-4")}>
+
+              {/* Section label */}
+              {!collapsed && (
+                <p
+                  className="text-[9px] font-bold tracking-[0.25em] uppercase px-3 mb-1.5"
+                  style={{
+                    color: "var(--skyshare-gold)",
+                    fontFamily: "var(--font-heading)",
+                    opacity: 0.6,
+                  }}
+                >
                   {section.title}
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {showSkeleton
-                      ? section.items.map((_, index) => (
-                          <SidebarMenuItem key={`${section.title}-skeleton-${index}`}>
-                            <SidebarMenuSkeleton showIcon aria-hidden="true" />
-                          </SidebarMenuItem>
-                        ))
-                      : section.items.map(item => (
-                          <SidebarMenuItem key={item.name}>
-                            <SidebarMenuButton asChild>
-                              <NavLink
-                                to={item.path}
-                                className={({ isActive }) =>
-                                  getNavCls(isActive, item.canNavigate)
-                                }
-                                end={Boolean(item.exact)}
-                                aria-disabled={!item.canNavigate}
-                                data-disabled={item.canNavigate ? undefined : true}
-                                onClick={event =>
-                                  handleDeniedNavigation(event, item.canNavigate)
-                                }
-                                onAuxClick={event =>
-                                  handleDeniedNavigation(event, item.canNavigate)
-                                }
-                              >
-                                <item.icon className="w-4 h-4 flex-shrink-0" />
-                                {state !== "collapsed" && (
-                                  <span className="truncate">{item.name}</span>
-                                )}
-                              </NavLink>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ))}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            );
-          })}
+                </p>
+              )}
+
+              <SidebarGroupContent>
+                <SidebarMenu className="space-y-0.5">
+                  {section.items.map(item => {
+                    const isActive = item.exact
+                      ? location.pathname === item.path
+                      : location.pathname.startsWith(item.path)
+
+                    return (
+                      <SidebarMenuItem key={item.name}>
+                        <SidebarMenuButton asChild tooltip={collapsed ? item.name : undefined}>
+                          <NavLink
+                            to={item.path}
+                            end={Boolean(item.exact)}
+                            className={cn(
+                              "sidebar-link-active flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
+                              collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
+                              isActive
+                                ? "text-white bg-[rgba(212,160,23,0.1)] font-medium"
+                                : "text-white/45 hover:text-white/80 hover:bg-white/[0.04] font-normal"
+                            )}
+                            style={isActive ? { fontFamily: "var(--font-heading)", letterSpacing: "0.02em" } : {}}
+                          >
+                            <item.icon
+                              className={cn(
+                                "flex-shrink-0",
+                                collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]",
+                                isActive ? "text-[var(--skyshare-gold)]" : ""
+                              )}
+                            />
+                            {!collapsed && (
+                              <span className="truncate tracking-wide">{item.name}</span>
+                            )}
+                          </NavLink>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
         </div>
       </SidebarContent>
+
+      {/* Footer */}
+      <SidebarFooter
+        className="px-4 py-3"
+        style={{ borderTop: "1px solid hsl(0 0% 14%)" }}
+      >
+        {!collapsed && (
+          <p
+            className="text-[9px] tracking-[0.2em] uppercase"
+            style={{ color: "hsl(0 0% 28%)", fontFamily: "var(--font-heading)" }}
+          >
+            SkyShare MX · v1.0
+          </p>
+        )}
+      </SidebarFooter>
     </Sidebar>
-  );
+  )
 }
