@@ -53,6 +53,7 @@ export default function AuthCallback() {
             .from("profiles")
             .update({ status: "Active", last_login: new Date().toISOString() })
             .eq("user_id", session.user.id)
+          sessionStorage.setItem("oauth_transition", "1")
           navigate("/app", { replace: true })
           return
         }
@@ -73,13 +74,12 @@ export default function AuthCallback() {
         .update({ last_login: new Date().toISOString() })
         .eq("user_id", session.user.id)
 
+      sessionStorage.setItem("oauth_transition", "1")
       navigate("/app", { replace: true })
     })
   }, [navigate])
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-muted-foreground text-sm">Signing you in…</div>
-    </div>
-  )
+  // Plain dark background only — AuthTransitionScreen is owned by ProtectedRoute
+  // to ensure the animation plays exactly once after navigation completes.
+  return <div style={{ position: "fixed", inset: 0, background: "#1a1a1a" }} />
 }

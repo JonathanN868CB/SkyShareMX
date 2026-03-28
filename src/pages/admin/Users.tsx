@@ -1,16 +1,15 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   Users, UserPlus, CheckCircle, XCircle, MoreHorizontal,
-  Shield, Clock, AlertTriangle, Copy, RefreshCw,
+  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
 import { APP_ROLES, APP_SECTIONS, type Profile, type AccessRequest, type AppRole, type UserStatus, type AppSection } from "@/entities/supabase"
 import { useAuth } from "@/features/auth"
 import { Button } from "@/shared/ui/button"
-import { Badge } from "@/shared/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs"
 import { Avatar, AvatarFallback } from "@/shared/ui/avatar"
@@ -20,6 +19,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/shared/ui/dialog"
 import { Switch } from "@/shared/ui/switch"
 import { Label } from "@/shared/ui/label"
+import { Textarea } from "@/shared/ui/textarea"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -319,6 +319,272 @@ function ApproveDialog({
   )
 }
 
+// ─── Invite Dialog ────────────────────────────────────────────────────────────
+
+const ALLOWED_DOMAIN = "skyshare.com"
+
+function parseEmails(raw: string): string[] {
+  return raw
+    .split(/[\n,;]+/)
+    .map(e => e.trim().toLowerCase())
+    .filter(e => e.length > 0)
+}
+
+function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { profile: me, session } = useAuth()
+  const [raw, setRaw] = useState("")
+  const [role, setRole] = useState<AppRole>("Technician")
+  const [sending, setSending] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (open) { setRaw(""); setRole("Technician") }
+  }, [open])
+
+  const emails = parseEmails(raw)
+  const invalid = emails.filter(e => !e.endsWith(`@${ALLOWED_DOMAIN}`))
+  const valid   = emails.filter(e => e.endsWith(`@${ALLOWED_DOMAIN}`))
+  const canSend = valid.length > 0 && invalid.length === 0 && !sending
+
+  const send = async () => {
+    if (!canSend || !session?.access_token) return
+    setSending(true)
+    let failed = 0
+    for (const email of valid) {
+      try {
+        const res = await fetch("/.netlify/functions/send-invite", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            email,
+            role,
+            invitedByName: me?.full_name ?? me?.email ?? "A SkyShare admin",
+            siteUrl: window.location.origin,
+          }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          console.error("Invite failed for", email, body)
+          failed++
+        }
+      } catch (e) {
+        console.error("Invite error for", email, e)
+        failed++
+      }
+    }
+    setSending(false)
+    if (failed === 0) {
+      toast.success(valid.length === 1
+        ? `Invite sent to ${valid[0]}`
+        : `${valid.length} invites sent`)
+      onClose()
+    } else {
+      toast.error(`${failed} of ${valid.length} invites failed — check console`)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent
+        className="max-w-md"
+        style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        {/* Gold stripe top */}
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "4px 4px 0 0", marginTop: "-1px", marginLeft: "-1px", marginRight: "-1px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+
+        <DialogHeader>
+          <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
+            Invite Team Members
+          </DialogTitle>
+          <DialogDescription className="text-white/40 text-xs" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
+            Only @{ALLOWED_DOMAIN} addresses are permitted
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          {/* Email input */}
+          <div className="space-y-1.5">
+            <Label
+              className="text-[10px] uppercase tracking-widest text-white/40"
+              style={{ fontFamily: "var(--font-heading)" }}
+            >
+              Email Addresses
+            </Label>
+            <Textarea
+              ref={textareaRef}
+              placeholder={`name@${ALLOWED_DOMAIN}\nname2@${ALLOWED_DOMAIN}`}
+              value={raw}
+              onChange={e => setRaw(e.target.value)}
+              rows={4}
+              className="resize-none text-sm text-white/80 placeholder:text-white/20"
+              style={{
+                background: "hsl(0 0% 10%)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                fontFamily: "var(--font-body)",
+              }}
+            />
+            <p className="text-[11px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
+              Paste one or multiple emails, separated by comma or newline
+            </p>
+          </div>
+
+          {/* Validation feedback */}
+          {invalid.length > 0 && (
+            <div
+              className="rounded px-3 py-2 text-xs text-red-400 space-y-0.5"
+              style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}
+            >
+              <p className="font-semibold uppercase tracking-wider text-[10px]" style={{ fontFamily: "var(--font-heading)" }}>
+                Invalid — not @{ALLOWED_DOMAIN}:
+              </p>
+              {invalid.map(e => <p key={e}>{e}</p>)}
+            </div>
+          )}
+
+          {valid.length > 0 && invalid.length === 0 && (
+            <div
+              className="rounded px-3 py-2 text-xs text-emerald-400 space-y-0.5"
+              style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)" }}
+            >
+              <p className="font-semibold uppercase tracking-wider text-[10px]" style={{ fontFamily: "var(--font-heading)" }}>
+                {valid.length} valid {valid.length === 1 ? "address" : "addresses"}:
+              </p>
+              {valid.map(e => <p key={e}>{e}</p>)}
+            </div>
+          )}
+
+          {/* Role selector */}
+          <div className="space-y-1.5">
+            <Label
+              className="text-[10px] uppercase tracking-widest text-white/40"
+              style={{ fontFamily: "var(--font-heading)" }}
+            >
+              Assign Role
+            </Label>
+            <Select value={role} onValueChange={v => setRole(v as AppRole)}>
+              <SelectTrigger
+                className="text-sm text-white/80"
+                style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.1)" }}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                {APP_ROLES.filter(r => r !== "Super Admin").map(r => (
+                  <SelectItem key={r} value={r} className="text-white/80 focus:bg-white/10 focus:text-white">
+                    {r}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} className="text-white/40 hover:text-white/60">
+            Cancel
+          </Button>
+          <Button
+            onClick={send}
+            disabled={!canSend}
+            className="gap-2"
+            style={{
+              background: canSend ? "var(--skyshare-gold)" : "rgba(212,160,23,0.3)",
+              color: canSend ? "hsl(0 0% 8%)" : "rgba(0,0,0,0.4)",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            <Send className="h-3.5 w-3.5" />
+            {sending ? "Sending…" : `Send ${valid.length > 1 ? `${valid.length} Invites` : "Invite"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Remove User Dialog ───────────────────────────────────────────────────────
+
+function RemoveUserDialog({
+  user,
+  open,
+  onClose,
+}: {
+  user: Profile | null
+  open: boolean
+  onClose: () => void
+}) {
+  const { session } = useAuth()
+  const qc = useQueryClient()
+  const [removing, setRemoving] = useState(false)
+
+  const remove = async () => {
+    if (!user || !session?.access_token) return
+    setRemoving(true)
+    try {
+      const res = await fetch(`/.netlify/functions/users-admin?id=${user.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? "Failed to remove user")
+      }
+      toast.success(`${user.full_name ?? user.email} has been removed`)
+      qc.invalidateQueries({ queryKey: ["admin-users"] })
+      onClose()
+    } catch (e: any) {
+      toast.error(e.message ?? "Failed to remove user")
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent
+        className="max-w-sm"
+        style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(239,68,68,0.2)" }}
+      >
+        <DialogHeader>
+          <DialogTitle
+            className="text-red-400"
+            style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}
+          >
+            Remove User
+          </DialogTitle>
+          <DialogDescription className="text-white/40">
+            This will permanently delete <strong className="text-white/70">{user?.full_name ?? user?.email}</strong> from the system. They will lose all access immediately.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} className="text-white/40 hover:text-white/60">
+            Cancel
+          </Button>
+          <Button
+            onClick={remove}
+            disabled={removing}
+            className="gap-2"
+            style={{
+              background: "rgba(239,68,68,0.15)",
+              color: "#f87171",
+              border: "1px solid rgba(239,68,68,0.3)",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {removing ? "Removing…" : "Remove User"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
@@ -327,6 +593,8 @@ export default function UsersPage() {
 
   const [approveTarget, setApproveTarget] = useState<AccessRequest | null>(null)
   const [permTarget, setPermTarget] = useState<Profile | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
+  const [inviteOpen, setInviteOpen] = useState(false)
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -461,13 +729,10 @@ export default function UsersPage() {
             size="sm"
             className="gap-2 text-xs uppercase tracking-wider border-0"
             style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)" }}
-            onClick={() => {
-              navigator.clipboard.writeText(window.location.origin)
-              toast.success("Link copied — share it with your team")
-            }}
+            onClick={() => setInviteOpen(true)}
           >
-            <Copy className="h-3.5 w-3.5" />
-            Copy Invite Link
+            <Mail className="h-3.5 w-3.5" />
+            Invite Member
           </Button>
         </div>
 
@@ -559,6 +824,14 @@ export default function UsersPage() {
                               >
                                 <Shield className="h-3.5 w-3.5" /> Manage Permissions
                               </DropdownMenuItem>
+                              {user.status === "Pending" && (
+                                <DropdownMenuItem
+                                  className="focus:bg-white/10 cursor-pointer gap-2 text-[var(--skyshare-gold)]"
+                                  onClick={() => setInviteOpen(true)}
+                                >
+                                  <Send className="h-3.5 w-3.5" /> Re-send Invite
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuSeparator className="bg-white/10" />
                               {user.status !== "Active" && (
                                 <DropdownMenuItem
@@ -584,6 +857,13 @@ export default function UsersPage() {
                                   <XCircle className="h-3.5 w-3.5 mr-2" /> Deactivate
                                 </DropdownMenuItem>
                               )}
+                              <DropdownMenuSeparator className="bg-white/10" />
+                              <DropdownMenuItem
+                                className="focus:bg-red-500/10 cursor-pointer text-red-400 gap-2"
+                                onClick={() => setRemoveTarget(user)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" /> Remove User
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}
@@ -691,6 +971,15 @@ export default function UsersPage() {
         user={permTarget}
         open={!!permTarget}
         onClose={() => setPermTarget(null)}
+      />
+      <InviteDialog
+        open={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+      />
+      <RemoveUserDialog
+        user={removeTarget}
+        open={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
       />
     </div>
   )

@@ -34,13 +34,26 @@ export default function RequestAccess() {
       company: form.company.trim() || null,
       reason: form.reason.trim() || null,
     })
-    setLoading(false)
 
     if (dbError) {
+      setLoading(false)
       setError("Something went wrong. Please try again.")
       return
     }
 
+    // Notify admins — fire and forget, don't block the user on email failure
+    fetch("/.netlify/functions/send-access-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: form.email.toLowerCase().trim(),
+        fullName: form.full_name.trim() || null,
+        company: form.company.trim() || null,
+        reason: form.reason.trim() || null,
+      }),
+    }).catch(() => { /* silent — DB insert already succeeded */ })
+
+    setLoading(false)
     setSubmitted(true)
   }
 
