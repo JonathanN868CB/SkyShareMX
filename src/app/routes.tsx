@@ -8,6 +8,7 @@ const Login = lazy(() => import("@/pages/Login"))
 const AuthCallback = lazy(() => import("@/pages/AuthCallback"))
 const RequestAccess = lazy(() => import("@/pages/RequestAccess"))
 const Dashboard = lazy(() => import("@/pages/Dashboard"))
+const AdminUsers = lazy(() => import("@/pages/admin/Users"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -52,6 +53,10 @@ const routes: RouteObject[] = [
       {
         index: true,
         element: wrap(<Dashboard />),
+      },
+      {
+        path: "admin/users",
+        element: wrap(<AdminUsers />),
       },
       {
         path: "*",

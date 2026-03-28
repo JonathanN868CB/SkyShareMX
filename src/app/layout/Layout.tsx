@@ -16,7 +16,7 @@ export function Layout() {
             <SidebarTrigger className="text-white/40 hover:text-white/80 transition-colors" />
             <Topbar />
           </header>
-          <main className="flex-1 p-6 overflow-auto diagonal-stripes">
+          <main className="flex-1 p-6 overflow-auto">
             <div className="max-w-7xl mx-auto">
               <Outlet />
             </div>
