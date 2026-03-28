@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { supabase } from "@/lib/supabase"
 import { isAllowedEmail } from "@/shared/lib/env"
-import { AuthTransitionScreen } from "@/app/AuthTransitionScreen"
 
 export default function AuthCallback() {
   const navigate = useNavigate()
@@ -80,5 +79,7 @@ export default function AuthCallback() {
     })
   }, [navigate])
 
-  return <AuthTransitionScreen />
+  // Plain dark background only — AuthTransitionScreen is owned by ProtectedRoute
+  // to ensure the animation plays exactly once after navigation completes.
+  return <div style={{ position: "fixed", inset: 0, background: "#1a1a1a" }} />
 }
