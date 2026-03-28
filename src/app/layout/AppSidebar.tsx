@@ -9,7 +9,6 @@ import {
   Users,
   Bell,
   FileText,
-  BookOpen,
   Kanban,
   MessageSquare,
   Building,
@@ -82,7 +81,7 @@ export function AppSidebar() {
 
         {/* Logo block */}
         <div
-          className="flex flex-col items-center justify-center py-6 px-4 gap-2"
+          className="flex flex-col items-center justify-center pt-6 pb-4 px-4 gap-2"
           style={{ borderBottom: "1px solid hsl(0 0% 14%)" }}
         >
           <img
@@ -95,37 +94,45 @@ export function AppSidebar() {
             draggable={false}
           />
           {!collapsed && (
-            <span
-              className="text-[9px] font-semibold tracking-[0.3em] uppercase"
-              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
-            >
-              Maintenance
-            </span>
+            <>
+              <span
+                className="text-[9px] font-semibold tracking-[0.3em] uppercase"
+                style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+              >
+                Maintenance
+              </span>
+              {/* Gold rule under MAINTENANCE label */}
+              <div
+                className="w-8 mt-0.5"
+                style={{ height: "1px", background: "var(--skyshare-gold)", opacity: 0.5 }}
+              />
+            </>
           )}
         </div>
 
-        {/* Stripe divider */}
+        {/* Crimson→navy stripe */}
         <div className="stripe-divider" />
 
-        {/* Nav sections */}
+        {/* Nav */}
         <div className="flex-1 overflow-y-auto py-3">
-          {visibleSections.map((section, sectionIdx) => (
-            <SidebarGroup key={section.title} className={cn("px-2", sectionIdx > 0 && "mt-4")}>
-
-              {/* Section label */}
+          {visibleSections.map((section, idx) => (
+            <SidebarGroup key={section.title} className={cn("px-2", idx > 0 && "mt-4")}>
               {!collapsed && (
                 <p
-                  className="text-[9px] font-bold tracking-[0.25em] uppercase px-3 mb-1.5"
+                  className="px-3 mb-1.5"
                   style={{
-                    color: "var(--skyshare-gold)",
                     fontFamily: "var(--font-heading)",
-                    opacity: 0.6,
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    letterSpacing: "0.2em",
+                    textTransform: "uppercase",
+                    color: "var(--skyshare-gold)",
+                    opacity: 0.55,
                   }}
                 >
                   {section.title}
                 </p>
               )}
-
               <SidebarGroupContent>
                 <SidebarMenu className="space-y-0.5">
                   {section.items.map(item => {
@@ -140,20 +147,24 @@ export function AppSidebar() {
                             to={item.path}
                             end={Boolean(item.exact)}
                             className={cn(
-                              "sidebar-link-active flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
+                              "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
                               collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
                               isActive
-                                ? "text-white bg-[rgba(212,160,23,0.1)] font-medium"
-                                : "text-white/45 hover:text-white/80 hover:bg-white/[0.04] font-normal"
+                                ? "active text-white font-medium"
+                                : "text-white/45 hover:text-white/80 font-normal"
                             )}
-                            style={isActive ? { fontFamily: "var(--font-heading)", letterSpacing: "0.02em" } : {}}
+                            style={isActive ? {
+                              background: "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
+                              fontFamily: "var(--font-heading)",
+                              letterSpacing: "0.02em",
+                            } : {}}
                           >
                             <item.icon
                               className={cn(
                                 "flex-shrink-0",
                                 collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]",
-                                isActive ? "text-[var(--skyshare-gold)]" : ""
                               )}
+                              style={isActive ? { color: "var(--skyshare-gold)" } : {}}
                             />
                             {!collapsed && (
                               <span className="truncate tracking-wide">{item.name}</span>
@@ -170,7 +181,6 @@ export function AppSidebar() {
         </div>
       </SidebarContent>
 
-      {/* Footer */}
       <SidebarFooter
         className="px-4 py-3"
         style={{ borderTop: "1px solid hsl(0 0% 14%)" }}
