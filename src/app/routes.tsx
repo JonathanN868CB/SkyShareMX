@@ -10,10 +10,12 @@ const Login = lazy(() => import("@/pages/Login"))
 const AuthCallback = lazy(() => import("@/pages/AuthCallback"))
 const RequestAccess = lazy(() => import("@/pages/RequestAccess"))
 const Dashboard = lazy(() => import("@/pages/Dashboard"))
-const AdminUsers = lazy(() => import("@/pages/admin/Users"))
+const AdminUsers     = lazy(() => import("@/pages/admin/Users"))
+const AdminTraining  = lazy(() => import("@/pages/admin/AdminTraining"))
 const PermissionsIndex = lazy(() => import("@/pages/admin/PermissionsIndex"))
 const AccessRestricted = lazy(() => import("@/pages/AccessRestricted"))
 const AircraftInfo = lazy(() => import("@/pages/AircraftInfo"))
+const MyTraining   = lazy(() => import("@/pages/training/MyTraining"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -68,11 +70,15 @@ const routes: RouteObject[] = [
       { path: "ten-or-more", element: wrap(<ComingSoon name="Ten or More" />) },
       { path: "terminal-ogd", element: wrap(<ComingSoon name="Terminal-OGD" />) },
       { path: "projects",    element: wrap(<ComingSoon name="Projects" />) },
-      { path: "training",    element: wrap(<ComingSoon name="Training" />) },
+      { path: "training",    element: wrap(<MyTraining />) },
       { path: "docs",        element: wrap(<ComingSoon name="Docs & Links" />) },
       {
         path: "admin/users",
         element: wrap(<AdminUsers />),
+      },
+      {
+        path: "admin/training",
+        element: wrap(<AdminTraining />),
       },
       {
         path: "admin/permissions",

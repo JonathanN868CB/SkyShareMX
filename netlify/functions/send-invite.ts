@@ -258,13 +258,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
       const DEFAULT_SECTIONS = [
         "Dashboard",
         "Aircraft Info",
-        "AI Assistant",
-        "Training",
-        "Docs & Links",
       ] as const;
 
-      await adminClient.from("user_permissions").insert(
-        DEFAULT_SECTIONS.map(section => ({ user_id: newProfile.id, section }))
+      // Upsert so the DB trigger's pre-seeded rows are never double-inserted.
+      await adminClient.from("user_permissions").upsert(
+        DEFAULT_SECTIONS.map(section => ({ user_id: newProfile.id, section })),
+        { onConflict: "user_id,section", ignoreDuplicates: true }
       );
 
       // Profile was created Active by the DB trigger — set to Pending until

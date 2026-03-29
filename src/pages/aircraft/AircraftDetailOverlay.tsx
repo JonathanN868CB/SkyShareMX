@@ -8,6 +8,7 @@ import ProgramsEditorOverlay from "./ProgramsEditorOverlay"
 import IdentityEditorOverlay from "./IdentityEditorOverlay"
 import PropulsionEditorOverlay from "./PropulsionEditorOverlay"
 import DocumentationEditorOverlay from "./DocumentationEditorOverlay"
+import ExportModal from "./ExportModal"
 
 interface Props {
   aircraft: AircraftBase
@@ -1932,6 +1933,7 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
   const [showIdentityEditor,    setShowIdentityEditor]     = useState(false)
   const [showPropulsionEditor,     setShowPropulsionEditor]    = useState(false)
   const [showDocumentationEditor,  setShowDocumentationEditor] = useState(false)
+  const [showExportModal,           setShowExportModal]          = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
 
   const anyOverlayOpen = showAvionicsEditor || showProgramsEditor || showIdentityEditor || showPropulsionEditor || showDocumentationEditor
@@ -2011,6 +2013,20 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
               ← Fleet Directory
             </button>
             <div style={{ flex: 1 }} />
+            <button
+              onClick={() => setShowExportModal(true)}
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded transition-colors"
+              style={{
+                background: "rgba(212,160,23,0.08)",
+                color: "var(--skyshare-gold)",
+                border: "0.5px solid rgba(212,160,23,0.3)",
+                fontFamily: "var(--font-heading)",
+                letterSpacing: "0.08em",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.18)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}>
+              Export
+            </button>
             {isSuperAdmin && (
               <button
                 onClick={() => setShowPropulsionEditor(true)}
@@ -2149,6 +2165,13 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
           tailNumber={aircraft.tailNumber}
           onSave={handleDocumentationSave}
           onClose={() => setShowDocumentationEditor(false)}
+        />
+      )}
+      {showExportModal && (
+        <ExportModal
+          aircraft={aircraft}
+          detail={baseDetail}
+          onClose={() => setShowExportModal(false)}
         />
       )}
     </>

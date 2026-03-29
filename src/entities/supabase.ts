@@ -21,6 +21,9 @@ export type Database = {
           status: Database["public"]["Enums"]["user_status"]
           is_readonly: boolean
           last_login: string | null
+          training_sheet_file_id: string | null
+          training_refresh_token: string | null
+          training_last_refreshed: string | null
           created_at: string
           updated_at: string
         }
@@ -35,6 +38,9 @@ export type Database = {
           status?: Database["public"]["Enums"]["user_status"]
           is_readonly?: boolean
           last_login?: string | null
+          training_sheet_file_id?: string | null
+          training_refresh_token?: string | null
+          training_last_refreshed?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -49,6 +55,9 @@ export type Database = {
           status?: Database["public"]["Enums"]["user_status"]
           is_readonly?: boolean
           last_login?: string | null
+          training_sheet_file_id?: string | null
+          training_refresh_token?: string | null
+          training_last_refreshed?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -202,7 +211,4 @@ export const APP_SECTIONS: AppSection[] = [
 export const DEFAULT_PERMISSIONS: AppSection[] = [
   "Dashboard",
   "Aircraft Info",
-  "AI Assistant",
-  "Training",
-  "Docs & Links",
 ]
