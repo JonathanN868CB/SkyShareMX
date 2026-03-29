@@ -59,7 +59,7 @@ const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[
       { name: "Ten or More",          path: "/app/ten-or-more",   icon: ShieldCheck,   section: "Ten or More"         },
       { name: "Terminal-OGD",         path: "/app/terminal-ogd",  icon: Building,      section: "Terminal-OGD"        },
       { name: "Projects",             path: "/app/projects",      icon: Kanban,        section: "Projects"            },
-      { name: "Training",             path: "/app/training",      icon: GraduationCap, section: "Training"            },
+      { name: "My Training",           path: "/app/training",      icon: GraduationCap, section: "Training"            },
       { name: "Docs & Links",         path: "/app/docs",          icon: FileText,      section: "Docs & Links"        },
     ],
   },
@@ -67,7 +67,8 @@ const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[
     title: "Administration",
     adminOnly: true,
     items: [
-      { name: "Users",                  path: "/app/admin/users",       icon: Users,      section: "Dashboard" },
+      { name: "Users",                  path: "/app/admin/users",       icon: Users,       section: "Dashboard" },
+      { name: "Team Training",          path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
       { name: "Alerts & Notifications", path: "/app/admin/alerts",      icon: Bell,       section: "Dashboard" },
       { name: "Settings",               path: "/app/admin/settings",    icon: Settings,   section: "Dashboard" },
       { name: "Permissions Index",      path: "/app/admin/permissions", icon: ShieldCheck, section: "Dashboard", superAdminOnly: true },
