@@ -7,7 +7,7 @@ import {
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
-import { APP_ROLES, APP_SECTIONS, type Profile, type AccessRequest, type AppRole, type UserStatus, type AppSection } from "@/entities/supabase"
+import { APP_ROLES, APP_SECTIONS, type Profile, type AppRole, type UserStatus, type AppSection } from "@/entities/supabase"
 import { useAuth } from "@/features/auth"
 import { Button } from "@/shared/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
@@ -74,14 +74,6 @@ async function fetchProfiles(): Promise<Profile[]> {
   return data ?? []
 }
 
-async function fetchAccessRequests(): Promise<AccessRequest[]> {
-  const { data, error } = await supabase
-    .from("access_requests")
-    .select("*")
-    .order("created_at", { ascending: false })
-  if (error) throw error
-  return data ?? []
-}
 
 async function fetchUserPermissions(userId: string) {
   const { data, error } = await supabase
@@ -93,6 +85,26 @@ async function fetchUserPermissions(userId: string) {
 }
 
 // ─── Permissions Dialog ───────────────────────────────────────────────────────
+
+const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
+  {
+    label: "Overview",
+    items: ["Dashboard", "Aircraft Info", "AI Assistant"],
+  },
+  {
+    label: "Operations",
+    items: [
+      "Aircraft Conformity",
+      "14-Day Check",
+      "Maintenance Planning",
+      "Ten or More",
+      "Terminal-OGD",
+      "Projects",
+      "Training",
+      "Docs & Links",
+    ],
+  },
+]
 
 function PermissionsDialog({
   user,
@@ -108,7 +120,6 @@ function PermissionsDialog({
   const [grants, setGrants] = useState<AppSection[]>([])
   const [loaded, setLoaded] = useState(false)
 
-  // Load current permissions when dialog opens
   const { data: permData, isLoading } = useQuery({
     queryKey: ["user-permissions", user?.id],
     queryFn: () => fetchUserPermissions(user!.id),
@@ -119,9 +130,22 @@ function PermissionsDialog({
     if (permData) { setGrants(permData); setLoaded(true) }
   }, [permData])
 
+  useEffect(() => {
+    if (!open) setLoaded(false)
+  }, [open])
+
   const toggle = (section: AppSection) => {
     setGrants(prev =>
       prev.includes(section) ? prev.filter(s => s !== section) : [...prev, section]
+    )
+  }
+
+  const toggleGroup = (items: AppSection[]) => {
+    const allOn = items.every(s => grants.includes(s))
+    setGrants(prev =>
+      allOn
+        ? prev.filter(s => !items.includes(s))
+        : [...new Set([...prev, ...items])]
     )
   }
 
@@ -129,7 +153,6 @@ function PermissionsDialog({
     if (!user) return
     setSaving(true)
     try {
-      // Delete existing and re-insert
       const { error: delErr } = await supabase
         .from("user_permissions")
         .delete()
@@ -153,165 +176,119 @@ function PermissionsDialog({
     }
   }
 
-  const sectionDescriptions: Record<AppSection, string> = {
-    Overview:       "Dashboard, Aircraft Info, AI Assistant",
-    Operations:     "Conformity, Checks, Planning, Ten or More, Terminal, Projects, Training, Docs",
-    Administration: "Users, Alerts & Notifications, Settings",
-    Development:    "Style guide and developer tools",
-  }
-
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md" style={{ background: "hsl(0 0% 16%)", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <DialogContent
+        className="max-w-md"
+        style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        {/* Gold stripe */}
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "4px 4px 0 0", marginTop: "-1px", marginLeft: "-1px", marginRight: "-1px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
             Module Access
           </DialogTitle>
-          <DialogDescription className="text-white/40">
-            {user?.full_name ?? user?.email} — {user?.role}
+          <DialogDescription className="text-white/35" style={{ fontFamily: "var(--font-heading)", fontSize: "11px", letterSpacing: "0.08em" }}>
+            {user?.full_name ?? user?.email}
+            <span className="mx-2 opacity-30">·</span>
+            {user?.role}
           </DialogDescription>
         </DialogHeader>
 
         {isLoading || !loaded ? (
-          <div className="py-8 text-center text-white/30 text-sm">Loading…</div>
+          <div className="py-10 text-center text-white/25 text-sm">Loading permissions…</div>
         ) : (
-          <div className="space-y-3 py-2">
-            {APP_SECTIONS.map(section => (
-              <div
-                key={section}
-                className="flex items-start justify-between gap-4 rounded p-3"
-                style={{ background: "hsl(0 0% 12%)", border: "1px solid rgba(255,255,255,0.06)" }}
-              >
-                <div>
-                  <Label
-                    className="text-sm font-medium text-white/80 cursor-pointer"
-                    style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}
-                    htmlFor={`perm-${section}`}
-                  >
-                    {section}
-                  </Label>
-                  <p className="text-xs text-white/30 mt-0.5">{sectionDescriptions[section]}</p>
+          <div className="space-y-4 py-1 max-h-[60vh] overflow-y-auto pr-1">
+            {PERMISSION_GROUPS.map(group => {
+              const allOn = group.items.every(s => grants.includes(s))
+              const someOn = group.items.some(s => grants.includes(s))
+              return (
+                <div key={group.label}>
+                  {/* Group header with select-all toggle */}
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <span
+                      style={{
+                        fontFamily: "var(--font-heading)",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        letterSpacing: "0.2em",
+                        textTransform: "uppercase",
+                        color: "var(--skyshare-gold)",
+                        opacity: 0.7,
+                      }}
+                    >
+                      {group.label}
+                    </span>
+                    <button
+                      onClick={() => toggleGroup(group.items)}
+                      className="text-[10px] transition-colors"
+                      style={{
+                        fontFamily: "var(--font-heading)",
+                        letterSpacing: "0.1em",
+                        color: allOn ? "rgba(255,255,255,0.3)" : someOn ? "var(--skyshare-gold)" : "rgba(255,255,255,0.25)",
+                      }}
+                    >
+                      {allOn ? "DESELECT ALL" : "SELECT ALL"}
+                    </button>
+                  </div>
+
+                  {/* Items */}
+                  <div className="space-y-1.5">
+                    {group.items.map(section => (
+                      <div
+                        key={section}
+                        className="flex items-center justify-between gap-4 rounded px-3 py-2.5 transition-colors"
+                        style={{
+                          background: grants.includes(section)
+                            ? "rgba(212,160,23,0.07)"
+                            : "hsl(0 0% 11%)",
+                          border: grants.includes(section)
+                            ? "1px solid rgba(212,160,23,0.18)"
+                            : "1px solid rgba(255,255,255,0.05)",
+                        }}
+                      >
+                        <Label
+                          htmlFor={`perm-${section}`}
+                          className="cursor-pointer text-sm"
+                          style={{
+                            fontFamily: "var(--font-heading)",
+                            letterSpacing: "0.04em",
+                            color: grants.includes(section) ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.4)",
+                            fontSize: "12px",
+                          }}
+                        >
+                          {section}
+                        </Label>
+                        <Switch
+                          id={`perm-${section}`}
+                          checked={grants.includes(section)}
+                          onCheckedChange={() => toggle(section)}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <Switch
-                  id={`perm-${section}`}
-                  checked={grants.includes(section)}
-                  onCheckedChange={() => toggle(section)}
-                />
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="mt-2">
           <Button variant="ghost" onClick={onClose} className="text-white/40 hover:text-white/60">
             Cancel
           </Button>
           <Button
             onClick={save}
             disabled={saving || isLoading}
-            style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}
+            style={{
+              background: "var(--skyshare-gold)",
+              color: "hsl(0 0% 8%)",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.1em",
+            }}
           >
             {saving ? "Saving…" : "Save Permissions"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ─── Approve Dialog ───────────────────────────────────────────────────────────
-
-function ApproveDialog({
-  request,
-  open,
-  onClose,
-}: {
-  request: AccessRequest | null
-  open: boolean
-  onClose: () => void
-}) {
-  const qc = useQueryClient()
-  const [role, setRole] = useState<AppRole>("Technician")
-  const [saving, setSaving] = useState(false)
-
-  const approve = async () => {
-    if (!request) return
-    setSaving(true)
-    try {
-      // Update request status
-      const { error: reqErr } = await supabase
-        .from("access_requests")
-        .update({ status: "approved" })
-        .eq("id", request.id)
-      if (reqErr) throw reqErr
-
-      // If profile exists for this email, activate it with the chosen role
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("email", request.email)
-        .single()
-
-      if (profile) {
-        await supabase
-          .from("profiles")
-          .update({ status: "Active", role })
-          .eq("id", profile.id)
-        toast.success(`${request.full_name ?? request.email} is now active as ${role}`)
-      } else {
-        toast.success(`Request approved — ${request.email} will be activated on next sign-in`)
-      }
-
-      qc.invalidateQueries({ queryKey: ["access-requests"] })
-      qc.invalidateQueries({ queryKey: ["admin-users"] })
-      onClose()
-    } catch (e: any) {
-      toast.error(e.message ?? "Failed to approve request")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-sm" style={{ background: "hsl(0 0% 16%)", border: "1px solid rgba(255,255,255,0.08)" }}>
-        <DialogHeader>
-          <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
-            Approve Access
-          </DialogTitle>
-          <DialogDescription className="text-white/40">
-            Assign a role for {request?.full_name ?? request?.email}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="py-2 space-y-2">
-          <Label className="text-xs text-white/50 uppercase tracking-wider" style={{ fontFamily: "var(--font-heading)" }}>
-            Role
-          </Label>
-          <Select value={role} onValueChange={v => setRole(v as AppRole)}>
-            <SelectTrigger className="bg-[hsl(0_0%_12%)] border-white/10 text-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[hsl(0_0%_14%)] border-white/10">
-              {APP_ROLES.filter(r => r !== "Super Admin").map(r => (
-                <SelectItem key={r} value={r} className="text-white/80 focus:bg-white/10 focus:text-white">
-                  {r}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} className="text-white/40 hover:text-white/60">
-            Cancel
-          </Button>
-          <Button
-            onClick={approve}
-            disabled={saving}
-            style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}
-          >
-            {saving ? "Approving…" : "Approve"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -332,6 +309,7 @@ function parseEmails(raw: string): string[] {
 
 function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { profile: me, session } = useAuth()
+  const qc = useQueryClient()
   const [raw, setRaw] = useState("")
   const [role, setRole] = useState<AppRole>("Technician")
   const [sending, setSending] = useState(false)
@@ -347,7 +325,9 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
   const canSend = valid.length > 0 && invalid.length === 0 && !sending
 
   const send = async () => {
-    if (!canSend || !session?.access_token) return
+    if (!canSend) return
+    const { data: { session: freshSession } } = await supabase.auth.getSession()
+    if (!freshSession?.access_token) return
     setSending(true)
     let failed = 0
     for (const email of valid) {
@@ -356,7 +336,7 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${freshSession.access_token}`,
           },
           body: JSON.stringify({
             email,
@@ -380,6 +360,7 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
       toast.success(valid.length === 1
         ? `Invite sent to ${valid[0]}`
         : `${valid.length} invites sent`)
+      qc.invalidateQueries({ queryKey: ["admin-users"] })
       onClose()
     } else {
       toast.error(`${failed} of ${valid.length} invites failed — check console`)
@@ -522,12 +503,14 @@ function RemoveUserDialog({
   const [removing, setRemoving] = useState(false)
 
   const remove = async () => {
-    if (!user || !session?.access_token) return
+    if (!user) return
+    const { data: { session: freshSession } } = await supabase.auth.getSession()
+    if (!freshSession?.access_token) return
     setRemoving(true)
     try {
       const res = await fetch(`/.netlify/functions/users-admin?id=${user.user_id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: { Authorization: `Bearer ${freshSession.access_token}` },
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
@@ -591,7 +574,6 @@ export default function UsersPage() {
   const { profile: me } = useAuth()
   const qc = useQueryClient()
 
-  const [approveTarget, setApproveTarget] = useState<AccessRequest | null>(null)
   const [permTarget, setPermTarget] = useState<Profile | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -604,11 +586,6 @@ export default function UsersPage() {
     enabled: isAdmin,
   })
 
-  const { data: requests = [], isLoading: loadingRequests } = useQuery({
-    queryKey: ["access-requests"],
-    queryFn: fetchAccessRequests,
-    enabled: isAdmin,
-  })
 
   const updateRole = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: AppRole }) => {
@@ -623,9 +600,30 @@ export default function UsersPage() {
   })
 
   const updateStatus = useMutation({
-    mutationFn: async ({ userId, status }: { userId: string; status: UserStatus }) => {
+    mutationFn: async ({ userId, status, userEmail, userName }: {
+      userId: string; status: UserStatus; userEmail: string; userName: string
+    }) => {
       const { error } = await supabase.from("profiles").update({ status }).eq("id", userId)
       if (error) throw error
+      // Fire-and-forget status notification email — don't block on failure
+      if (["Active", "Inactive", "Suspended"].includes(status)) {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (!session) return
+          fetch("/.netlify/functions/send-status-notification", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              userEmail,
+              userName,
+              newStatus: status,
+              siteUrl: window.location.origin,
+            }),
+          }).catch(() => { /* silent */ })
+        })
+      }
     },
     onSuccess: (_, vars) => {
       toast.success(`User ${vars.status.toLowerCase()}`)
@@ -634,17 +632,28 @@ export default function UsersPage() {
     onError: (e: any) => toast.error(e.message ?? "Failed to update status"),
   })
 
-  const rejectRequest = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("access_requests").update({ status: "rejected" }).eq("id", id)
-      if (error) throw error
-    },
-    onSuccess: () => {
-      toast.success("Request rejected")
-      qc.invalidateQueries({ queryKey: ["access-requests"] })
-    },
-    onError: (e: any) => toast.error(e.message ?? "Failed to reject request"),
-  })
+  const pendingInvites = profiles.filter(p => p.status === "Pending")
+
+  async function resendInvite(user: Profile) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    try {
+      const res = await fetch("/.netlify/functions/send-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          email: user.email,
+          role: user.role,
+          invitedByName: me?.full_name ?? me?.email ?? "A SkyShare admin",
+          siteUrl: window.location.origin,
+        }),
+      })
+      if (res.ok) toast.success(`Invite resent to ${user.email}`)
+      else toast.error("Failed to resend invite")
+    } catch {
+      toast.error("Failed to resend invite")
+    }
+  }
 
   if (!isAdmin) {
     return (
@@ -661,13 +670,11 @@ export default function UsersPage() {
   const active    = profiles.filter(p => p.status === "Active").length
   const pending   = profiles.filter(p => p.status === "Pending").length
   const suspended = profiles.filter(p => p.status === "Suspended" || p.status === "Inactive").length
-  const newRequests = requests.filter(r => r.status === "new").length
-
   const statCards = [
-    { label: "Total Members", value: profiles.length, accent: "var(--skyshare-gold)", iconBg: "rgba(212,160,23,0.15)", icon: Users },
-    { label: "Active",        value: active,           accent: "var(--skyshare-success)", iconBg: "rgba(16,185,129,0.15)", icon: CheckCircle },
-    { label: "Pending",       value: pending,          accent: "var(--skyshare-warning)", iconBg: "rgba(212,160,23,0.15)", icon: Clock },
-    { label: "Access Requests", value: newRequests,    accent: "var(--skyshare-blue-mid)", iconBg: "rgba(70,100,129,0.2)", icon: UserPlus },
+    { label: "Total Members",   value: profiles.length,       accent: "var(--skyshare-gold)",     iconBg: "rgba(212,160,23,0.15)",  icon: Users       },
+    { label: "Active",          value: active,                accent: "var(--skyshare-success)",  iconBg: "rgba(16,185,129,0.15)",  icon: CheckCircle },
+    { label: "Suspended",       value: suspended,             accent: "hsl(0 72% 51%)",           iconBg: "rgba(220,38,38,0.15)",   icon: AlertTriangle },
+    { label: "Pending Invites", value: pendingInvites.length, accent: "var(--skyshare-blue-mid)", iconBg: "rgba(70,100,129,0.2)",   icon: Send        },
   ]
 
   return (
@@ -716,10 +723,10 @@ export default function UsersPage() {
               Team Members
             </TabsTrigger>
             <TabsTrigger value="requests" className="data-[state=active]:bg-[rgba(212,160,23,0.12)] data-[state=active]:text-[var(--skyshare-gold)]">
-              Access Requests
-              {newRequests > 0 && (
+              Pending Invites
+              {pendingInvites.length > 0 && (
                 <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)" }}>
-                  {newRequests}
+                  {pendingInvites.length}
                 </span>
               )}
             </TabsTrigger>
@@ -836,7 +843,7 @@ export default function UsersPage() {
                               {user.status !== "Active" && (
                                 <DropdownMenuItem
                                   className="focus:bg-white/10 cursor-pointer text-emerald-400"
-                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Active" })}
+                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Active", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
                                 >
                                   <CheckCircle className="h-3.5 w-3.5 mr-2" /> Activate
                                 </DropdownMenuItem>
@@ -844,7 +851,7 @@ export default function UsersPage() {
                               {user.status === "Active" && (
                                 <DropdownMenuItem
                                   className="focus:bg-white/10 cursor-pointer text-amber-400"
-                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Suspended" })}
+                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Suspended", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
                                 >
                                   <AlertTriangle className="h-3.5 w-3.5 mr-2" /> Suspend
                                 </DropdownMenuItem>
@@ -852,7 +859,7 @@ export default function UsersPage() {
                               {user.status !== "Inactive" && (
                                 <DropdownMenuItem
                                   className="focus:bg-white/10 cursor-pointer text-red-400"
-                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Inactive" })}
+                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Inactive", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
                                 >
                                   <XCircle className="h-3.5 w-3.5 mr-2" /> Deactivate
                                 </DropdownMenuItem>
@@ -876,18 +883,18 @@ export default function UsersPage() {
           </Card>
         </TabsContent>
 
-        {/* Access Requests Tab */}
+        {/* Pending Invites Tab */}
         <TabsContent value="requests">
           <Card className="card-elevated border-0">
-            {loadingRequests ? (
+            {loadingProfiles ? (
               <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
-            ) : requests.length === 0 ? (
-              <div className="py-16 text-center text-muted-foreground text-sm">No access requests</div>
+            ) : pendingInvites.length === 0 ? (
+              <div className="py-16 text-center text-muted-foreground text-sm">No pending invites</div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="border-white/[0.07] hover:bg-transparent">
-                    {["Applicant", "Company", "Reason", "Status", "Submitted", ""].map(h => (
+                    {["Invited User", "Role", "Invited", ""].map(h => (
                       <TableHead key={h} className="text-white/40" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase" }}>
                         {h}
                       </TableHead>
@@ -895,62 +902,53 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {requests.map(req => (
-                    <TableRow key={req.id} className="border-white/[0.05] hover:bg-white/[0.03]">
+                  {pendingInvites.map(user => (
+                    <TableRow key={user.id} className="border-white/[0.05] hover:bg-white/[0.03]">
 
-                      {/* Applicant */}
+                      {/* User */}
                       <TableCell>
-                        <p className="text-sm font-medium text-foreground">{req.full_name ?? "—"}</p>
-                        <p className="text-xs text-muted-foreground">{req.email}</p>
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="text-xs font-bold" style={{ background: "rgba(212,160,23,0.15)", color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+                              {getInitials(user.full_name, user.email)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{user.full_name ?? "—"}</p>
+                            <p className="text-xs text-muted-foreground">{user.email}</p>
+                          </div>
+                        </div>
                       </TableCell>
 
-                      {/* Company */}
-                      <TableCell className="text-sm text-muted-foreground">{req.company ?? "—"}</TableCell>
+                      {/* Role */}
+                      <TableCell><RoleBadge role={user.role} /></TableCell>
 
-                      {/* Reason */}
-                      <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{req.reason ?? "—"}</TableCell>
-
-                      {/* Status */}
-                      <TableCell>
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border tracking-wider uppercase ${
-                            req.status === "new"      ? "bg-amber-500/15 text-amber-400 border-amber-500/20" :
-                            req.status === "approved" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" :
-                            "bg-white/8 text-white/40 border-white/10"
-                          }`}
-                          style={{ fontFamily: "var(--font-heading)" }}
-                        >
-                          {req.status}
-                        </span>
-                      </TableCell>
-
-                      {/* Submitted */}
+                      {/* Invited date */}
                       <TableCell className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
+                        {formatDistanceToNow(new Date(user.created_at), { addSuffix: true })}
                       </TableCell>
 
                       {/* Actions */}
                       <TableCell>
-                        {req.status === "new" && (
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              className="h-7 text-xs gap-1 border-0"
-                              style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)" }}
-                              onClick={() => setApproveTarget(req)}
-                            >
-                              <CheckCircle className="h-3 w-3" /> Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                              onClick={() => rejectRequest.mutate(req.id)}
-                            >
-                              <XCircle className="h-3 w-3 mr-1" /> Reject
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs gap-1.5 text-[var(--skyshare-gold)] hover:bg-[rgba(212,160,23,0.1)]"
+                            style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}
+                            onClick={() => resendInvite(user)}
+                          >
+                            <Send className="h-3 w-3" /> Resend
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                            onClick={() => setRemoveTarget(user)}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" /> Remove
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -962,11 +960,6 @@ export default function UsersPage() {
       </Tabs>
 
       {/* Dialogs */}
-      <ApproveDialog
-        request={approveTarget}
-        open={!!approveTarget}
-        onClose={() => setApproveTarget(null)}
-      />
       <PermissionsDialog
         user={permTarget}
         open={!!permTarget}
