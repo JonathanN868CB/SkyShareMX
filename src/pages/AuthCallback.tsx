@@ -43,6 +43,21 @@ export default function AuthCallback() {
           .from("profiles")
           .update({ status: "Active", last_login: new Date().toISOString() })
           .eq("user_id", session.user.id)
+
+        // Fire-and-forget: notify admin of the new user via email
+        const meta = session.user.user_metadata ?? {}
+        fetch("/.netlify/functions/notify-admin-new-user", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            newUserEmail: email,
+            newUserName: (meta.full_name as string | undefined) ?? "",
+          }),
+        }).catch(() => {/* non-critical — swallow silently */})
+
         sessionStorage.setItem("oauth_transition", "1")
         navigate("/app", { replace: true })
         return

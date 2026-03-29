@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
-  Users, UserPlus, CheckCircle, XCircle, MoreHorizontal,
-  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw,
+  Users, UserPlus, CheckCircle, XCircle, Settings,
+  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
@@ -632,6 +632,29 @@ export default function UsersPage() {
     onError: (e: any) => toast.error(e.message ?? "Failed to update status"),
   })
 
+  const isSuperAdmin = me?.role === "Super Admin"
+
+  const forceSignOut = useMutation({
+    mutationFn: async (userId: string) => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error("Not authenticated")
+      const res = await fetch("/.netlify/functions/force-signout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ userId }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as any).error ?? "Failed to sign out user")
+      }
+    },
+    onSuccess: () => toast.success("User has been signed out"),
+    onError: (e: any) => toast.error(e.message ?? "Failed to sign out user"),
+  })
+
   const pendingInvites = profiles.filter(p => p.status === "Pending")
 
   async function resendInvite(user: Profile) {
@@ -821,7 +844,7 @@ export default function UsersPage() {
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-7 w-7 text-white/30 hover:text-white/70">
-                                <MoreHorizontal className="h-4 w-4" />
+                                <Settings className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="bg-[hsl(0_0%_14%)] border-white/10 text-white/80">
@@ -862,6 +885,14 @@ export default function UsersPage() {
                                   onClick={() => updateStatus.mutate({ userId: user.id, status: "Inactive", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
                                 >
                                   <XCircle className="h-3.5 w-3.5 mr-2" /> Deactivate
+                                </DropdownMenuItem>
+                              )}
+                              {isSuperAdmin && (
+                                <DropdownMenuItem
+                                  className="focus:bg-amber-500/10 cursor-pointer text-amber-400 gap-2"
+                                  onClick={() => forceSignOut.mutate(user.user_id)}
+                                >
+                                  <LogOut className="h-3.5 w-3.5" /> Force Sign Out
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuSeparator className="bg-white/10" />
