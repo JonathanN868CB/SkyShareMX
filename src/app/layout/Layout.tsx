@@ -6,7 +6,7 @@ import { Topbar } from "./Topbar"
 export function Layout() {
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-background">
+      <div className="min-h-svh flex w-full bg-background">
         <AppSidebar />
         <div className="flex-1 flex flex-col min-w-0">
           <header
@@ -16,7 +16,7 @@ export function Layout() {
             <SidebarTrigger className="text-white/40 hover:text-white/80 transition-colors" />
             <Topbar />
           </header>
-          <main className="flex-1 p-6 overflow-auto">
+          <main className="flex-1 p-6">
             <div className="max-w-7xl mx-auto">
               <Outlet />
             </div>

@@ -13,8 +13,6 @@ type HandlerResponse = {
   body?: string;
 };
 
-const ALLOWED_DOMAIN = "skyshare.com";
-
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -44,21 +42,64 @@ function getAccessToken(event: HandlerEvent): string | null {
   return token.length > 0 ? token : null;
 }
 
-function buildInviteEmail(opts: {
-  inviteeEmail: string;
-  invitedByName: string;
-  role: string;
-  acceptUrl: string;
+type NotifStatus = "Active" | "Inactive" | "Suspended";
+
+const STATUS_COPY: Record<NotifStatus, { subject: string; heading: string; body: string; ctaLabel?: string }> = {
+  Active: {
+    subject: "Your SkyShare MX account is now active",
+    heading: "Account Activated",
+    body: "Your SkyShare MX Maintenance Portal account has been activated. You can now sign in and access your assigned areas.",
+    ctaLabel: "Sign In Now",
+  },
+  Inactive: {
+    subject: "Your SkyShare MX account has been deactivated",
+    heading: "Account Deactivated",
+    body: "Your SkyShare MX Maintenance Portal account has been deactivated. If you believe this is an error, please contact your administrator.",
+  },
+  Suspended: {
+    subject: "Your SkyShare MX account has been suspended",
+    heading: "Account Suspended",
+    body: "Your SkyShare MX Maintenance Portal account has been suspended. Please contact your administrator for further information.",
+  },
+};
+
+function buildStatusEmail(opts: {
+  userName: string;
+  status: NotifStatus;
+  adminName: string;
   siteUrl: string;
 }): { html: string; text: string } {
-  const { invitedByName, role, acceptUrl, siteUrl } = opts;
+  const { userName, status, adminName, siteUrl } = opts;
+  const copy = STATUS_COPY[status];
+  const year = new Date().getFullYear();
+
+  const ctaBlock = copy.ctaLabel
+    ? `
+              <!-- CTA Button -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:21px;">
+                <tr>
+                  <td align="center">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="border-radius:6px;background:#d4a017;">
+                          <a href="${siteUrl}"
+                             style="display:inline-block;padding:13px 29px;font-family:'Montserrat',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#111111;text-decoration:none;">
+                            ${copy.ctaLabel} &#8594;
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>`
+    : "";
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>You're invited to SkyShare MX</title>
+  <title>${copy.subject}</title>
 </head>
 <body style="margin:0;padding:0;background:#111111;font-family:'Inter',Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111111;padding:36px 14px;">
@@ -92,31 +133,20 @@ function buildInviteEmail(opts: {
 
               <!-- Heading -->
               <h1 style="margin:0 0 25px;font-family:'Georgia','Times New Roman',serif;font-size:27px;font-weight:400;font-style:italic;letter-spacing:0.03em;color:#ffffff;line-height:1.2;">
-                Welcome Aboard
+                ${copy.heading}
               </h1>
 
               <!-- Body -->
-              <p style="margin:0 0 50px;font-size:13px;line-height:1.7;color:rgba(255,255,255,0.75);">
-                <strong style="color:#ffffff;">${invitedByName}</strong> has invited you to join <strong style="color:#ffffff;">SkyShare MX</strong> as a <strong style="color:#d4a017;">${role}</strong>.
+              <p style="margin:0 0 ${copy.ctaLabel ? "32px" : "8px"};font-size:13px;line-height:1.7;color:rgba(255,255,255,0.75);">
+                ${userName ? `<strong style="color:#ffffff;">Hi ${userName},</strong><br/><br/>` : ""}${copy.body}
               </p>
 
-              <!-- CTA Button -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:21px;">
-                <tr>
-                  <td align="center">
-                    <table cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td style="border-radius:6px;background:#d4a017;">
-                          <a href="${acceptUrl}"
-                             style="display:inline-block;padding:13px 29px;font-family:'Montserrat',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#111111;text-decoration:none;">
-                            Accept Invitation &#8594;
-                          </a>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
+              ${ctaBlock}
+
+              <!-- Admin credit -->
+              <p style="margin:${copy.ctaLabel ? "0" : "20px 0 0"};font-size:11px;color:rgba(255,255,255,0.3);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.04em;">
+                This action was performed by <span style="color:rgba(255,255,255,0.5);">${adminName}</span>.
+              </p>
 
             </td>
           </tr>
@@ -124,11 +154,8 @@ function buildInviteEmail(opts: {
           <!-- Footer -->
           <tr>
             <td style="padding:22px 8px 0;text-align:center;">
-              <p style="margin:0 0 6px;font-size:10px;color:rgba(255,255,255,0.18);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.04em;line-height:1.6;">
-                This invitation expires in 24 hours. If you did not expect this email, you can safely ignore it.
-              </p>
               <p style="margin:0;font-size:10px;color:rgba(255,255,255,0.2);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.08em;">
-                © ${new Date().getFullYear()} SKYSHARE &nbsp;<span style="color:#d4a017;">·</span>&nbsp;
+                © ${year} SKYSHARE &nbsp;<span style="color:#d4a017;">·</span>&nbsp;
                 <a href="${siteUrl}" style="color:rgba(255,255,255,0.25);text-decoration:none;">skysharemx.com</a>
               </p>
             </td>
@@ -142,15 +169,16 @@ function buildInviteEmail(opts: {
 </html>`;
 
   const text = [
-    `You've been invited to SkyShare MX Maintenance Portal`,
-    ``,
-    `${invitedByName} has invited you to join as a ${role}.`,
-    ``,
-    `Accept your invitation here (expires in 24 hours):`,
-    acceptUrl,
-    ``,
-    `© ${new Date().getFullYear()} SkyShare · ${siteUrl}`,
-  ].join("\n");
+    copy.subject,
+    "",
+    userName ? `Hi ${userName},` : "",
+    "",
+    copy.body,
+    "",
+    `This action was performed by ${adminName}.`,
+    "",
+    `© ${year} SkyShare · ${siteUrl}`,
+  ].filter(l => l !== undefined).join("\n");
 
   return { html, text };
 }
@@ -164,7 +192,6 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(405, { error: "Method not allowed" });
   }
 
-  // Auth check
   const token = getAccessToken(event);
   if (!token) {
     return jsonResponse(401, { error: "Authentication required" });
@@ -193,7 +220,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   const { data: callerProfile } = await adminClient
     .from("profiles")
-    .select("role")
+    .select("role, full_name, first_name")
     .eq("user_id", userData.user.id)
     .single();
 
@@ -202,7 +229,6 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(403, { error: "Forbidden" });
   }
 
-  // Parse body
   if (!event.body) {
     return jsonResponse(400, { error: "Missing request body" });
   }
@@ -214,96 +240,40 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(400, { error: "Invalid JSON" });
   }
 
-  const email = sanitize(payload.email).toLowerCase();
-  const role = sanitize(payload.role) || "Technician";
-  const invitedByName = sanitize(payload.invitedByName) || "A SkyShare admin";
-  const siteUrl = sanitize(payload.siteUrl) || "https://www.skysharemx.com";
+  const userEmail = sanitize(payload.userEmail).toLowerCase();
+  const userName  = sanitize(payload.userName);
+  const newStatus = sanitize(payload.newStatus) as NotifStatus;
+  const siteUrl   = sanitize(payload.siteUrl) || "https://www.skysharemx.com";
 
-  if (!email) {
-    return jsonResponse(400, { error: "Email is required" });
+  if (!userEmail) return jsonResponse(400, { error: "userEmail is required" });
+  if (!["Active", "Inactive", "Suspended"].includes(newStatus)) {
+    return jsonResponse(400, { error: "Invalid status" });
   }
 
-  if (!email.endsWith(`@${ALLOWED_DOMAIN}`)) {
-    return jsonResponse(400, { error: `Only @${ALLOWED_DOMAIN} email addresses may be invited` });
-  }
-
-  // generateLink creates the invited user and returns the action link without sending any email.
-  // We send our own branded email via Resend instead of relying on Supabase's default.
-  const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
-    type: "invite",
-    email,
-    options: {
-      data: { role, invited_by: invitedByName },
-      redirectTo: `${siteUrl}/auth/callback`,
-    },
-  });
-
-  if (linkError || !linkData?.properties?.action_link) {
-    console.error("Supabase generateLink error", linkError);
-    return jsonResponse(500, { error: linkError?.message ?? "Failed to create invite link" });
-  }
-
-  // Grant default permissions. user_permissions.user_id = profiles.id,
-  // but the profile row is created by a DB trigger on auth.user insert —
-  // so we fetch it right after generateLink creates the auth user.
-  const newUserId = linkData.user?.id;
-  if (newUserId) {
-    const { data: newProfile } = await adminClient
-      .from("profiles")
-      .select("id")
-      .eq("user_id", newUserId)
-      .maybeSingle();
-
-    if (newProfile) {
-      const DEFAULT_SECTIONS = [
-        "Dashboard",
-        "Aircraft Info",
-        "AI Assistant",
-        "Training",
-        "Docs & Links",
-      ] as const;
-
-      await adminClient.from("user_permissions").insert(
-        DEFAULT_SECTIONS.map(section => ({ user_id: newProfile.id, section }))
-      );
-
-      // Profile was created Active by the DB trigger — set to Pending until
-      // the user actually accepts the invite and completes sign-in.
-      await adminClient.from("profiles").update({ status: "Pending" }).eq("id", newProfile.id);
-    }
-  }
+  const adminName = callerProfile?.full_name ?? callerProfile?.first_name ?? "A SkyShare admin";
 
   const resendApiKey = process.env.RESEND_API_KEY;
-  const fromAddress = process.env.ACCESS_NOTIF_FROM ?? `noreply@${ALLOWED_DOMAIN}`;
+  const fromAddress  = process.env.ACCESS_NOTIF_FROM ?? "noreply@skysharemx.com";
 
   if (!resendApiKey) {
     return jsonResponse(500, { error: "Email service not configured" });
   }
 
-  const { html, text } = buildInviteEmail({
-    inviteeEmail: email,
-    invitedByName,
-    role,
-    acceptUrl: linkData.properties.action_link,
-    siteUrl,
-  });
+  const { html, text } = buildStatusEmail({ userName, status: newStatus, adminName, siteUrl });
 
   const resend = new Resend(resendApiKey);
   const { error: emailError } = await resend.emails.send({
     from: fromAddress,
-    to: [email],
-    subject: `You've been invited to SkyShare MX`,
+    to: [userEmail],
+    subject: STATUS_COPY[newStatus].subject,
     html,
     text,
   });
 
   if (emailError) {
-    console.error("Resend email error", emailError);
-    return jsonResponse(500, { error: "Failed to send invite email" });
+    console.error("Resend error", emailError);
+    return jsonResponse(500, { error: "Failed to send notification email" });
   }
 
-  return jsonResponse(200, {
-    ok: true,
-    userId: linkData.user?.id ?? null,
-  });
+  return jsonResponse(200, { ok: true });
 };

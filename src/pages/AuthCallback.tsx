@@ -38,27 +38,13 @@ export default function AuthCallback() {
       }
 
       if (profile.status === "Pending") {
-        // Check if an admin has already approved an access request for this email
-        const { data: approved } = await supabase
-          .from("access_requests")
-          .select("id")
-          .eq("email", email)
-          .eq("status", "approved")
-          .limit(1)
-          .single()
-
-        if (approved) {
-          // Auto-activate the profile
-          await supabase
-            .from("profiles")
-            .update({ status: "Active", last_login: new Date().toISOString() })
-            .eq("user_id", session.user.id)
-          sessionStorage.setItem("oauth_transition", "1")
-          navigate("/app", { replace: true })
-          return
-        }
-
-        navigate("/request-access?status=pending", { replace: true })
+        // @skyshare.com users are trusted — auto-activate on first sign-in
+        await supabase
+          .from("profiles")
+          .update({ status: "Active", last_login: new Date().toISOString() })
+          .eq("user_id", session.user.id)
+        sessionStorage.setItem("oauth_transition", "1")
+        navigate("/app", { replace: true })
         return
       }
 
