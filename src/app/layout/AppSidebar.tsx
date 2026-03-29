@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from "react-router-dom"
+import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   Home,
   Plane,
@@ -14,6 +14,7 @@ import {
   Building,
   ShieldCheck,
   GraduationCap,
+  Lock,
 } from "lucide-react"
 import {
   Sidebar,
@@ -29,36 +30,47 @@ import {
 import { useAuth } from "@/features/auth"
 import { cn } from "@/shared/lib/utils"
 import logoAsset from "@/shared/assets/skyshare-logo.png"
+import type { AppSection } from "@/entities/supabase"
 
-const sidebarSections = [
+type SidebarItem = {
+  name: string
+  path: string
+  icon: React.ElementType
+  exact?: boolean
+  section: AppSection
+  superAdminOnly?: boolean
+}
+
+const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[] }[] = [
   {
     title: "Overview",
     items: [
-      { name: "Dashboard", path: "/app", icon: Home, exact: true },
-      { name: "Aircraft Info", path: "/app/aircraft", icon: Plane },
-      { name: "AI Assistant", path: "/app/ai-assistant", icon: MessageSquare },
+      { name: "Dashboard",    path: "/app",              icon: Home,          exact: true, section: "Dashboard"    },
+      { name: "Aircraft Info", path: "/app/aircraft",    icon: Plane,                      section: "Aircraft Info" },
+      { name: "AI Assistant",  path: "/app/ai-assistant", icon: MessageSquare,             section: "AI Assistant"  },
     ],
   },
   {
     title: "Operations",
     items: [
-      { name: "Aircraft Conformity", path: "/app/conformity", icon: CheckSquare },
-      { name: "14-Day Check", path: "/app/14-day-check", icon: CalendarClock },
-      { name: "Maintenance Planning", path: "/app/planning", icon: ClipboardList },
-      { name: "Ten or More", path: "/app/ten-or-more", icon: ShieldCheck },
-      { name: "Terminal-OGD", path: "/app/terminal-ogd", icon: Building },
-      { name: "Projects", path: "/app/projects", icon: Kanban },
-      { name: "Training", path: "/app/training", icon: GraduationCap },
-      { name: "Docs & Links", path: "/app/docs", icon: FileText },
+      { name: "Aircraft Conformity",  path: "/app/conformity",    icon: CheckSquare,  section: "Aircraft Conformity"  },
+      { name: "14-Day Check",         path: "/app/14-day-check",  icon: CalendarClock, section: "14-Day Check"        },
+      { name: "Maintenance Planning", path: "/app/planning",      icon: ClipboardList, section: "Maintenance Planning" },
+      { name: "Ten or More",          path: "/app/ten-or-more",   icon: ShieldCheck,   section: "Ten or More"         },
+      { name: "Terminal-OGD",         path: "/app/terminal-ogd",  icon: Building,      section: "Terminal-OGD"        },
+      { name: "Projects",             path: "/app/projects",      icon: Kanban,        section: "Projects"            },
+      { name: "Training",             path: "/app/training",      icon: GraduationCap, section: "Training"            },
+      { name: "Docs & Links",         path: "/app/docs",          icon: FileText,      section: "Docs & Links"        },
     ],
   },
   {
     title: "Administration",
     adminOnly: true,
     items: [
-      { name: "Users", path: "/app/admin/users", icon: Users },
-      { name: "Alerts & Notifications", path: "/app/admin/alerts", icon: Bell },
-      { name: "Settings", path: "/app/admin/settings", icon: Settings },
+      { name: "Users",                  path: "/app/admin/users",       icon: Users,      section: "Dashboard" },
+      { name: "Alerts & Notifications", path: "/app/admin/alerts",      icon: Bell,       section: "Dashboard" },
+      { name: "Settings",               path: "/app/admin/settings",    icon: Settings,   section: "Dashboard" },
+      { name: "Permissions Index",      path: "/app/admin/permissions", icon: ShieldCheck, section: "Dashboard", superAdminOnly: true },
     ],
   },
 ]
@@ -66,11 +78,22 @@ const sidebarSections = [
 export function AppSidebar() {
   const { state } = useSidebar()
   const location = useLocation()
-  const { profile } = useAuth()
+  const navigate = useNavigate()
+  const { profile, permissions } = useAuth()
   const collapsed = state === "collapsed"
 
   const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
+  const isSuperAdmin = profile?.role === "Super Admin"
   const visibleSections = sidebarSections.filter(s => !s.adminOnly || isAdmin)
+
+  function hasAccess(section: AppSection) {
+    if (isAdmin) return true
+    return permissions.includes(section)
+  }
+
+  function handleLockedClick(itemName: string) {
+    navigate(`/app/access-restricted?feature=${encodeURIComponent(itemName)}`)
+  }
 
   return (
     <Sidebar
@@ -135,41 +158,58 @@ export function AppSidebar() {
               )}
               <SidebarGroupContent>
                 <SidebarMenu className="space-y-0.5">
-                  {section.items.map(item => {
+                  {section.items.filter(item => !item.superAdminOnly || isSuperAdmin).map(item => {
                     const isActive = item.exact
                       ? location.pathname === item.path
                       : location.pathname.startsWith(item.path)
+                    const accessible = hasAccess(item.section)
 
                     return (
                       <SidebarMenuItem key={item.name}>
                         <SidebarMenuButton asChild tooltip={collapsed ? item.name : undefined}>
-                          <NavLink
-                            to={item.path}
-                            end={Boolean(item.exact)}
-                            className={cn(
-                              "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
-                              collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
-                              isActive
-                                ? "active text-white font-medium"
-                                : "text-white/45 hover:text-white/80 font-normal"
-                            )}
-                            style={isActive ? {
-                              background: "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
-                              fontFamily: "var(--font-heading)",
-                              letterSpacing: "0.02em",
-                            } : {}}
-                          >
-                            <item.icon
+                          {accessible ? (
+                            <NavLink
+                              to={item.path}
+                              end={Boolean(item.exact)}
                               className={cn(
-                                "flex-shrink-0",
-                                collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]",
+                                "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
+                                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
+                                isActive
+                                  ? "active text-white font-medium"
+                                  : "text-white/45 hover:text-white/80 font-normal"
                               )}
-                              style={isActive ? { color: "var(--skyshare-gold)" } : {}}
-                            />
-                            {!collapsed && (
-                              <span className="truncate tracking-wide">{item.name}</span>
-                            )}
-                          </NavLink>
+                              style={isActive ? {
+                                background: "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
+                                fontFamily: "var(--font-heading)",
+                                letterSpacing: "0.02em",
+                              } : {}}
+                            >
+                              <item.icon
+                                className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
+                                style={isActive ? { color: "var(--skyshare-gold)" } : {}}
+                              />
+                              {!collapsed && <span className="truncate tracking-wide">{item.name}</span>}
+                            </NavLink>
+                          ) : (
+                            <button
+                              onClick={() => handleLockedClick(item.name)}
+                              className={cn(
+                                "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150 w-full",
+                                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
+                                "text-white/25 hover:text-white/40 font-normal cursor-pointer"
+                              )}
+                            >
+                              <item.icon
+                                className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
+                              />
+                              {!collapsed && (
+                                <span className="truncate tracking-wide flex-1 text-left">{item.name}</span>
+                              )}
+                              {!collapsed && (
+                                <Lock className="w-[11px] h-[11px] flex-shrink-0 opacity-40" />
+                              )}
+                            </button>
+                          )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     )

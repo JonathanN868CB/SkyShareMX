@@ -29,6 +29,115 @@ function sanitize(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function buildAccessRequestEmail(opts: {
+  fullName: string;
+  email: string;
+  company: string;
+  reason: string;
+  submittedAt: string;
+}): { html: string; text: string } {
+  const { fullName, email, company, reason, submittedAt } = opts;
+  const year = new Date().getFullYear();
+
+  const row = (label: string, value: string) => `
+    <tr>
+      <td style="padding:7px 0;font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.35);width:110px;vertical-align:top;">${label}</td>
+      <td style="padding:7px 0;font-size:13px;color:rgba(255,255,255,0.8);vertical-align:top;">${value}</td>
+    </tr>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Access Request — SkyShare MX</title>
+</head>
+<body style="margin:0;padding:0;background:#111111;font-family:'Inter',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#111111;padding:36px 14px;">
+    <tr>
+      <td align="center">
+        <table width="504" cellpadding="0" cellspacing="0" border="0" style="max-width:504px;width:100%;">
+
+          <!-- Header stripe -->
+          <tr>
+            <td style="height:4px;background:linear-gradient(90deg,#c10230 0%,#012e45 100%);border-radius:4px 4px 0 0;"></td>
+          </tr>
+
+          <!-- Card -->
+          <tr>
+            <td style="background:#1a1a1a;border-radius:0 0 4px 4px;padding:36px 43px 29px;border:1px solid rgba(255,255,255,0.08);border-top:none;">
+
+              <!-- Logo / wordmark -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:29px;">
+                <tr>
+                  <td>
+                    <span style="font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#d4a017;border-bottom:1px solid #d4a017;padding-bottom:2px;">SKYSHARE MX</span>
+                    <span style="font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:400;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.28);margin-left:11px;">Maintenance Portal</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-top:7px;">
+                    <div style="height:1px;width:43px;background:#d4a017;"></div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Heading -->
+              <h1 style="margin:0 0 8px;font-family:'Georgia','Times New Roman',serif;font-size:27px;font-weight:400;font-style:italic;letter-spacing:0.03em;color:#ffffff;line-height:1.2;">
+                New Access Request
+              </h1>
+              <p style="margin:0 0 28px;font-size:12px;color:rgba(255,255,255,0.35);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.08em;text-transform:uppercase;">${submittedAt}</p>
+
+              <!-- Details table -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;border-top:1px solid rgba(255,255,255,0.07);">
+                <tbody>
+                  ${row("Name", fullName || "(not provided)")}
+                  ${row("Email", email)}
+                  ${row("Company", company || "(not provided)")}
+                </tbody>
+              </table>
+
+              <!-- Reason block -->
+              <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:4px;padding:16px 18px;">
+                <p style="margin:0 0 8px;font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.35);">Reason</p>
+                <p style="margin:0;font-size:13px;line-height:1.7;color:rgba(255,255,255,0.75);white-space:pre-wrap;">${reason}</p>
+              </div>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:22px 8px 0;text-align:center;">
+              <p style="margin:0;font-size:10px;color:rgba(255,255,255,0.2);font-family:'Montserrat',Arial,sans-serif;letter-spacing:0.08em;">
+                © ${year} SKYSHARE &nbsp;<span style="color:#d4a017;">·</span>&nbsp;
+                <a href="https://www.skysharemx.com" style="color:rgba(255,255,255,0.25);text-decoration:none;">skysharemx.com</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    "New SkyShare MX Access Request",
+    `Submitted: ${submittedAt}`,
+    "",
+    `Name:    ${fullName || "(not provided)"}`,
+    `Email:   ${email}`,
+    `Company: ${company || "(not provided)"}`,
+    "",
+    "Reason:",
+    reason,
+  ].join("\n");
+
+  return { html, text };
+}
+
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: corsHeaders };
@@ -50,90 +159,46 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   const fullName = sanitize(payload.fullName);
-  const email = sanitize(payload.email);
-  const company = sanitize(payload.company);
-  const reason = sanitize(payload.reason);
+  const email    = sanitize(payload.email);
+  const company  = sanitize(payload.company);
+  const reason   = sanitize(payload.reason);
 
   if (!email || !reason) {
     return jsonResponse(400, { error: "Email and reason are required" });
   }
 
   const resendApiKey = process.env.RESEND_API_KEY;
-  const toAddress = process.env.ACCESS_NOTIF_TO;
-  const fromAddress = process.env.ACCESS_NOTIF_FROM;
+  const toAddress    = process.env.ACCESS_NOTIF_TO;
+  const fromAddress  = process.env.ACCESS_NOTIF_FROM;
 
   if (!resendApiKey || !toAddress || !fromAddress) {
-    console.error("Missing Resend configuration", {
-      hasApiKey: Boolean(resendApiKey),
-      hasToAddress: Boolean(toAddress),
-      hasFromAddress: Boolean(fromAddress),
-    });
+    console.error("Missing Resend configuration");
     return jsonResponse(500, { error: "Email configuration is incomplete" });
   }
 
+  const submittedAt = new Date().toLocaleString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  });
+
+  const { html, text } = buildAccessRequestEmail({ fullName, email, company, reason, submittedAt });
+
   const resend = new Resend(resendApiKey);
-  const submittedAt = new Date().toISOString();
-
-  const lines = [
-    "A new maintenance portal access request was submitted.",
-    "",
-    `Name: ${fullName || "(not provided)"}`,
-    `Email: ${email}`,
-    `Company: ${company || "(not provided)"}`,
-    "",
-    "Reason:",
-    reason,
-    "",
-    `Submitted at: ${submittedAt}`,
-  ];
-
-  const textBody = lines.join("\n");
-  const htmlBody = `
-    <div style="font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827;">
-      <h2 style="color: #1d4ed8;">New SkyShareMX access request</h2>
-      <p style="margin: 0 0 16px 0;">A new access request was submitted via the public portal.</p>
-      <table style="border-collapse: collapse; width: 100%; max-width: 560px; margin-bottom: 16px;">
-        <tbody>
-          <tr>
-            <td style="padding: 6px 8px; font-weight: 600; width: 160px;">Name</td>
-            <td style="padding: 6px 8px;">${fullName || "(not provided)"}</td>
-          </tr>
-          <tr>
-            <td style="padding: 6px 8px; font-weight: 600;">Email</td>
-            <td style="padding: 6px 8px;">${email}</td>
-          </tr>
-          <tr>
-            <td style="padding: 6px 8px; font-weight: 600;">Company</td>
-            <td style="padding: 6px 8px;">${company || "(not provided)"}</td>
-          </tr>
-          <tr>
-            <td style="padding: 6px 8px; font-weight: 600;">Submitted</td>
-            <td style="padding: 6px 8px;">${submittedAt}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div style="padding: 16px; border-radius: 12px; background: #f8fafc; border: 1px solid #e2e8f0;">
-        <p style="margin: 0 0 8px 0; font-weight: 600;">Reason</p>
-        <p style="margin: 0; white-space: pre-wrap;">${reason}</p>
-      </div>
-    </div>
-  `;
-
   try {
     const { error } = await resend.emails.send({
       from: fromAddress,
       to: [toAddress],
-      subject: "SkyShareMX – New access request",
-      text: textBody,
-      html: htmlBody,
+      subject: `Access Request — ${fullName || email}`,
+      html,
+      text,
     });
 
     if (error) {
       console.error("Failed to send access request email", error);
       return jsonResponse(500, { error: "Failed to send access request notification" });
     }
-  } catch (error) {
-    console.error("Unexpected error sending access request email", error);
+  } catch (err) {
+    console.error("Unexpected error sending access request email", err);
     return jsonResponse(500, { error: "Failed to send access request notification" });
   }
 
