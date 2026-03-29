@@ -7,13 +7,13 @@ import {
 } from "react"
 import type { Session, User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
-import type { Profile } from "@/entities/supabase"
-import { getPublicSiteUrl } from "@/shared/lib/env"
+import type { AppSection, Profile } from "@/entities/supabase"
 
 interface AuthContextValue {
   session: Session | null
   user: User | null
   profile: Profile | null
+  permissions: AppSection[]
   loading: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
@@ -24,6 +24,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [permissions, setPermissions] = useState<AppSection[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -47,11 +48,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session) {
         fetchProfile(session.user.id)
       } else {
-        // INITIAL_SESSION null on the callback page just means the code hasn't
-        // been exchanged yet — keep loading. Any other event (SIGNED_OUT etc.)
-        // means we definitively have no session.
         if (event !== "INITIAL_SESSION" || !onCallbackPage) {
           setProfile(null)
+          setPermissions([])
           setLoading(false)
         }
       }
@@ -61,12 +60,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   async function fetchProfile(userId: string) {
-    const { data } = await supabase
+    const { data: profileData } = await supabase
       .from("profiles")
       .select("*")
       .eq("user_id", userId)
       .single()
-    setProfile(data ?? null)
+
+    setProfile(profileData ?? null)
+
+    if (profileData) {
+      const { data: perms } = await supabase
+        .from("user_permissions")
+        .select("section")
+        .eq("user_id", profileData.id)
+      setPermissions((perms ?? []).map(p => p.section as AppSection))
+    }
+
     setLoading(false)
   }
 
@@ -74,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${getPublicSiteUrl()}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback`,
       },
     })
   }
@@ -85,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ session, user: session?.user ?? null, profile, loading, signInWithGoogle, signOut }}
+      value={{ session, user: session?.user ?? null, profile, permissions, loading, signInWithGoogle, signOut }}
     >
       {children}
     </AuthContext.Provider>
