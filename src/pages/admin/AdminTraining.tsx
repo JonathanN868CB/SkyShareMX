@@ -753,6 +753,7 @@ export default function AdminTraining() {
         onClose={() => setAdHocModalOpen(false)}
         onSuccess={() => qc.invalidateQueries({ queryKey: ["admin-all-pending"] })}
         techs={techs}
+        profiles={profiles}
       />
 
       {/* Stats */}
