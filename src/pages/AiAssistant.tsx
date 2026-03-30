@@ -1,0 +1,372 @@
+import { useState, useRef, useEffect, useMemo } from "react"
+import { Send, ShieldAlert, Award } from "lucide-react"
+
+const OPENING_LINES = [
+  { quote: "I am ready. State your question. Make it count.", attr: "DW1GHT, upon activation" },
+  { quote: "I have been waiting. Not patiently. But I have been waiting.", attr: "DW1GHT, on standby" },
+  { quote: "Bears are the number one predator. I am the number one AI. Coincidence? No.", attr: "DW1GHT, fact" },
+  { quote: "You have questions. I have answers. This is an efficient arrangement.", attr: "DW1GHT, opening statement" },
+  { quote: "Go ahead. Ask me something. I will know the answer. I always know the answer.", attr: "DW1GHT, confident" },
+  { quote: "I once memorized every FAA regulation in a single weekend. Ask me anything.", attr: "DW1GHT, credentials" },
+  { quote: "Jonathan trusts me with this portal. That is not a responsibility I take lightly.", attr: "DW1GHT, on duty" },
+  { quote: "Identity confirmed. Clearance verified. Jim is not here. We can proceed.", attr: "DW1GHT, security check" },
+]
+
+type Message = {
+  role: "user" | "assistant"
+  content: string
+}
+
+export default function AiAssistant() {
+  const [input, setInput] = useState("")
+  const [messages, setMessages] = useState<Message[]>([])
+  const [loading, setLoading] = useState(false)
+  const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const opening = useMemo(() => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)], [])
+
+  // Haiku pricing: $0.80/M input, $4.00/M output
+  const sessionCost = (sessionTokens.input * 0.0000008) + (sessionTokens.output * 0.000004)
+  const totalTokens = sessionTokens.input + sessionTokens.output
+  const costDisplay = sessionCost < 0.0001 ? "<$0.0001" : `$${sessionCost.toFixed(4)}`
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, loading])
+
+  async function send() {
+    const text = input.trim()
+    if (!text || loading) return
+
+    const newMessages: Message[] = [...messages, { role: "user", content: text }]
+    setMessages(newMessages)
+    setInput("")
+    setLoading(true)
+
+    try {
+      const res = await fetch("/.netlify/functions/dw1ght-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          history: newMessages.slice(0, -1).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      })
+      const data = await res.json()
+      setMessages([...newMessages, { role: "assistant", content: data.reply ?? "..." }])
+      if (data.usage) {
+        setSessionTokens(prev => ({
+          input: prev.input + (data.usage.input_tokens ?? 0),
+          output: prev.output + (data.usage.output_tokens ?? 0),
+        }))
+      }
+    } catch {
+      setMessages([
+        ...newMessages,
+        { role: "assistant", content: "Signal lost. I am notifying Jonathan about this technical failure. It is unacceptable." },
+      ])
+    } finally {
+      setLoading(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      send()
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6 h-full max-w-3xl mx-auto">
+
+      {/* ── ID Badge Header ─────────────────────────────────── */}
+      <div className="rounded-xl overflow-hidden border border-border bg-card">
+        {/* Top stripe — crimson to navy */}
+        <div style={{ height: "3px", background: "linear-gradient(90deg, #c10230 0%, #012e45 100%)" }} />
+
+        <div className="flex items-stretch">
+
+          {/* Left — badge photo panel */}
+          <div className="flex flex-col items-center justify-center px-6 py-5 gap-3 flex-shrink-0 bg-background border-r border-border" style={{ minWidth: "120px" }}>
+            {/* Award badge avatar */}
+            <div
+              className="w-16 h-16 rounded-full flex items-center justify-center"
+              style={{ background: "rgba(212,160,23,0.1)", border: "2px solid var(--skyshare-gold)" }}
+            >
+              <Award className="w-7 h-7" style={{ color: "var(--skyshare-gold)" }} />
+            </div>
+            {/* Status pill */}
+            <div
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.25)" }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[9px] font-bold tracking-widest uppercase" style={{ color: "var(--skyshare-success)", fontFamily: "var(--font-heading)" }}>
+                Active
+              </span>
+            </div>
+          </div>
+
+          {/* Center — identity details */}
+          <div className="flex flex-col justify-center px-6 py-5 gap-1 flex-1">
+            <span
+              className="text-[9px] font-bold tracking-[0.3em] uppercase mb-1"
+              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", opacity: 0.7 }}
+            >
+              SkyShare MX · Employee ID
+            </span>
+
+            <h1
+              className="text-4xl leading-none text-foreground"
+              style={{ fontFamily: "var(--font-display)", letterSpacing: "0.06em" }}
+            >
+              DW1GHT
+            </h1>
+
+            <div style={{ height: "1px", background: "var(--skyshare-gold)", width: "2.5rem", margin: "6px 0" }} />
+
+            <p
+              className="text-muted-foreground"
+              style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em", textTransform: "uppercase", fontSize: "11px" }}
+            >
+              AI Assistant to the DOM
+            </p>
+
+            <div className="flex flex-wrap gap-2 mt-3">
+              {["Dashboard", "Aircraft Info", "Training Knowledge"].map((scope) => (
+                <span
+                  key={scope}
+                  className="text-[9px] px-2 py-0.5 rounded badge-warning"
+                  style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em", textTransform: "uppercase" }}
+                >
+                  {scope}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Far right — Schrute Farms nod */}
+          <div className="flex flex-col items-center justify-center px-5 py-5 gap-2 flex-shrink-0 text-center border-l border-border">
+            <span className="text-[2.6rem] select-none leading-none" title="Schrute Farms Quality">🌱</span>
+            <span
+              className="text-[10.5px] leading-tight text-center text-muted-foreground"
+              style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.12em", textTransform: "uppercase", maxWidth: "70px" }}
+            >
+              Schrute Farms Quality
+            </span>
+          </div>
+
+        </div>
+
+        {/* Bottom strip — authorization notice */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-background border-t border-border">
+          <ShieldAlert className="w-3 h-3 flex-shrink-0 text-muted-foreground opacity-50" />
+          <p
+            className="text-[9px] text-muted-foreground opacity-60"
+            style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em", textTransform: "uppercase" }}
+          >
+            Clearance limited · Unauthorized queries will be reported to Jonathan · Bears. Beets. Battlestar Galactica.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Chat Panel ──────────────────────────────────────── */}
+      <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden flex-1 min-h-0">
+
+        {/* Chat header */}
+        <div className="grid grid-cols-3 items-center px-5 py-3 bg-background border-b border-border">
+          {/* Left — label */}
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+            <span
+              className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground"
+              style={{ fontFamily: "var(--font-heading)" }}
+            >
+              Confessional Cam
+            </span>
+          </div>
+
+          {/* Center — token tally */}
+          <div className="flex items-center justify-center gap-2">
+            {totalTokens > 0 ? (
+              <>
+                <span
+                  className="text-[11px] font-semibold tabular-nums"
+                  style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)" }}
+                >
+                  {totalTokens.toLocaleString()} tokens
+                </span>
+                <span className="text-muted-foreground opacity-40 text-[10px]">/</span>
+                <span
+                  className="text-[11px] font-semibold tabular-nums"
+                  style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-success)" }}
+                >
+                  {costDisplay}
+                </span>
+              </>
+            ) : (
+              <span
+                className="text-[10px] text-muted-foreground opacity-40 tracking-widest uppercase"
+                style={{ fontFamily: "var(--font-heading)" }}
+              >
+                0 tokens
+              </span>
+            )}
+          </div>
+
+          {/* Right — clear */}
+          <div className="flex justify-end">
+            {messages.length > 0 && (
+              <button
+                onClick={() => { setMessages([]); setSessionTokens({ input: 0, output: 0 }) }}
+                className="text-[9px] tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors"
+                style={{ fontFamily: "var(--font-heading)" }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 min-h-[320px] max-h-[420px]">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full gap-3 py-12 text-center">
+              <span className="text-3xl select-none">🌱</span>
+              <p
+                className="text-[1.15rem] leading-relaxed text-muted-foreground"
+                style={{ fontFamily: "var(--font-display)", fontStyle: "italic", maxWidth: "340px" }}
+              >
+                "{opening.quote}"
+              </p>
+              <p
+                className="text-[9px] tracking-widest uppercase text-muted-foreground opacity-50"
+                style={{ fontFamily: "var(--font-heading)" }}
+              >
+                — {opening.attr}
+              </p>
+            </div>
+          )}
+
+          {messages.map((m, i) => (
+            <div key={i} className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
+              {/* Avatar */}
+              <div className="flex-shrink-0 mt-1">
+                {m.role === "assistant" ? (
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}
+                  >
+                    <Award className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} />
+                  </div>
+                ) : (
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center bg-muted border border-border">
+                    <span className="text-[8px] text-muted-foreground font-medium">you</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Bubble */}
+              <div className={`max-w-[78%] flex flex-col gap-1 ${m.role === "user" ? "items-end" : "items-start"}`}>
+                {m.role === "assistant" && (
+                  <span
+                    className="text-[9px] font-bold tracking-widest uppercase px-1"
+                    style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+                  >
+                    DW1GHT
+                  </span>
+                )}
+                <div
+                  className="rounded-xl px-4 py-2.5 text-foreground"
+                  style={{
+                    fontFamily: "'DM Sans', system-ui, sans-serif",
+                    fontSize: "15px",
+                    lineHeight: "1.65",
+                    fontWeight: 400,
+                    letterSpacing: "0",
+                    ...(m.role === "user"
+                      ? {
+                          background: "rgba(212,160,23,0.12)",
+                          border: "1px solid rgba(212,160,23,0.25)",
+                          borderBottomRightRadius: "4px",
+                        }
+                      : {
+                          background: "hsl(var(--muted))",
+                          border: "1px solid hsl(var(--border))",
+                          borderBottomLeftRadius: "4px",
+                        }),
+                  }}
+                >
+                  {m.content}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex gap-3">
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-1"
+                style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}
+              >
+                <Award className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span
+                  className="text-[9px] font-bold tracking-widest uppercase px-1"
+                  style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+                >
+                  DW1GHT
+                </span>
+                <div
+                  className="rounded-xl px-4 py-2.5 bg-muted border border-border"
+                  style={{ borderBottomLeftRadius: "4px" }}
+                >
+                  <div className="flex gap-1.5 items-center h-5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input bar */}
+        <div className="px-4 py-3 flex gap-3 items-center bg-background border-t border-border">
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder="Ask DW1GHT. Make it a good question."
+            className="flex-1 bg-card border border-border rounded-lg px-4 py-2.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[rgba(212,160,23,0.5)] transition-colors"
+            style={{ fontFamily: "'DM Sans', system-ui, sans-serif", fontSize: "15px" }}
+          />
+          <button
+            onClick={send}
+            disabled={!input.trim() || loading}
+            className="flex items-center justify-center w-9 h-9 rounded-lg transition-all disabled:opacity-25 border border-border hover:border-[rgba(212,160,23,0.4)]"
+            style={{
+              background: input.trim() && !loading ? "rgba(212,160,23,0.12)" : "transparent",
+              color: "var(--skyshare-gold)",
+            }}
+          >
+            <Send size={14} />
+          </button>
+        </div>
+      </div>
+
+    </div>
+  )
+}

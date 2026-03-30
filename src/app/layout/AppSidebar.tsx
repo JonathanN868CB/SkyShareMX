@@ -14,6 +14,7 @@ import {
   Building,
   ShieldCheck,
   GraduationCap,
+  Compass,
   Lock,
 } from "lucide-react"
 import {
@@ -59,8 +60,9 @@ const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[
       { name: "Ten or More",          path: "/app/ten-or-more",   icon: ShieldCheck,   section: "Ten or More"         },
       { name: "Terminal-OGD",         path: "/app/terminal-ogd",  icon: Building,      section: "Terminal-OGD"        },
       { name: "Projects",             path: "/app/projects",      icon: Kanban,        section: "Projects"            },
-      { name: "My Training",           path: "/app/training",      icon: GraduationCap, section: "Training"            },
       { name: "Docs & Links",         path: "/app/docs",          icon: FileText,      section: "Docs & Links"        },
+      { name: "My Training",          path: "/app/training",      icon: GraduationCap, section: "Training"            },
+      { name: "My Journey™",          path: "/app/journey",       icon: Compass,       section: "My Journey"          },
     ],
   },
   {

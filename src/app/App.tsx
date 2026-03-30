@@ -19,7 +19,7 @@ export default function App() {
         <AuthProvider>
           <Toaster />
           <Sonner />
-          <RouterProvider router={router} />
+<RouterProvider router={router} />
         </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>
