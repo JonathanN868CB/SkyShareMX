@@ -66,6 +66,14 @@ export interface MxlmsTrainingCompletion {
   training_item?: MxlmsTrainingItem
 }
 
+export type AdHocEventType =
+  | 'safety-observation'
+  | 'procedure-refresher'
+  | 'tooling-equipment'
+  | 'regulatory-briefing'
+  | 'ojt-mentorship'
+  | 'general'
+
 export interface MxlmsAdHocCompletion {
   id: number
   technician_id: number
@@ -75,6 +83,33 @@ export interface MxlmsAdHocCompletion {
   document_path: string | null
   notes: string | null
   created_at: string
+  // ad hoc event fields (added in 20260330000000 migration)
+  event_type: AdHocEventType
+  description: string | null
+  corrective_action: string | null
+  severity: 'low' | 'medium' | 'high' | null
+  initiated_by_user_id: string | null
+  initiated_by_name: string | null
+  requires_acknowledgment: boolean
+  acknowledged_at: string | null
+  drive_url: string | null
+  status: 'pending_acknowledgment' | 'acknowledged' | 'archived'
+}
+
+export interface MxlmsAdHocInsert {
+  technician_id: number
+  name: string
+  category?: string | null
+  completed_date: string
+  notes?: string | null
+  event_type: AdHocEventType
+  description?: string | null
+  corrective_action?: string | null
+  severity?: 'low' | 'medium' | 'high' | null
+  initiated_by_user_id?: string | null
+  initiated_by_name?: string | null
+  requires_acknowledgment: boolean
+  status: 'pending_acknowledgment' | 'archived'
 }
 
 export interface MxlmsPendingCompletion {

@@ -1,9 +1,10 @@
 import { useState, Fragment } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   GraduationCap, AlertCircle, Clock, Target, CheckSquare,
-  BookOpen, ChevronDown, ChevronRight, ExternalLink, FileText, Users, CheckCircle2,
+  BookOpen, ChevronDown, ChevronRight, ExternalLink, FileText, Users, CheckCircle2, Plus,
 } from "lucide-react"
+import { Button } from "@/shared/ui/button"
 import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
 import { useAuth } from "@/features/auth"
@@ -12,6 +13,7 @@ import type {
   MxlmsTechnician, MxlmsPendingCompletion,
   MxlmsSession, MxlmsGoal, MxlmsActionItem, MxlmsJournalEntry,
 } from "@/entities/mxlms"
+import { RecordAdHocEventModal } from "@/components/training/RecordAdHocEventModal"
 
 // ─── Lightweight training row (no join needed for aggregate stats) ─────────────
 
@@ -680,8 +682,11 @@ function SharedJournalFeed({
 export default function AdminTraining() {
   const { profile: me } = useAuth()
   const isSuperAdmin = me?.role === "Super Admin"
+  const [adHocModalOpen, setAdHocModalOpen] = useState(false)
 
   const enabled = isSuperAdmin
+
+  const qc = useQueryClient()
 
   const { data: profiles  = [], isLoading: lp } = useQuery({ queryKey: ["admin-training-profiles"],   queryFn: fetchProfiles,     enabled })
   const { data: techs     = []                 } = useQuery({ queryKey: ["mxlms-technicians"],         queryFn: fetchTechnicians,  enabled })
@@ -713,20 +718,42 @@ export default function AdminTraining() {
 
       {/* Hero */}
       <div className="hero-area">
-        <div className="flex items-center gap-3">
-          <GraduationCap className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
-          <div>
-            <h1 className="text-[2.6rem] leading-none text-foreground"
-              style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
-              TEAM TRAINING & JOURNEY
-            </h1>
-            <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <GraduationCap className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
+            <div>
+              <h1 className="text-[2.6rem] leading-none text-foreground"
+                style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
+                TEAM TRAINING & JOURNEY
+              </h1>
+              <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
+            </div>
           </div>
+          <Button
+            onClick={() => setAdHocModalOpen(true)}
+            className="shrink-0 gap-2 mt-1"
+            style={{
+              background: "var(--skyshare-gold)",
+              color: "hsl(0 0% 8%)",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.08em",
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Record Ad Hoc Event
+          </Button>
         </div>
         <p className="mt-3 text-sm text-muted-foreground" style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}>
           The manager view — what your team sees in My Training &amp; My Journey™
         </p>
       </div>
+
+      <RecordAdHocEventModal
+        open={adHocModalOpen}
+        onClose={() => setAdHocModalOpen(false)}
+        onSuccess={() => qc.invalidateQueries({ queryKey: ["admin-all-pending"] })}
+        techs={techs}
+      />
 
       {/* Stats */}
       {loading ? (
