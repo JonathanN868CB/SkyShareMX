@@ -3,11 +3,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   Users, UserPlus, CheckCircle, XCircle, Settings,
-  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut,
+  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut, Link2,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
+import { mxlms } from "@/lib/supabase-mxlms"
 import { APP_ROLES, APP_SECTIONS, type Profile, type AppRole, type UserStatus, type AppSection } from "@/entities/supabase"
+import type { MxlmsTechnician } from "@/entities/mxlms"
 import { useAuth } from "@/features/auth"
 import { Button } from "@/shared/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
@@ -100,8 +102,9 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
       "Ten or More",
       "Terminal-OGD",
       "Projects",
-      "Training",
       "Docs & Links",
+      "Training",
+      "My Journey",
     ],
   },
 ]
@@ -568,6 +571,167 @@ function RemoveUserDialog({
   )
 }
 
+// ─── Link MX-LMS Dialog ───────────────────────────────────────────────────────
+
+async function fetchMxlmsTechnicians(): Promise<MxlmsTechnician[]> {
+  const { data, error } = await mxlms
+    .from("technicians")
+    .select("id,name,tech_code,role,status,email")
+    .eq("status", "active")
+    .order("name")
+  if (error) throw error
+  return (data ?? []) as MxlmsTechnician[]
+}
+
+function LinkMxlmsDialog({
+  user,
+  open,
+  onClose,
+}: {
+  user: Profile | null
+  open: boolean
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [saving, setSaving] = useState(false)
+  const [selectedId, setSelectedId] = useState<string>("")
+
+  const { data: technicians = [], isLoading } = useQuery({
+    queryKey: ["mxlms-technicians"],
+    queryFn: fetchMxlmsTechnicians,
+    enabled: open,
+  })
+
+  useEffect(() => {
+    if (open && user) {
+      setSelectedId(user.mxlms_technician_id != null ? String(user.mxlms_technician_id) : "")
+    }
+  }, [open, user])
+
+  const save = async () => {
+    if (!user) return
+    setSaving(true)
+    try {
+      const value = selectedId === "" ? null : Number(selectedId)
+      const { error } = await supabase
+        .from("profiles")
+        .update({ mxlms_technician_id: value })
+        .eq("id", user.id)
+      if (error) throw error
+      toast.success(value ? "MX-LMS profile linked" : "MX-LMS link removed")
+      qc.invalidateQueries({ queryKey: ["admin-users"] })
+      onClose()
+    } catch (e: any) {
+      toast.error(e.message ?? "Failed to save")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const currentTech = technicians.find(t => String(t.id) === selectedId)
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent
+        className="max-w-md"
+        style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "4px 4px 0 0", marginTop: "-1px", marginLeft: "-1px", marginRight: "-1px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+
+        <DialogHeader>
+          <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
+            Link to MX-LMS
+          </DialogTitle>
+          <DialogDescription className="text-white/35" style={{ fontFamily: "var(--font-heading)", fontSize: "11px", letterSpacing: "0.08em" }}>
+            {user?.full_name ?? user?.email}
+            <span className="mx-2 opacity-30">·</span>
+            Connects their My Training &amp; My Journey tabs
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          {isLoading ? (
+            <div className="py-6 text-center text-white/25 text-sm">Loading technicians…</div>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-[10px] uppercase tracking-widest text-white/40" style={{ fontFamily: "var(--font-heading)" }}>
+                  MX-LMS Technician
+                </Label>
+                <Select value={selectedId} onValueChange={setSelectedId}>
+                  <SelectTrigger
+                    className="text-sm text-white/80"
+                    style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.1)" }}
+                  >
+                    <SelectValue placeholder="— Not linked —" />
+                  </SelectTrigger>
+                  <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                    <SelectItem value="" className="text-white/40 focus:bg-white/10 focus:text-white text-xs italic">
+                      — Not linked —
+                    </SelectItem>
+                    {technicians.map(t => (
+                      <SelectItem key={t.id} value={String(t.id)} className="text-white/80 focus:bg-white/10 focus:text-white">
+                        <span className="font-medium">{t.name}</span>
+                        {t.tech_code && (
+                          <span className="ml-2 text-[11px] text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                            [{t.tech_code}]
+                          </span>
+                        )}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {currentTech && (
+                <div
+                  className="rounded px-3 py-2.5 space-y-1"
+                  style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.18)" }}
+                >
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--skyshare-gold)] opacity-70" style={{ fontFamily: "var(--font-heading)" }}>
+                    Selected Technician
+                  </p>
+                  <p className="text-sm text-white/85">{currentTech.name}</p>
+                  <div className="flex gap-3 text-[11px] text-white/40" style={{ fontFamily: "var(--font-heading)" }}>
+                    {currentTech.tech_code && <span>Code: {currentTech.tech_code}</span>}
+                    {currentTech.role && <span>· {currentTech.role}</span>}
+                    {currentTech.email && <span>· {currentTech.email}</span>}
+                  </div>
+                </div>
+              )}
+
+              {!currentTech && user?.mxlms_technician_id && (
+                <div
+                  className="rounded px-3 py-2 text-xs text-amber-400"
+                  style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}
+                >
+                  Currently linked to tech ID {user.mxlms_technician_id} — no longer in active roster.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <DialogFooter className="mt-2">
+          <Button variant="ghost" onClick={onClose} className="text-white/40 hover:text-white/60">Cancel</Button>
+          <Button
+            onClick={save}
+            disabled={saving || isLoading}
+            style={{
+              background: "var(--skyshare-gold)",
+              color: "hsl(0 0% 8%)",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            {saving ? "Saving…" : "Save Link"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
@@ -576,6 +740,7 @@ export default function UsersPage() {
 
   const [permTarget, setPermTarget] = useState<Profile | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
+  const [linkTarget, setLinkTarget] = useState<Profile | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
@@ -777,7 +942,7 @@ export default function UsersPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-white/[0.07] hover:bg-transparent">
-                    {["User", "Role", "Status", "Last Login", ""].map(h => (
+                    {["User", "Role", "Status", "Last Login", "MX-LMS", ""].map(h => (
                       <TableHead key={h} className="text-white/40" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase" }}>
                         {h}
                       </TableHead>
@@ -838,6 +1003,40 @@ export default function UsersPage() {
                           : "Never"}
                       </TableCell>
 
+                      {/* MX-LMS linked indicator */}
+                      <TableCell>
+                        {user.mxlms_technician_id ? (
+                          <button
+                            onClick={() => setLinkTarget(user)}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold border tracking-wider uppercase transition-colors hover:border-[rgba(212,160,23,0.4)]"
+                            style={{
+                              fontFamily: "var(--font-heading)",
+                              background: "rgba(212,160,23,0.08)",
+                              border: "1px solid rgba(212,160,23,0.2)",
+                              color: "var(--skyshare-gold)",
+                            }}
+                            title="Edit MX-LMS link"
+                          >
+                            <Link2 className="h-2.5 w-2.5" />
+                            Linked
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setLinkTarget(user)}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold border tracking-wider uppercase transition-colors hover:border-white/20 hover:text-white/50"
+                            style={{
+                              fontFamily: "var(--font-heading)",
+                              background: "transparent",
+                              border: "1px solid rgba(255,255,255,0.08)",
+                              color: "rgba(255,255,255,0.2)",
+                            }}
+                            title="Link to MX-LMS"
+                          >
+                            —
+                          </button>
+                        )}
+                      </TableCell>
+
                       {/* Actions */}
                       <TableCell>
                         {user.id !== me?.id && user.role !== "Super Admin" && (
@@ -853,6 +1052,13 @@ export default function UsersPage() {
                                 onClick={() => setPermTarget(user)}
                               >
                                 <Shield className="h-3.5 w-3.5" /> Manage Permissions
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="focus:bg-white/10 cursor-pointer gap-2"
+                                onClick={() => setLinkTarget(user)}
+                              >
+                                <Link2 className="h-3.5 w-3.5" />
+                                {user.mxlms_technician_id ? "Edit MX-LMS Link" : "Link to MX-LMS"}
                               </DropdownMenuItem>
                               {user.status === "Pending" && (
                                 <DropdownMenuItem
@@ -995,6 +1201,11 @@ export default function UsersPage() {
         user={permTarget}
         open={!!permTarget}
         onClose={() => setPermTarget(null)}
+      />
+      <LinkMxlmsDialog
+        user={linkTarget}
+        open={!!linkTarget}
+        onClose={() => setLinkTarget(null)}
       />
       <InviteDialog
         open={inviteOpen}
