@@ -571,7 +571,10 @@ function RemoveUserDialog({
   )
 }
 
-// ─── Link MX-LMS Dialog ───────────────────────────────────────────────────────
+// ─── MX-LMS Link / Unlink Dialog ─────────────────────────────────────────────
+// No dropdown in the happy path — auto-matches by email, shows a confirm only.
+// Falls back to a small picker only when there's no email match.
+// Unlinking your OWN profile requires a two-step confirm.
 
 async function fetchMxlmsTechnicians(): Promise<MxlmsTechnician[]> {
   const { data, error } = await mxlms
@@ -583,42 +586,58 @@ async function fetchMxlmsTechnicians(): Promise<MxlmsTechnician[]> {
   return (data ?? []) as MxlmsTechnician[]
 }
 
-function LinkMxlmsDialog({
+function MxlmsLinkDialog({
   user,
+  isSelf,
+  technicians,
   open,
   onClose,
 }: {
   user: Profile | null
+  isSelf: boolean
+  technicians: MxlmsTechnician[]
   open: boolean
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const [saving, setSaving] = useState(false)
-  const [selectedId, setSelectedId] = useState<string>("")
+  const isLinked = user?.mxlms_technician_id != null
+  const action   = isLinked ? "unlink" : "link"
 
-  const { data: technicians = [], isLoading } = useQuery({
-    queryKey: ["mxlms-technicians"],
-    queryFn: fetchMxlmsTechnicians,
-    enabled: open,
-  })
+  // Auto-match by email; null = no match found (fallback to picker)
+  const autoMatch = !isLinked
+    ? technicians.find(t => t.email?.toLowerCase() === user?.email?.toLowerCase()) ?? null
+    : null
+
+  const currentTech = isLinked
+    ? technicians.find(t => t.id === user?.mxlms_technician_id) ?? null
+    : null
+
+  // Picker fallback state (used only when auto-match fails)
+  const [pickedId, setPickedId] = useState<string>("__none__")
+  const [step, setStep]         = useState<1 | 2>(1)   // step 2 = extra confirm for self-unlink
+  const [saving, setSaving]     = useState(false)
 
   useEffect(() => {
-    if (open && user) {
-      setSelectedId(user.mxlms_technician_id != null ? String(user.mxlms_technician_id) : "__none__")
-    }
+    if (open) { setStep(1); setPickedId("__none__") }
   }, [open, user])
 
-  const save = async () => {
+  const resolvedTech = action === "link"
+    ? (autoMatch ?? technicians.find(t => String(t.id) === pickedId) ?? null)
+    : currentTech
+
+  const canConfirm = action === "unlink" || resolvedTech != null
+
+  async function doSave() {
     if (!user) return
     setSaving(true)
     try {
-      const value = selectedId === "__none__" ? null : Number(selectedId)
+      const newValue = action === "link" ? resolvedTech!.id : null
       const { error } = await supabase
         .from("profiles")
-        .update({ mxlms_technician_id: value })
+        .update({ mxlms_technician_id: newValue })
         .eq("id", user.id)
       if (error) throw error
-      toast.success(value ? "MX-LMS profile linked" : "MX-LMS link removed")
+      toast.success(action === "link" ? `Linked to MX-LMS` : "MX-LMS link removed")
       qc.invalidateQueries({ queryKey: ["admin-users"] })
       onClose()
     } catch (e: any) {
@@ -628,103 +647,145 @@ function LinkMxlmsDialog({
     }
   }
 
-  const currentTech = technicians.find(t => String(t.id) === selectedId)
+  function handleConfirm() {
+    if (action === "unlink" && isSelf && step === 1) {
+      setStep(2)
+      return
+    }
+    doSave()
+  }
+
+  if (!user) return null
+
+  const displayName = user.full_name ?? user.email
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent
-        className="max-w-md"
+        className="max-w-sm"
         style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
       >
         <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "8px 8px 0 0", marginTop: "-1px", marginLeft: "-25px", marginRight: "-25px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
 
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
-            Link to MX-LMS
+            {action === "link" ? "Enable MX-LMS Access" : step === 2 ? "Are You Sure?" : "Remove MX-LMS Access"}
           </DialogTitle>
           <DialogDescription className="text-white/35" style={{ fontFamily: "var(--font-heading)", fontSize: "11px", letterSpacing: "0.08em" }}>
-            {user?.full_name ?? user?.email}
-            <span className="mx-2 opacity-30">·</span>
-            Connects their My Training &amp; My Journey tabs
+            {displayName}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-1">
-          {isLoading ? (
-            <div className="py-6 text-center text-white/25 text-sm">Loading technicians…</div>
-          ) : (
+        <div className="space-y-3 py-1">
+
+          {/* ── LINK flow ── */}
+          {action === "link" && (
             <>
-              <div className="space-y-1.5">
-                <Label className="text-[10px] uppercase tracking-widest text-white/40" style={{ fontFamily: "var(--font-heading)" }}>
-                  MX-LMS Technician
-                </Label>
-                <Select value={selectedId} onValueChange={setSelectedId}>
-                  <SelectTrigger
-                    className="text-sm text-white/80"
-                    style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.1)" }}
-                  >
-                    <SelectValue placeholder="— Not linked —" />
-                  </SelectTrigger>
-                  <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                    <SelectItem value="__none__" className="text-white/40 focus:bg-white/10 focus:text-white text-xs italic">
-                      — Not linked —
-                    </SelectItem>
-                    {technicians.map(t => (
-                      <SelectItem key={t.id} value={String(t.id)} className="text-white/80 focus:bg-white/10 focus:text-white">
-                        <span className="font-medium">{t.name}</span>
-                        {t.tech_code && (
-                          <span className="ml-2 text-[11px] text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
-                            [{t.tech_code}]
-                          </span>
-                        )}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {currentTech && (
-                <div
-                  className="rounded px-3 py-2.5 space-y-1"
-                  style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.18)" }}
-                >
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--skyshare-gold)] opacity-70" style={{ fontFamily: "var(--font-heading)" }}>
-                    Selected Technician
+              {autoMatch ? (
+                // Happy path: show the match, just confirm
+                <div className="rounded-lg px-4 py-3.5 space-y-1"
+                  style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.2)" }}>
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--skyshare-gold)] opacity-60" style={{ fontFamily: "var(--font-heading)" }}>
+                    Matched by email
                   </p>
-                  <p className="text-sm text-white/85">{currentTech.name}</p>
-                  <div className="flex gap-3 text-[11px] text-white/40" style={{ fontFamily: "var(--font-heading)" }}>
-                    {currentTech.tech_code && <span>Code: {currentTech.tech_code}</span>}
-                    {currentTech.role && <span>· {currentTech.role}</span>}
-                    {currentTech.email && <span>· {currentTech.email}</span>}
+                  <p className="text-base font-semibold text-white/90">{autoMatch.name}</p>
+                  <p className="text-[11px] text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                    {autoMatch.tech_code && `[${autoMatch.tech_code}]`}
+                    {autoMatch.role && ` · ${autoMatch.role}`}
+                  </p>
+                </div>
+              ) : (
+                // Fallback: no email match, show a small picker
+                <div className="space-y-2">
+                  <div className="rounded px-3 py-2.5 text-xs text-amber-400"
+                    style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                    No technician email matched <strong>{user.email}</strong>. Pick manually:
                   </div>
+                  <Select value={pickedId} onValueChange={setPickedId}>
+                    <SelectTrigger className="text-sm text-white/80"
+                      style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                      <SelectValue placeholder="Select technician…" />
+                    </SelectTrigger>
+                    <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                      <SelectItem value="__none__" className="text-white/40 focus:bg-white/10 italic text-xs">
+                        — Choose one —
+                      </SelectItem>
+                      {technicians.map(t => (
+                        <SelectItem key={t.id} value={String(t.id)} className="text-white/80 focus:bg-white/10 focus:text-white">
+                          {t.name}{t.tech_code ? ` [${t.tech_code}]` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
-
-              {!currentTech && user?.mxlms_technician_id && (
-                <div
-                  className="rounded px-3 py-2 text-xs text-amber-400"
-                  style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}
-                >
-                  Currently linked to tech ID {user.mxlms_technician_id} — no longer in active roster.
-                </div>
-              )}
+              <p className="text-xs text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+                This enables My Training and My Journey for {displayName}.
+              </p>
             </>
+          )}
+
+          {/* ── UNLINK flow — step 1 ── */}
+          {action === "unlink" && step === 1 && (
+            <>
+              {currentTech && (
+                <div className="rounded-lg px-4 py-3 space-y-0.5"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <p className="text-sm text-white/60">Currently linked to</p>
+                  <p className="text-base font-semibold text-white/85">{currentTech.name}</p>
+                </div>
+              )}
+              {isSelf && (
+                <div className="rounded px-3 py-2.5 text-xs text-red-400"
+                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                  You are modifying <strong>your own profile</strong>. Removing this link will disable
+                  your My Training and My Journey tabs.
+                </div>
+              )}
+              <p className="text-xs text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+                My Training and My Journey will show a "not connected" state until re-linked.
+              </p>
+            </>
+          )}
+
+          {/* ── UNLINK flow — step 2 (self only) ── */}
+          {action === "unlink" && step === 2 && (
+            <div className="space-y-3">
+              <div className="rounded px-4 py-3.5 text-sm text-red-300 leading-relaxed"
+                style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}>
+                <strong className="block mb-1">Final confirmation</strong>
+                This will remove your own MX-LMS connection. You will lose access to
+                My Training and My Journey until an admin re-links your profile.
+              </div>
+            </div>
           )}
         </div>
 
-        <DialogFooter className="mt-2">
-          <Button variant="ghost" onClick={onClose} className="text-white/40 hover:text-white/60">Cancel</Button>
+        <DialogFooter className="mt-2 gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={saving}
+            className="text-white/40 hover:text-white/60">
+            Cancel
+          </Button>
           <Button
-            onClick={save}
-            disabled={saving || isLoading}
+            onClick={handleConfirm}
+            disabled={!canConfirm || saving}
             style={{
-              background: "var(--skyshare-gold)",
-              color: "hsl(0 0% 8%)",
+              background: action === "unlink"
+                ? (step === 2 ? "rgba(239,68,68,0.8)" : "rgba(239,68,68,0.15)")
+                : (canConfirm ? "var(--skyshare-gold)" : "rgba(212,160,23,0.3)"),
+              color: action === "unlink"
+                ? (step === 2 ? "#fff" : "#f87171")
+                : (canConfirm ? "hsl(0 0% 8%)" : "rgba(0,0,0,0.3)"),
+              border: action === "unlink" ? `1px solid rgba(239,68,68,${step === 2 ? 0.5 : 0.3})` : "none",
               fontFamily: "var(--font-heading)",
               letterSpacing: "0.1em",
             }}
           >
-            {saving ? "Saving…" : "Save Link"}
+            {saving ? "Saving…" : action === "link"
+              ? "Enable Access"
+              : step === 1 && isSelf
+                ? "Remove My Link →"
+                : "Yes, Remove Link"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -738,10 +799,10 @@ export default function UsersPage() {
   const { profile: me } = useAuth()
   const qc = useQueryClient()
 
-  const [permTarget, setPermTarget] = useState<Profile | null>(null)
+  const [permTarget, setPermTarget]   = useState<Profile | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
-  const [linkTarget, setLinkTarget] = useState<Profile | null>(null)
-  const [inviteOpen, setInviteOpen] = useState(false)
+  const [linkTarget, setLinkTarget]   = useState<Profile | null>(null)
+  const [inviteOpen, setInviteOpen]   = useState(false)
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -749,6 +810,13 @@ export default function UsersPage() {
     queryKey: ["admin-users"],
     queryFn: fetchProfiles,
     enabled: isAdmin,
+  })
+
+  const { data: mxlmsTechs = [] } = useQuery({
+    queryKey: ["mxlms-technicians"],
+    queryFn: fetchMxlmsTechnicians,
+    enabled: isAdmin,
+    staleTime: 60_000,
   })
 
 
@@ -1058,7 +1126,7 @@ export default function UsersPage() {
                                 onClick={() => setLinkTarget(user)}
                               >
                                 <Link2 className="h-3.5 w-3.5" />
-                                {user.mxlms_technician_id ? "Edit MX-LMS Link" : "Link to MX-LMS"}
+                                {user.mxlms_technician_id ? "Remove MX-LMS Access" : "Enable MX-LMS Access"}
                               </DropdownMenuItem>
                               {user.status === "Pending" && (
                                 <DropdownMenuItem
@@ -1202,8 +1270,10 @@ export default function UsersPage() {
         open={!!permTarget}
         onClose={() => setPermTarget(null)}
       />
-      <LinkMxlmsDialog
+      <MxlmsLinkDialog
         user={linkTarget}
+        isSelf={linkTarget?.id === me?.id}
+        technicians={mxlmsTechs}
         open={!!linkTarget}
         onClose={() => setLinkTarget(null)}
       />
