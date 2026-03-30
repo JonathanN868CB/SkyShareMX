@@ -695,33 +695,25 @@ function MxlmsLinkDialog({
                   </p>
                 </div>
               ) : (
-                // Fallback: no email match, show a small picker
-                <div className="space-y-2">
-                  <div className="rounded px-3 py-2.5 text-xs text-amber-400"
-                    style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
-                    No technician email matched <strong>{user.email}</strong>. Pick manually:
-                  </div>
-                  <Select value={pickedId} onValueChange={setPickedId}>
-                    <SelectTrigger className="text-sm text-white/80"
-                      style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                      <SelectValue placeholder="Select technician…" />
-                    </SelectTrigger>
-                    <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                      <SelectItem value="__none__" className="text-white/40 focus:bg-white/10 italic text-xs">
-                        — Choose one —
-                      </SelectItem>
-                      {technicians.map(t => (
-                        <SelectItem key={t.id} value={String(t.id)} className="text-white/80 focus:bg-white/10 focus:text-white">
-                          {t.name}{t.tech_code ? ` [${t.tech_code}]` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                // No email match — data fix needed in MX-LMS
+                <div className="rounded px-4 py-3.5 space-y-1.5"
+                  style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                  <p className="text-[10px] uppercase tracking-wider text-amber-400 opacity-70" style={{ fontFamily: "var(--font-heading)" }}>
+                    No match found
+                  </p>
+                  <p className="text-sm text-white/70">
+                    No MX-LMS technician matched <strong className="text-white/85">{user?.email}</strong>.
+                  </p>
+                  <p className="text-xs text-white/35 leading-relaxed mt-1" style={{ fontFamily: "var(--font-heading)" }}>
+                    Update the technician&apos;s email in MX-LMS to match, then try again.
+                  </p>
                 </div>
               )}
-              <p className="text-xs text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
-                This enables My Training and My Journey for {displayName}.
-              </p>
+              {autoMatch && (
+                <p className="text-xs text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+                  This enables My Training and My Journey for {displayName}.
+                </p>
+              )}
             </>
           )}
 
@@ -764,29 +756,31 @@ function MxlmsLinkDialog({
         <DialogFooter className="mt-2 gap-2">
           <Button variant="ghost" onClick={onClose} disabled={saving}
             className="text-white/40 hover:text-white/60">
-            Cancel
+            {action === "link" && !autoMatch ? "Close" : "Cancel"}
           </Button>
-          <Button
-            onClick={handleConfirm}
-            disabled={!canConfirm || saving}
-            style={{
-              background: action === "unlink"
-                ? (step === 2 ? "rgba(239,68,68,0.8)" : "rgba(239,68,68,0.15)")
-                : (canConfirm ? "var(--skyshare-gold)" : "rgba(212,160,23,0.3)"),
-              color: action === "unlink"
-                ? (step === 2 ? "#fff" : "#f87171")
-                : (canConfirm ? "hsl(0 0% 8%)" : "rgba(0,0,0,0.3)"),
-              border: action === "unlink" ? `1px solid rgba(239,68,68,${step === 2 ? 0.5 : 0.3})` : "none",
-              fontFamily: "var(--font-heading)",
-              letterSpacing: "0.1em",
-            }}
-          >
-            {saving ? "Saving…" : action === "link"
-              ? "Enable Access"
-              : step === 1 && isSelf
-                ? "Remove My Link →"
-                : "Yes, Remove Link"}
-          </Button>
+          {(action === "unlink" || autoMatch) && (
+            <Button
+              onClick={handleConfirm}
+              disabled={!canConfirm || saving}
+              style={{
+                background: action === "unlink"
+                  ? (step === 2 ? "rgba(239,68,68,0.8)" : "rgba(239,68,68,0.15)")
+                  : "var(--skyshare-gold)",
+                color: action === "unlink"
+                  ? (step === 2 ? "#fff" : "#f87171")
+                  : "hsl(0 0% 8%)",
+                border: action === "unlink" ? `1px solid rgba(239,68,68,${step === 2 ? 0.5 : 0.3})` : "none",
+                fontFamily: "var(--font-heading)",
+                letterSpacing: "0.1em",
+              }}
+            >
+              {saving ? "Saving…" : action === "link"
+                ? "Enable Access"
+                : step === 1 && isSelf
+                  ? "Remove My Link →"
+                  : "Yes, Remove Link"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1120,13 +1114,6 @@ export default function UsersPage() {
                                 onClick={() => setPermTarget(user)}
                               >
                                 <Shield className="h-3.5 w-3.5" /> Manage Permissions
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="focus:bg-white/10 cursor-pointer gap-2"
-                                onClick={() => setLinkTarget(user)}
-                              >
-                                <Link2 className="h-3.5 w-3.5" />
-                                {user.mxlms_technician_id ? "Remove MX-LMS Access" : "Enable MX-LMS Access"}
                               </DropdownMenuItem>
                               {user.status === "Pending" && (
                                 <DropdownMenuItem

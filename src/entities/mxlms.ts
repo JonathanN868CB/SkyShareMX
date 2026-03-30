@@ -110,6 +110,7 @@ export interface MxlmsSession {
   next_quarter_focus: string | null
   end_summary: string | null
   employee_acknowledged_at: string | null
+  drive_url: string | null
   created_at: string
 }
 
@@ -177,4 +178,5 @@ export interface MxlmsPendingInsert {
   storage_url: string
   file_name: string
   status?: string
+  matched_training_item_id?: number | null
 }

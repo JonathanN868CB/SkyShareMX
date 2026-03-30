@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query"
-import { GraduationCap, Unlink } from "lucide-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { GraduationCap, Unlink, XCircle } from "lucide-react"
+import { toast } from "sonner"
 import { Card } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
+import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
-import type { MxlmsTechnicianTraining, MxlmsTrainingCompletion, MxlmsAdHocCompletion } from "@/entities/mxlms"
+import type { MxlmsTechnicianTraining, MxlmsTrainingCompletion, MxlmsAdHocCompletion, MxlmsPendingCompletion } from "@/entities/mxlms"
 import TrainingDashboard, { DueBadge } from "./TrainingDashboard"
 
 // ─── Data fetching ────────────────────────────────────────────────────────────
@@ -35,6 +37,16 @@ async function fetchAdHoc(): Promise<MxlmsAdHocCompletion[]> {
     .limit(50)
   if (error) throw error
   return (data ?? []) as MxlmsAdHocCompletion[]
+}
+
+async function fetchPending(): Promise<MxlmsPendingCompletion[]> {
+  const { data, error } = await mxlms
+    .from("pending_completions")
+    .select("id,technician_id,matched_training_item_id,status,review_notes,file_name,detected_at,storage_path")
+    .in("status", ["pending", "rejected"])
+    .order("detected_at", { ascending: false })
+  if (error) throw error
+  return (data ?? []) as MxlmsPendingCompletion[]
 }
 
 // ─── Not-linked placeholder ───────────────────────────────────────────────────
@@ -240,6 +252,65 @@ export default function MyTraining() {
     enabled: !!techId,
   })
 
+  const {
+    data: pending = [],
+    refetch: refetchPending,
+  } = useQuery({
+    queryKey: ["my-training-pending", techId],
+    queryFn: fetchPending,
+    enabled: !!techId,
+  })
+
+  const qc = useQueryClient()
+
+  // Build submission map: training_item_id → most recent submission (pending beats rejected)
+  const submissionsByItemId = new Map<number, MxlmsPendingCompletion>()
+  for (const p of pending.filter(p => p.status === "pending" && p.matched_training_item_id != null)) {
+    if (!submissionsByItemId.has(p.matched_training_item_id!)) {
+      submissionsByItemId.set(p.matched_training_item_id!, p)
+    }
+  }
+  for (const p of pending.filter(p => p.status === "rejected" && p.matched_training_item_id != null)) {
+    if (!submissionsByItemId.has(p.matched_training_item_id!)) {
+      submissionsByItemId.set(p.matched_training_item_id!, p)
+    }
+  }
+
+  // Unlinked rejections (no matched_training_item_id) — shown in banner
+  const unlinkedRejections = pending.filter(p => p.status === "rejected" && p.matched_training_item_id == null)
+
+  async function handleCancelSubmission(id: number): Promise<void> {
+    // Get the row first so we can clean up the storage file
+    const { data: row, error: fetchErr } = await mxlms
+      .from("pending_completions")
+      .select("storage_path")
+      .eq("id", id)
+      .maybeSingle()
+    if (fetchErr) {
+      toast.error(fetchErr.message ?? "Failed to retract submission")
+      return
+    }
+
+    // Delete the file from Supabase Storage if present
+    if (row?.storage_path) {
+      await supabase.storage.from("training-docs").remove([row.storage_path])
+      // Non-fatal — proceed even if storage delete fails
+    }
+
+    // Hard-delete the pending_completions record
+    const { error: deleteErr } = await mxlms
+      .from("pending_completions")
+      .delete()
+      .eq("id", id)
+    if (deleteErr) {
+      toast.error(deleteErr.message ?? "Failed to retract submission")
+      return
+    }
+
+    toast.success("Submission retracted")
+    qc.invalidateQueries({ queryKey: ["my-training-pending", techId] })
+  }
+
   return (
     <div className="space-y-8">
 
@@ -267,6 +338,43 @@ export default function MyTraining() {
         </Card>
       ) : (
         <>
+          {/* Unlinked rejection banner — for submissions we can't attach to a specific row */}
+          {unlinkedRejections.length > 0 && (
+            <div className="rounded-lg px-5 py-4 flex items-start gap-3"
+              style={{ background: "rgba(193,2,48,0.08)", border: "1px solid rgba(193,2,48,0.2)" }}>
+              <XCircle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: "#e05070" }} />
+              <div className="flex-1">
+                <p className="text-sm font-medium mb-1.5" style={{ color: "#e05070" }}>
+                  {unlinkedRejections.length === 1 ? "A document was rejected" : `${unlinkedRejections.length} documents were rejected`}
+                </p>
+                <div className="space-y-2">
+                  {unlinkedRejections.map(p => (
+                    <div key={p.id} className="flex items-start justify-between gap-4">
+                      <div>
+                        {p.file_name && (
+                          <p className="text-xs text-white/60" style={{ fontFamily: "var(--font-heading)" }}>{p.file_name}</p>
+                        )}
+                        <p className="text-xs text-white/40 italic">
+                          {p.review_notes ?? "Rejected — please resubmit the correct document."}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleCancelSubmission(p.id)}
+                        className="text-[10px] uppercase tracking-wider text-white/30 hover:text-white/50 transition-colors shrink-0"
+                        style={{ fontFamily: "var(--font-heading)" }}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs mt-2 text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                  Find the relevant assignment below and use Submit Doc to upload a corrected document.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Active Assignments */}
           <Card className="card-elevated border-0 overflow-hidden">
             <SectionHeader
@@ -277,7 +385,9 @@ export default function MyTraining() {
               assignments={assignments}
               loading={loadingAssignments}
               techId={techId}
-              onRefresh={() => refetchAssignments()}
+              submissionsByItemId={submissionsByItemId}
+              onCancelSubmission={handleCancelSubmission}
+              onRefresh={() => { refetchAssignments(); refetchPending() }}
             />
           </Card>
 

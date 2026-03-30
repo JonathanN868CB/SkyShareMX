@@ -25,7 +25,7 @@ import type {
 async function fetchSessions(): Promise<MxlmsSession[]> {
   const { data, error } = await mxlms
     .from("sessions")
-    .select("id,technician_id,session_number,session_year,status,conducted_date,scheduled_date,wins,concerns,next_quarter_focus,end_summary,created_at")
+    .select("id,technician_id,session_number,session_year,status,conducted_date,scheduled_date,wins,concerns,next_quarter_focus,end_summary,drive_url,created_at")
     .order("session_year", { ascending: false })
     .order("session_number", { ascending: false })
     .limit(20)
@@ -73,16 +73,24 @@ async function fetchJournal(): Promise<MxlmsJournalEntry[]> {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Date-only strings (YYYY-MM-DD) must be parsed as local noon, not UTC midnight,
+// otherwise UTC→local conversion shifts the display date back one day.
+function parseDate(str: string): Date {
+  return /^\d{4}-\d{2}-\d{2}$/.test(str)
+    ? new Date(str + "T12:00:00")
+    : new Date(str)
+}
+
 function formatDate(str: string | null): string {
   if (!str?.trim()) return "—"
-  const d = new Date(str)
+  const d = parseDate(str)
   if (isNaN(d.getTime())) return str
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
 function formatDateRelative(str: string | null): string {
   if (!str?.trim()) return "—"
-  const d = new Date(str)
+  const d = parseDate(str)
   if (isNaN(d.getTime())) return str
   const diff = Math.floor((d.getTime() - Date.now()) / 86_400_000)
   if (diff === 0) return "Today"
@@ -163,7 +171,7 @@ function Section({
 // ─── Next Review Card ─────────────────────────────────────────────────────────
 
 function NextReviewCard({ sessions, loading }: { sessions: MxlmsSession[]; loading: boolean }) {
-  const next = sessions.find(s => s.status === "scheduled" && s.scheduled_date)
+  const next = sessions.find(s => (s.status === "scheduled" || s.status === "pending") && s.scheduled_date)
   const last = sessions.find(s => s.status === "completed")
 
   if (loading) {
@@ -261,6 +269,18 @@ function SessionHistory({ sessions }: { sessions: MxlmsSession[] }) {
                   {s.session_year ? <span className="text-white/30 ml-1">· {s.session_year}</span> : null}
                 </span>
               </div>
+              {s.drive_url && (
+                <a
+                  href={s.drive_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="text-[10px] uppercase tracking-wider transition-opacity hover:opacity-70 shrink-0"
+                  style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+                >
+                  View Report →
+                </a>
+              )}
               <span className="text-xs text-white/35 shrink-0">{formatDate(s.conducted_date)}</span>
             </button>
 
@@ -733,7 +753,29 @@ export default function MyJourney() {
         </Card>
       ) : (
         <>
-          {/* Next Review */}
+          {/* Disclaimer */}
+          <div className="rounded-lg px-5 py-4"
+            style={{ background: "rgba(70,100,129,0.10)", border: "1px solid rgba(70,100,129,0.18)" }}>
+            <p className="text-xs leading-relaxed text-white/45" style={{ fontFamily: "var(--font-heading)" }}>
+              Your 4-1-1 review sessions are where most of this is built — goals, action items, and session notes
+              are added by your manager during each review. Journal entries you write and mark
+              as <strong className="text-white/65">Shared</strong> will be visible to your manager
+              and become part of your professional record.
+            </p>
+          </div>
+
+          {/* Journal — moved to top */}
+          <Section icon={BookOpen} title="My Journal" sub="Notes, wins, and reflections">
+            <JournalPanel
+              entries={journal}
+              loading={lj}
+              techId={techId}
+              userId={userId}
+              onSuccess={() => refetchJournal()}
+            />
+          </Section>
+
+          {/* Review Schedule */}
           <Section icon={CalendarDays} title="Review Schedule" sub="Upcoming and past 4-1-1 sessions">
             <NextReviewCard sessions={sessions} loading={ls} />
             {sessions.filter(s => s.status === "completed").length > 0 && (
@@ -761,17 +803,6 @@ export default function MyJourney() {
           {/* Career Interests */}
           <Section icon={Briefcase} title="Career Interests" sub="Captured from your 4-1-1 reviews" defaultOpen={false}>
             <CareerPanel interests={interests ?? null} loading={lc} />
-          </Section>
-
-          {/* Journal */}
-          <Section icon={BookOpen} title="My Journal" sub="Personal notes, wins, and reflections">
-            <JournalPanel
-              entries={journal}
-              loading={lj}
-              techId={techId}
-              userId={userId}
-              onSuccess={() => refetchJournal()}
-            />
           </Section>
         </>
       )}

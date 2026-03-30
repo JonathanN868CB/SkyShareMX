@@ -70,7 +70,7 @@ const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[
     adminOnly: true,
     items: [
       { name: "Users",                  path: "/app/admin/users",       icon: Users,       section: "Dashboard" },
-      { name: "Team Training",          path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
+      { name: "Team Training & Journey", path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
       { name: "Alerts & Notifications", path: "/app/admin/alerts",      icon: Bell,       section: "Dashboard" },
       { name: "Settings",               path: "/app/admin/settings",    icon: Settings,   section: "Dashboard" },
       { name: "Permissions Index",      path: "/app/admin/permissions", icon: ShieldCheck, section: "Dashboard", superAdminOnly: true },
