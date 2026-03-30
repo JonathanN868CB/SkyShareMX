@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef } from "react"
-import { AlertTriangle, ChevronDown, ChevronRight, Upload, CheckCircle2, Clock, ExternalLink, X, FileText } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronRight, Upload, CheckCircle2, Clock, ExternalLink, X, FileText, Hourglass, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/shared/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/shared/ui/label"
 import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
-import type { MxlmsTechnicianTraining, MxlmsPendingInsert } from "@/entities/mxlms"
+import type { MxlmsTechnicianTraining, MxlmsPendingInsert, MxlmsPendingCompletion } from "@/entities/mxlms"
 
 // ─── Due-date helpers ─────────────────────────────────────────────────────────
 
@@ -133,11 +133,12 @@ function UploadModal({
 
       // Insert pending_completions row
       const payload: MxlmsPendingInsert = {
-        technician_id: techId,
-        storage_path:  storagePath,
-        storage_url:   signedData.signedUrl,
-        file_name:     file.name,
-        status:        "pending",
+        technician_id:            techId,
+        storage_path:             storagePath,
+        storage_url:              signedData.signedUrl,
+        file_name:                file.name,
+        status:                   "pending",
+        matched_training_item_id: assignment?.training_item_id ?? null,
       }
       const { error: insertErr } = await mxlms.from("pending_completions").insert(payload)
       if (insertErr) throw insertErr
@@ -252,15 +253,149 @@ function UploadModal({
   )
 }
 
+// ─── Submission card row ──────────────────────────────────────────────────────
+
+function SubmissionRow({
+  submission,
+  onCancel,
+  onResubmit,
+}: {
+  submission: MxlmsPendingCompletion
+  onCancel: () => Promise<void>
+  onResubmit: () => void
+}) {
+  const [cancelling,   setCancelling]   = useState(false)
+  const [confirmRetract, setConfirmRetract] = useState(false)
+  const isPending  = submission.status === "pending"
+  const isRejected = submission.status === "rejected"
+
+  const accentColor = isPending ? "var(--skyshare-gold)" : "#e05070"
+  const bgColor     = isPending ? "rgba(212,160,23,0.04)" : "rgba(193,2,48,0.05)"
+
+  async function handleCancel() {
+    setCancelling(true)
+    try {
+      await onCancel()
+    } finally {
+      setCancelling(false)
+      setConfirmRetract(false)
+    }
+  }
+
+  return (
+    <tr style={{ background: bgColor, borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+      <td /> {/* align with chevron column */}
+      <td colSpan={4} className="px-3 pt-0 pb-3">
+        <div className="rounded-md px-4 py-3"
+          style={{ borderLeft: `3px solid ${accentColor}`, background: "rgba(0,0,0,0.12)" }}>
+
+          <div className="flex items-start justify-between gap-4">
+            {/* File info + status */}
+            <div className="flex items-start gap-3 min-w-0">
+              <FileText size={13} style={{ color: accentColor, marginTop: 2, flexShrink: 0 }} />
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-white/70 truncate">
+                  {submission.file_name ?? "Document"}
+                </p>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
+                  {isPending && (
+                    <span className="inline-flex items-center gap-1 text-[10px]"
+                      style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+                      <Hourglass size={8} />
+                      Waiting for review
+                    </span>
+                  )}
+                  {isRejected && (
+                    <span className="inline-flex items-center gap-1 text-[10px]"
+                      style={{ color: "#e05070", fontFamily: "var(--font-heading)" }}>
+                      <XCircle size={8} />
+                      Rejected
+                    </span>
+                  )}
+                  {isRejected && submission.review_notes && (
+                    <span className="text-[10px] text-white/45 italic">
+                      "{submission.review_notes}"
+                    </span>
+                  )}
+                  <span className="text-[10px] text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+                    · Submitted {formatDate(submission.detected_at)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 shrink-0">
+              {isPending && !confirmRetract && (
+                <button
+                  onClick={() => setConfirmRetract(true)}
+                  disabled={cancelling}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium tracking-wide transition-all disabled:opacity-40 hover:opacity-80"
+                  style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.12)", fontFamily: "var(--font-heading)" }}
+                >
+                  <X size={11} />
+                  Retract Submission
+                </button>
+              )}
+              {isRejected && (
+                <button
+                  onClick={onResubmit}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all hover:opacity-80"
+                  style={{ background: "var(--skyshare-gold)", color: "#111", fontFamily: "var(--font-heading)" }}
+                >
+                  <Upload size={9} />
+                  Resubmit
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Confirm retract panel */}
+          {confirmRetract && (
+            <div className="mt-3 pt-3 flex items-center justify-between gap-4"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+              <p className="text-xs text-white/55" style={{ fontFamily: "var(--font-heading)" }}>
+                Are you sure? This will permanently delete the uploaded document and remove it from the review queue. Your training assignment will remain.
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setConfirmRetract(false)}
+                  disabled={cancelling}
+                  className="px-3 py-1.5 rounded text-xs text-white/40 transition-colors hover:text-white/60 disabled:opacity-40"
+                  style={{ border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-heading)" }}
+                >
+                  Keep It
+                </button>
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-all disabled:opacity-40 hover:opacity-80"
+                  style={{ background: "rgba(193,2,48,0.75)", color: "rgba(255,255,255,0.9)", border: "1px solid rgba(193,2,48,0.4)", fontFamily: "var(--font-heading)" }}
+                >
+                  {cancelling ? "Retracting…" : "Yes, Retract"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 // ─── Assignment row ───────────────────────────────────────────────────────────
 
 function AssignmentRow({
   row,
   techId,
+  submission,
+  onCancelSubmission,
   onUploadSuccess,
 }: {
   row: MxlmsTechnicianTraining
   techId: number
+  submission: MxlmsPendingCompletion | null
+  onCancelSubmission: (id: number) => Promise<void>
   onUploadSuccess: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -313,9 +448,9 @@ function AssignmentRow({
           <Pill label={row.status} />
         </td>
 
-        {/* Upload button */}
+        {/* Upload button — hidden while a submission is active */}
         <td className="px-3 py-3 pr-4">
-          {!isDone && (
+          {!isDone && !submission && (
             <button
               onClick={() => setUploadOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all hover:opacity-80"
@@ -327,6 +462,15 @@ function AssignmentRow({
           )}
         </td>
       </tr>
+
+      {/* Submission card — always visible while a submission is active */}
+      {submission && !isDone && (
+        <SubmissionRow
+          submission={submission}
+          onCancel={() => onCancelSubmission(submission.id)}
+          onResubmit={() => setUploadOpen(true)}
+        />
+      )}
 
       {/* Expanded detail */}
       {expanded && hasExpand && (
@@ -388,13 +532,15 @@ function AssignmentRow({
 // ─── Main dashboard ───────────────────────────────────────────────────────────
 
 interface Props {
-  assignments:    MxlmsTechnicianTraining[]
-  loading:        boolean
-  techId:         number
-  onRefresh:      () => void
+  assignments:        MxlmsTechnicianTraining[]
+  loading:            boolean
+  techId:             number
+  submissionsByItemId: Map<number, MxlmsPendingCompletion>
+  onCancelSubmission: (id: number) => Promise<void>
+  onRefresh:          () => void
 }
 
-export default function TrainingDashboard({ assignments, loading, techId, onRefresh }: Props) {
+export default function TrainingDashboard({ assignments, loading, techId, submissionsByItemId, onCancelSubmission, onRefresh }: Props) {
   const [categoryFilter, setCategoryFilter] = useState("all")
   const [statusFilter,   setStatusFilter]   = useState("open")
 
@@ -506,7 +652,14 @@ export default function TrainingDashboard({ assignments, loading, techId, onRefr
             </thead>
             <tbody>
               {filtered.map(row => (
-                <AssignmentRow key={row.id} row={row} techId={techId} onUploadSuccess={onRefresh} />
+                <AssignmentRow
+                  key={row.id}
+                  row={row}
+                  techId={techId}
+                  submission={submissionsByItemId.get(row.training_item_id) ?? null}
+                  onCancelSubmission={onCancelSubmission}
+                  onUploadSuccess={onRefresh}
+                />
               ))}
             </tbody>
           </table>
