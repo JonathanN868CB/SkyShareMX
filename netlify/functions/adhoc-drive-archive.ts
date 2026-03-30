@@ -1,24 +1,20 @@
 /**
  * adhoc-drive-archive — Netlify serverless function
  *
- * POST { adHocId: number, technicianId: number }
+ * Called by the browser after the LAST signature in the chain makes
+ * status = 'complete'. Verifies completeness, generates a signed PDF,
+ * uploads to Google Drive, then sets status = 'archived' and drive_url.
  *
- * 1. Fetches the ad_hoc_completion record using service_role key (bypasses RLS)
- * 2. Fetches the technician record
- * 3. Generates a PDF summary using pdf-lib
- * 4. Uploads to Google Drive under:
- *    Technicians/{TechCode}_{TechName}/Training/{YYYY}/AdHoc/
- * 5. Updates ad_hoc_completion.drive_url with the shareable Drive file URL
+ * POST body: { adHocId: number, technicianId: number }
  *
  * Required environment variables:
- *   SUPABASE_URL                — your Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY   — service role key (bypasses RLS, keep secret)
- *   GOOGLE_SERVICE_ACCOUNT_JSON — full JSON of the service account key file
- *   GOOGLE_DRIVE_ROOT_FOLDER_ID — Drive folder ID for "Technicians/" root
+ *   SUPABASE_URL                — Supabase project URL
+ *   SUPABASE_SERVICE_ROLE_KEY   — service role key (bypasses RLS)
+ *   GOOGLE_SERVICE_ACCOUNT_JSON — full JSON of service account key file
+ *   GOOGLE_DRIVE_ROOT_FOLDER_ID — Drive folder ID of the Technicians/ root
  *
- * Dependencies needed (add to package.json before deploy):
- *   pdf-lib        — pure JS PDF generation, no native binaries
- *   google-auth-library — Google auth for service accounts
+ * Dependencies to add before deploy:
+ *   npm install pdf-lib google-auth-library
  */
 
 import type { Handler, HandlerEvent } from "@netlify/functions"
@@ -26,120 +22,121 @@ import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 import { GoogleAuth } from "google-auth-library"
 
-// ─── Supabase (service role — bypasses RLS) ───────────────────────────────────
+// ─── Supabase (service role) ───────────────────────────────────────────────────
 
-function getServiceClient() {
+function getDb() {
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
   return createClient(url, key, { db: { schema: "mxlms" } })
 }
 
-// ─── Google Drive helpers ─────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface AdHocRecord {
+  id: number
+  name: string
+  event_type: string
+  description: string | null
+  corrective_action: string | null
+  severity: string | null
+  notes: string | null
+  completed_date: string | null
+  requires_acknowledgment: boolean
+  status: string
+  // manager
+  initiated_by_name: string | null
+  initiated_by_email: string | null
+  manager_signed_at: string | null
+  manager_signature_hash: string | null
+  // tech
+  tech_signed_by_name: string | null
+  tech_signed_by_email: string | null
+  acknowledged_at: string | null
+  tech_signature_hash: string | null
+  // witness
+  witness_name: string | null
+  witness_email: string | null
+  witness_signed_at: string | null
+  witness_signature_hash: string | null
+}
+
+interface TechRecord {
+  name: string
+  tech_code: string | null
+}
+
+// ─── Google Drive ─────────────────────────────────────────────────────────────
 
 async function getDriveToken(): Promise<string> {
   const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
   if (!json) throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON")
-  const credentials = JSON.parse(json)
   const auth = new GoogleAuth({
-    credentials,
+    credentials: JSON.parse(json),
     scopes: ["https://www.googleapis.com/auth/drive"],
   })
   const client = await auth.getClient()
-  const tokenResponse = await (client as any).getAccessToken()
-  if (!tokenResponse.token) throw new Error("Failed to obtain Google Drive access token")
-  return tokenResponse.token
+  const res = await (client as any).getAccessToken()
+  if (!res.token) throw new Error("Could not obtain Drive access token")
+  return res.token
 }
 
-async function getOrCreateFolder(
-  token: string,
-  name: string,
-  parentId: string
-): Promise<string> {
-  const safeName = name.replace(/'/g, "\\'")
-  const query = `name='${safeName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`
-
-  const searchRes = await fetch(searchUrl, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!searchRes.ok) throw new Error(`Drive folder search failed: ${await searchRes.text()}`)
-
-  const { files } = await searchRes.json() as { files: { id: string }[] }
+async function getOrCreateFolder(token: string, name: string, parentId: string): Promise<string> {
+  const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  if (!res.ok) throw new Error(`Drive search failed: ${await res.text()}`)
+  const { files } = await res.json() as { files: { id: string }[] }
   if (files.length > 0) return files[0].id
 
-  // Create the folder
-  const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+  const create = await fetch("https://www.googleapis.com/drive/v3/files", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId],
-    }),
+    body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [parentId] }),
   })
-  if (!createRes.ok) throw new Error(`Drive folder create failed: ${await createRes.text()}`)
-  const created = await createRes.json() as { id: string }
-  return created.id
+  if (!create.ok) throw new Error(`Drive folder create failed: ${await create.text()}`)
+  return ((await create.json()) as { id: string }).id
 }
 
-async function uploadFileToDrive(
+async function uploadToDrive(
   token: string,
   fileName: string,
   pdfBytes: Uint8Array,
   folderId: string
-): Promise<{ id: string; webViewLink: string }> {
-  const boundary = "boundary_adhoc_pdf"
-  const metadata = JSON.stringify({ name: fileName, parents: [folderId] })
+): Promise<string> {
+  const boundary = "boundary_skyshare_adhoc"
+  const meta     = JSON.stringify({ name: fileName, parents: [folderId] })
+  const enc      = new TextEncoder()
+  const prefix   = enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`)
+  const suffix   = enc.encode(`\r\n--${boundary}--`)
+  const body     = new Uint8Array(prefix.length + pdfBytes.length + suffix.length)
+  body.set(prefix); body.set(pdfBytes, prefix.length); body.set(suffix, prefix.length + pdfBytes.length)
 
-  // Multipart upload
-  const body = [
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    metadata,
-    `--${boundary}`,
-    "Content-Type: application/pdf",
-    "",
-    "",
-  ].join("\r\n")
-
-  const bodyEncoder = new TextEncoder()
-  const bodyPrefix  = bodyEncoder.encode(body)
-  const bodySuffix  = bodyEncoder.encode(`\r\n--${boundary}--`)
-  const combined    = new Uint8Array(bodyPrefix.length + pdfBytes.length + bodySuffix.length)
-  combined.set(bodyPrefix)
-  combined.set(pdfBytes, bodyPrefix.length)
-  combined.set(bodySuffix, bodyPrefix.length + pdfBytes.length)
-
-  const uploadRes = await fetch(
-    `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink`,
+  const up = await fetch(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink",
     {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body: combined,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+      body,
     }
   )
-  if (!uploadRes.ok) throw new Error(`Drive upload failed: ${await uploadRes.text()}`)
+  if (!up.ok) throw new Error(`Drive upload failed: ${await up.text()}`)
+  const { id, webViewLink } = await up.json() as { id: string; webViewLink: string }
 
-  const result = await uploadRes.json() as { id: string; webViewLink: string }
-
-  // Make the file readable by anyone with the link
-  await fetch(`https://www.googleapis.com/drive/v3/files/${result.id}/permissions`, {
+  // Make readable by anyone with the link
+  await fetch(`https://www.googleapis.com/drive/v3/files/${id}/permissions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ role: "reader", type: "anyone" }),
   })
-
-  return result
+  return webViewLink
 }
 
 // ─── PDF generation ───────────────────────────────────────────────────────────
 
-const EVENT_TYPE_LABELS: Record<string, string> = {
+const EVENT_LABELS: Record<string, string> = {
   "safety-observation":  "Safety Observation",
   "procedure-refresher": "Procedure Refresher",
   "tooling-equipment":   "Tooling / Equipment",
@@ -148,150 +145,217 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   "general":             "General",
 }
 
-function formatDate(str: string | null | undefined): string {
-  if (!str) return "—"
-  const d = new Date(str)
-  if (isNaN(d.getTime())) return str
-  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-}
-
-interface AdHocRecord {
-  id: number
-  name: string
-  event_type: string
-  completed_date: string | null
-  description: string | null
-  corrective_action: string | null
-  severity: string | null
-  notes: string | null
-  initiated_by_name: string | null
-  acknowledged_at: string | null
-  requires_acknowledgment: boolean
-}
-
-interface TechRecord {
-  name: string
-  tech_code: string | null
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return "—"
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? s : d.toLocaleString("en-US", {
+    month: "long", day: "numeric", year: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+  })
 }
 
 async function generatePdf(record: AdHocRecord, tech: TechRecord): Promise<Uint8Array> {
-  const pdfDoc   = await PDFDocument.create()
-  const font     = await pdfDoc.embedFont(StandardFonts.Helvetica)
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  const doc      = await PDFDocument.create()
+  const font     = await doc.embedFont(StandardFonts.Helvetica)
+  const fontB    = await doc.embedFont(StandardFonts.HelveticaBold)
+  const fontO    = await doc.embedFont(StandardFonts.HelveticaOblique)
 
-  const page     = pdfDoc.addPage([612, 792]) // US Letter
-  const { width, height } = page.getSize()
-  const margin   = 56
-  const contentW = width - margin * 2
+  const W = 612, H = 792, M = 52
+  let page = doc.addPage([W, H])
+  let y    = H - M
 
-  let y = height - margin
+  // ── Helper: wrap and draw text ─────────────────────────────────────────────
+  function text(
+    str: string,
+    x: number,
+    size: number,
+    f: typeof font,
+    color: [number, number, number] = [0.1, 0.1, 0.1],
+    maxW = W - M * 2
+  ): number {
+    // Naive word wrap
+    const words  = str.split(" ")
+    let line     = ""
+    let lineH    = size + 4
 
-  // Header bar
-  page.drawRectangle({ x: 0, y: height - 48, width, height: 48, color: rgb(0.0, 0.18, 0.27) })
-  page.drawText("SkyShare MX — Ad Hoc Training Record", {
-    x: margin, y: height - 31,
-    size: 13, font: fontBold, color: rgb(1, 1, 1),
-  })
-
-  y -= 60
-
-  // Helper: label + value block
-  function field(label: string, value: string | null | undefined, boldValue = false) {
-    if (y < margin + 60) {
-      // add new page if needed
-      const newPage = pdfDoc.addPage([612, 792])
-      y = height - margin
-      // return the new page – but since we captured `page` by reference, use addPage differently
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word
+      const w    = f.widthOfTextAtSize(test, size)
+      if (w > maxW && line) {
+        if (y - lineH < M + 120) {
+          page = doc.addPage([W, H]); y = H - M
+        }
+        page.drawText(line, { x, y, size, font: f, color: rgb(...color) })
+        y -= lineH; line = word
+      } else {
+        line = test
+      }
     }
-    const val = value ?? "—"
-    page.drawText(label.toUpperCase(), {
-      x: margin, y,
-      size: 8, font, color: rgb(0.5, 0.5, 0.5),
-    })
-    y -= 15
-    page.drawText(val, {
-      x: margin, y,
-      size: 10, font: boldValue ? fontBold : font, color: rgb(0.1, 0.1, 0.1),
-      maxWidth: contentW,
-    })
-    y -= 22
+    if (line) {
+      if (y - lineH < M + 120) {
+        page = doc.addPage([W, H]); y = H - M
+      }
+      page.drawText(line, { x, y, size, font: f, color: rgb(...color) })
+      y -= lineH
+    }
+    return y
   }
 
-  function divider() {
-    page.drawLine({
-      start: { x: margin, y: y + 6 },
-      end:   { x: width - margin, y: y + 6 },
-      thickness: 0.5, color: rgb(0.85, 0.85, 0.85),
-    })
-    y -= 12
+  function gap(n = 10) { y -= n }
+
+  function field(label: string, value: string | null | undefined) {
+    if (!value) return
+    text(label.toUpperCase(), M, 7.5, font, [0.55, 0.55, 0.55])
+    gap(2)
+    text(value, M, 10, font, [0.12, 0.12, 0.12])
+    gap(10)
   }
 
-  // Title
-  page.drawText(record.name, {
-    x: margin, y,
-    size: 16, font: fontBold, color: rgb(0.05, 0.05, 0.05), maxWidth: contentW,
+  function divider(accentR = 0.8, accentG = 0.8, accentB = 0.8) {
+    if (y < M + 130) { page = doc.addPage([W, H]); y = H - M }
+    page.drawLine({ start: { x: M, y: y + 6 }, end: { x: W - M, y: y + 6 }, thickness: 0.5, color: rgb(accentR, accentG, accentB) })
+    gap(14)
+  }
+
+  // ── Header bar ─────────────────────────────────────────────────────────────
+  page.drawRectangle({ x: 0, y: H - 50, width: W, height: 50, color: rgb(0.0, 0.18, 0.27) })
+  page.drawText("SkyShare MX — Ad Hoc Training Record", {
+    x: M, y: H - 33, size: 13, font: fontB, color: rgb(1, 1, 1),
   })
-  y -= 28
+  // Gold accent stripe
+  page.drawRectangle({ x: 0, y: H - 53, width: W, height: 3, color: rgb(0.83, 0.63, 0.09) })
+  y -= 62
 
+  // ── Title ──────────────────────────────────────────────────────────────────
+  text(record.name, M, 18, fontB, [0.06, 0.06, 0.06])
+  gap(4)
+  text(
+    `${EVENT_LABELS[record.event_type] ?? record.event_type}${record.severity ? ` · ${record.severity.toUpperCase()} severity` : ""}`,
+    M, 10, fontO, [0.45, 0.45, 0.45]
+  )
+  gap(14)
   divider()
 
-  // Basic info
-  field("Technician",   `${tech.name}${tech.tech_code ? ` [${tech.tech_code}]` : ""}`, true)
-  field("Event Type",   EVENT_TYPE_LABELS[record.event_type] ?? record.event_type)
-  field("Date",         formatDate(record.completed_date))
-
-  if (record.severity) {
-    field("Severity", record.severity.charAt(0).toUpperCase() + record.severity.slice(1))
-  }
-
-  field("Recorded By", record.initiated_by_name)
-
+  // ── Event details ──────────────────────────────────────────────────────────
+  field("Technician", `${tech.name}${tech.tech_code ? ` [${tech.tech_code}]` : ""}`)
+  field("Event Date",   fmtDate(record.completed_date).split(",").slice(0, 2).join(","))
+  field("Event Type",   EVENT_LABELS[record.event_type] ?? record.event_type)
+  if (record.severity) field("Severity", record.severity.toUpperCase())
+  field("Recorded By",  `${record.initiated_by_name ?? "—"}${record.initiated_by_email ? ` · ${record.initiated_by_email}` : ""}`)
+  gap(4)
   divider()
 
-  // Description + corrective action
+  // ── Narrative ──────────────────────────────────────────────────────────────
   if (record.description) {
-    field("What Happened / Description", record.description)
+    text("WHAT HAPPENED / DESCRIPTION", M, 8, font, [0.5, 0.5, 0.5])
+    gap(4)
+    text(record.description, M, 10, font, [0.15, 0.15, 0.15])
+    gap(14)
   }
   if (record.corrective_action) {
-    field("Corrective Action / Training Delivered", record.corrective_action)
+    text("CORRECTIVE ACTION / TRAINING DELIVERED", M, 8, font, [0.5, 0.5, 0.5])
+    gap(4)
+    text(record.corrective_action, M, 10, font, [0.15, 0.15, 0.15])
+    gap(14)
   }
   if (record.notes) {
-    field("Notes", record.notes)
+    text("ADDITIONAL NOTES", M, 8, font, [0.5, 0.5, 0.5])
+    gap(4)
+    text(record.notes, M, 10, font, [0.15, 0.15, 0.15])
+    gap(14)
   }
-
   divider()
 
-  // Acknowledgment
-  field(
-    "Requires Acknowledgment",
-    record.requires_acknowledgment ? "Yes" : "No"
-  )
-  if (record.acknowledged_at) {
-    field("Acknowledged At", formatDate(record.acknowledged_at))
+  // ── Signature blocks ───────────────────────────────────────────────────────
+  // Each block: role label, name (large italic), details, sig ID
+  function sigBlock(
+    role:      string,
+    name:      string | null | undefined,
+    email:     string | null | undefined,
+    timestamp: string | null | undefined,
+    hash:      string | null | undefined,
+    accent:    [number, number, number]
+  ) {
+    if (!name || !timestamp) {
+      // Unsigned placeholder
+      if (y - 60 < M) { page = doc.addPage([W, H]); y = H - M }
+      text(role.toUpperCase(), M, 7.5, font, [0.6, 0.6, 0.6])
+      gap(4)
+      page.drawLine({ start: { x: M, y: y + 4 }, end: { x: M + 220, y: y + 4 }, thickness: 0.5, color: rgb(0.75, 0.75, 0.75) })
+      gap(6)
+      text("Not signed", M, 9, fontO, [0.7, 0.7, 0.7])
+      gap(16)
+      return
+    }
+    if (y - 80 < M) { page = doc.addPage([W, H]); y = H - M }
+    text(role.toUpperCase(), M, 7.5, font, [accent[0] * 0.7, accent[1] * 0.7, accent[2] * 0.7])
+    gap(4)
+    // Name in large oblique to simulate handwriting
+    text(name, M, 20, fontO, accent)
+    gap(2)
+    page.drawLine({ start: { x: M, y: y + 4 }, end: { x: M + 240, y: y + 4 }, thickness: 0.5, color: rgb(...accent) })
+    gap(8)
+    text(`${email ?? ""}   ·   ${fmtDate(timestamp)}`, M, 8.5, font, [0.4, 0.4, 0.4])
+    gap(4)
+    if (hash) {
+      text(`SIG-${hash.slice(0, 12).toUpperCase()}`, M, 8, font, [accent[0] * 0.55, accent[1] * 0.55, accent[2] * 0.55])
+    }
+    gap(16)
   }
 
-  // Footer
-  const footer = `Generated ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} · SkyShare MX`
-  page.drawText(footer, {
-    x: margin, y: margin - 16,
-    size: 8, font, color: rgb(0.6, 0.6, 0.6),
-  })
+  text("SIGNATURES", M, 8, font, [0.5, 0.5, 0.5])
+  gap(10)
 
-  return pdfDoc.save()
+  sigBlock(
+    "Manager — Recorded & Signed",
+    record.initiated_by_name,
+    record.initiated_by_email,
+    record.manager_signed_at,
+    record.manager_signature_hash,
+    [0.83, 0.63, 0.09]   // gold
+  )
+
+  divider(0.88, 0.75, 0.15)
+
+  sigBlock(
+    "Technician Acknowledgment",
+    record.tech_signed_by_name,
+    record.tech_signed_by_email,
+    record.acknowledged_at,
+    record.tech_signature_hash,
+    [0.31, 0.50, 0.63]   // blue
+  )
+
+  if (record.witness_name || record.witness_signed_at) {
+    divider(0.1, 0.73, 0.51)
+    sigBlock(
+      "Witness / Second Manager",
+      record.witness_name,
+      record.witness_email,
+      record.witness_signed_at,
+      record.witness_signature_hash,
+      [0.06, 0.73, 0.51]   // green
+    )
+  }
+
+  // ── Footer ─────────────────────────────────────────────────────────────────
+  const footerY = M - 16
+  page.drawText(
+    `Generated ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} · SkyShare MX · Record #${record.id}`,
+    { x: M, y: footerY, size: 7.5, font, color: rgb(0.65, 0.65, 0.65) }
+  )
+
+  return doc.save()
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export const handler: Handler = async (event: HandlerEvent) => {
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: "Method Not Allowed" }
-  }
+  if (event.httpMethod !== "POST") return { statusCode: 405, body: "Method Not Allowed" }
 
-  let adHocId: number
-  let technicianId: number
-
+  let adHocId: number, technicianId: number
   try {
-    const body = JSON.parse(event.body ?? "{}")
+    const body   = JSON.parse(event.body ?? "{}")
     adHocId      = Number(body.adHocId)
     technicianId = Number(body.technicianId)
     if (!adHocId || !technicianId) throw new Error("Missing adHocId or technicianId")
@@ -300,17 +364,25 @@ export const handler: Handler = async (event: HandlerEvent) => {
   }
 
   try {
-    const db = getServiceClient()
+    const db = getDb()
 
-    // 1. Fetch ad hoc record
+    // Fetch record
     const { data: record, error: recErr } = await db
       .from("ad_hoc_completions")
-      .select("id,name,event_type,completed_date,description,corrective_action,severity,notes,initiated_by_name,acknowledged_at,requires_acknowledgment")
+      .select("*")
       .eq("id", adHocId)
       .single()
-    if (recErr || !record) throw new Error(recErr?.message ?? "Ad hoc record not found")
+    if (recErr || !record) throw new Error(recErr?.message ?? "Record not found")
 
-    // 2. Fetch technician
+    // Guard: only archive when complete
+    if (record.status !== "complete") {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ success: true, status: record.status, message: "Not yet ready to archive" }),
+      }
+    }
+
+    // Fetch technician
     const { data: tech, error: techErr } = await db
       .from("technicians")
       .select("name,tech_code")
@@ -318,45 +390,37 @@ export const handler: Handler = async (event: HandlerEvent) => {
       .single()
     if (techErr || !tech) throw new Error(techErr?.message ?? "Technician not found")
 
-    // 3. Generate PDF
+    // Generate PDF
     const pdfBytes = await generatePdf(record as AdHocRecord, tech as TechRecord)
 
-    // 4. Upload to Drive
-    const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
-    if (!rootFolderId) throw new Error("Missing GOOGLE_DRIVE_ROOT_FOLDER_ID")
+    // Build Drive path: Technicians/{Code}_{Name}/Training/{YYYY}/AdHoc/
+    const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID
+    if (!rootId) throw new Error("Missing GOOGLE_DRIVE_ROOT_FOLDER_ID")
 
     const token = await getDriveToken()
 
-    const techFolderName = tech.tech_code
-      ? `${tech.tech_code}_${tech.name}`
-      : tech.name
-    const techFolderId = await getOrCreateFolder(token, techFolderName, rootFolderId)
+    const techFolder    = await getOrCreateFolder(token, tech.tech_code ? `${tech.tech_code}_${tech.name}` : tech.name, rootId)
+    const trainFolder   = await getOrCreateFolder(token, "Training", techFolder)
+    const year          = record.completed_date ? new Date(record.completed_date).getFullYear().toString() : new Date().getFullYear().toString()
+    const yearFolder    = await getOrCreateFolder(token, year, trainFolder)
+    const adHocFolder   = await getOrCreateFolder(token, "AdHoc", yearFolder)
 
-    const trainingFolderId = await getOrCreateFolder(token, "Training", techFolderId)
+    const safeTitle = (record.name as string).replace(/[^a-zA-Z0-9 _-]/g, "").trim().slice(0, 60)
+    const dateStr   = new Date().toISOString().slice(0, 10)
+    const fileName  = `${dateStr}-AdHoc-${safeTitle}-#${adHocId}.pdf`
 
-    const year = record.completed_date
-      ? new Date(record.completed_date).getFullYear().toString()
-      : new Date().getFullYear().toString()
-    const yearFolderId = await getOrCreateFolder(token, year, trainingFolderId)
+    const driveUrl = await uploadToDrive(token, fileName, pdfBytes, adHocFolder)
 
-    const adHocFolderId = await getOrCreateFolder(token, "AdHoc", yearFolderId)
-
-    const safeTitle = (record.name as string).replace(/[^a-zA-Z0-9 _-]/g, "").trim()
-    const timestamp = new Date().toISOString().slice(0, 10)
-    const fileName  = `${timestamp}-AdHoc-${safeTitle}.pdf`
-
-    const uploaded = await uploadFileToDrive(token, fileName, pdfBytes, adHocFolderId)
-
-    // 5. Update drive_url on the record
+    // Mark archived + set drive_url
     const { error: updateErr } = await db
       .from("ad_hoc_completions")
-      .update({ drive_url: uploaded.webViewLink })
+      .update({ drive_url: driveUrl, status: "archived" })
       .eq("id", adHocId)
     if (updateErr) throw new Error(updateErr.message)
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ success: true, driveUrl: uploaded.webViewLink }),
+      body: JSON.stringify({ success: true, driveUrl }),
     }
   } catch (err: any) {
     console.error("[adhoc-drive-archive]", err)

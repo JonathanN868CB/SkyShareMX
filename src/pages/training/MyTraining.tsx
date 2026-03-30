@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { GraduationCap, Unlink, XCircle, Bell, CheckCheck, ShieldAlert, RefreshCw } from "lucide-react"
+import { GraduationCap, Unlink, XCircle, Bell, ShieldAlert } from "lucide-react"
+import { SignaturePanel, SignatureBlock, type SignatureData } from "@/components/training/SignaturePanel"
 import { toast } from "sonner"
 import { Card } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
@@ -55,7 +56,18 @@ async function fetchPendingAcknowledgments(): Promise<MxlmsAdHocCompletion[]> {
   const { data, error } = await mxlms
     .from("ad_hoc_completions")
     .select("*")
-    .eq("status", "pending_acknowledgment")
+    .eq("status", "pending_tech_ack")
+    .order("completed_date", { ascending: false })
+  if (error) throw error
+  return (data ?? []) as MxlmsAdHocCompletion[]
+}
+
+async function fetchPendingWitness(userId: string): Promise<MxlmsAdHocCompletion[]> {
+  const { data, error } = await mxlms
+    .from("ad_hoc_completions")
+    .select("*")
+    .eq("status", "pending_witness_ack")
+    .eq("witness_user_id", userId)
     .order("completed_date", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsAdHocCompletion[]
@@ -249,7 +261,7 @@ function CompletionHistory({
   )
 }
 
-// ─── Pending Acknowledgments ──────────────────────────────────────────────────
+// ─── Shared event card helpers ────────────────────────────────────────────────
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   "safety-observation":  "Safety Observation",
@@ -261,110 +273,140 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 }
 
 const SEVERITY_STYLES: Record<string, { bg: string; color: string; border: string }> = {
-  low:    { bg: "rgba(16,185,129,0.1)",  color: "#10b981",              border: "rgba(16,185,129,0.2)" },
-  medium: { bg: "rgba(245,158,11,0.12)", color: "#f59e0b",              border: "rgba(245,158,11,0.2)" },
-  high:   { bg: "rgba(193,2,48,0.12)",   color: "#e05070",              border: "rgba(193,2,48,0.25)" },
+  low:    { bg: "rgba(16,185,129,0.1)",  color: "#10b981", border: "rgba(16,185,129,0.2)" },
+  medium: { bg: "rgba(245,158,11,0.12)", color: "#f59e0b", border: "rgba(245,158,11,0.2)" },
+  high:   { bg: "rgba(193,2,48,0.12)",   color: "#e05070", border: "rgba(193,2,48,0.25)" },
 }
 
-function AcknowledgmentCard({
-  item,
-  onAcknowledge,
-  acknowledging,
-}: {
-  item: MxlmsAdHocCompletion
-  onAcknowledge: (id: number) => void
-  acknowledging: boolean
-}) {
-  const eventLabel  = EVENT_TYPE_LABELS[item.event_type] ?? item.event_type
-  const sevStyle    = item.severity ? SEVERITY_STYLES[item.severity] : null
+function EventCardHeader({ item }: { item: MxlmsAdHocCompletion }) {
+  const eventLabel = EVENT_TYPE_LABELS[item.event_type] ?? item.event_type
+  const sevStyle   = item.severity ? SEVERITY_STYLES[item.severity] : null
 
+  return (
+    <div className="px-5 py-3.5 flex items-center gap-3"
+      style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(212,160,23,0.04)" }}>
+      <Bell className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-white/85">{item.name}</span>
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+            style={{ background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-heading)" }}>
+            {eventLabel}
+          </span>
+          {sevStyle && item.severity && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+              style={{ background: sevStyle.bg, color: sevStyle.color, border: `1px solid ${sevStyle.border}`, fontFamily: "var(--font-heading)" }}>
+              <ShieldAlert className="h-2.5 w-2.5" />
+              {item.severity}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+          <span className="text-[11px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
+            {formatDate(item.completed_date)}
+          </span>
+          {item.initiated_by_name && (
+            <span className="text-[11px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+              Recorded by {item.initiated_by_name}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EventCardBody({ item }: { item: MxlmsAdHocCompletion }) {
+  return (
+    <div className="px-5 py-4 space-y-3">
+      {item.description && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+            What Happened
+          </p>
+          <p className="text-sm text-white/60 leading-relaxed">{item.description}</p>
+        </div>
+      )}
+      {item.corrective_action && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+            Training Delivered / Corrective Action
+          </p>
+          <p className="text-sm text-white/60 leading-relaxed">{item.corrective_action}</p>
+        </div>
+      )}
+      {item.notes && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+            Notes
+          </p>
+          <p className="text-sm text-white/45 leading-relaxed">{item.notes}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Tech Acknowledgment Card ─────────────────────────────────────────────────
+
+function TechAcknowledgmentCard({
+  item,
+  profile,
+  onSign,
+  signing,
+}: {
+  item:    MxlmsAdHocCompletion
+  profile: { id: string; full_name: string | null; email: string }
+  onSign:  (item: MxlmsAdHocCompletion, data: SignatureData) => void
+  signing: boolean
+}) {
   return (
     <div className="rounded-lg overflow-hidden"
       style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,160,23,0.2)" }}>
+      <EventCardHeader item={item} />
+      <EventCardBody item={item} />
 
-      {/* Header row */}
-      <div className="px-5 py-3.5 flex items-center gap-3"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(212,160,23,0.04)" }}>
-        <Bell className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-white/80">{item.name}</span>
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
-              style={{ background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-heading)" }}>
-              {eventLabel}
+      {/* Manager signature (already on the card) */}
+      {item.manager_signed_at && (
+        <div className="px-5 pb-3">
+          <SignatureBlock
+            name={item.initiated_by_name}
+            email={item.initiated_by_email}
+            timestamp={item.manager_signed_at}
+            hash={item.manager_signature_hash}
+            role="Manager"
+          />
+        </div>
+      )}
+
+      {/* Witness pending indicator */}
+      {item.witness_name && (
+        <div className="px-5 pb-3">
+          <div className="rounded px-3 py-2 flex items-center gap-2"
+            style={{ background: "rgba(16,185,129,0.05)", border: "1px solid rgba(16,185,129,0.15)" }}>
+            <span className="text-[10px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
+              After you sign, this card routes to{" "}
+              <span style={{ color: "#10b981" }}>{item.witness_name}</span> for witness sign-off.
             </span>
-            {sevStyle && item.severity && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
-                style={{ background: sevStyle.bg, color: sevStyle.color, border: `1px solid ${sevStyle.border}`, fontFamily: "var(--font-heading)" }}>
-                <ShieldAlert className="h-2.5 w-2.5" />
-                {item.severity}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-            <span className="text-[11px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
-              {formatDate(item.completed_date)}
-            </span>
-            {item.initiated_by_name && (
-              <span className="text-[11px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
-                Recorded by {item.initiated_by_name}
-              </span>
-            )}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Body */}
-      <div className="px-5 py-4 space-y-3">
-        {item.description && (
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
-              What Happened
-            </p>
-            <p className="text-sm text-white/60 leading-relaxed">{item.description}</p>
-          </div>
-        )}
-        {item.corrective_action && (
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
-              Training Delivered / Corrective Action
-            </p>
-            <p className="text-sm text-white/60 leading-relaxed">{item.corrective_action}</p>
-          </div>
-        )}
-        {item.notes && (
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
-              Notes
-            </p>
-            <p className="text-sm text-white/45 leading-relaxed">{item.notes}</p>
-          </div>
-        )}
-      </div>
-
-      {/* Acknowledge footer */}
-      <div className="px-5 py-3 flex items-center justify-between gap-4"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.12)" }}>
-        <p className="text-[11px] text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
-          By acknowledging, you confirm you have reviewed this record.
+      {/* Tech signing panel */}
+      <div className="px-5 py-4" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.08)" }}>
+        <p className="text-[10px] uppercase tracking-wider text-white/20 mb-3" style={{ fontFamily: "var(--font-heading)" }}>
+          Your Signature Required
         </p>
-        <button
-          onClick={() => onAcknowledge(item.id)}
-          disabled={acknowledging}
-          className="shrink-0 inline-flex items-center gap-1.5 px-4 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider transition-all hover:opacity-80 disabled:opacity-40"
-          style={{
-            background: "var(--skyshare-gold)",
-            color: "hsl(0 0% 8%)",
-            fontFamily: "var(--font-heading)",
-          }}
-        >
-          {acknowledging ? (
-            <RefreshCw className="h-3 w-3 animate-spin" />
-          ) : (
-            <CheckCheck className="h-3 w-3" />
-          )}
-          {acknowledging ? "Acknowledging…" : "Acknowledge"}
-        </button>
+        <SignaturePanel
+          userId={profile.id}
+          name={profile.full_name ?? profile.email}
+          email={profile.email}
+          recordId={item.id}
+          role="Technician"
+          confirmText={`I, ${profile.full_name ?? profile.email}, confirm that I have received and understood the training described in this record.`}
+          onSign={data => onSign(item, data)}
+          signing={signing}
+        />
       </div>
     </div>
   )
@@ -373,20 +415,21 @@ function AcknowledgmentCard({
 function PendingAcknowledgments({
   items,
   loading,
-  onAcknowledge,
-  acknowledgingId,
+  profile,
+  onSign,
+  signingId,
 }: {
-  items: MxlmsAdHocCompletion[]
-  loading: boolean
-  onAcknowledge: (id: number) => void
-  acknowledgingId: number | null
+  items:     MxlmsAdHocCompletion[]
+  loading:   boolean
+  profile:   { id: string; full_name: string | null; email: string }
+  onSign:    (item: MxlmsAdHocCompletion, data: SignatureData) => void
+  signingId: number | null
 }) {
   if (loading || items.length === 0) return null
 
   return (
     <div className="rounded-lg overflow-hidden"
       style={{ border: "1px solid rgba(212,160,23,0.3)", background: "rgba(212,160,23,0.03)" }}>
-      {/* Header */}
       <div className="px-5 py-3.5 flex items-center gap-3"
         style={{ borderBottom: "1px solid rgba(212,160,23,0.15)", background: "rgba(212,160,23,0.06)" }}>
         <Bell className="h-4 w-4 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
@@ -395,18 +438,128 @@ function PendingAcknowledgments({
             PENDING ACKNOWLEDGMENTS
           </p>
           <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
-            {items.length} event{items.length !== 1 ? "s" : ""} require your acknowledgment
+            {items.length} event{items.length !== 1 ? "s" : ""} awaiting your signature
           </p>
         </div>
       </div>
-      {/* Cards */}
       <div className="p-4 space-y-3">
         {items.map(item => (
-          <AcknowledgmentCard
+          <TechAcknowledgmentCard
             key={item.id}
             item={item}
-            onAcknowledge={onAcknowledge}
-            acknowledging={acknowledgingId === item.id}
+            profile={profile}
+            onSign={onSign}
+            signing={signingId === item.id}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Witness Acknowledgment Section ──────────────────────────────────────────
+
+function WitnessAcknowledgmentCard({
+  item,
+  profile,
+  onSign,
+  signing,
+}: {
+  item:    MxlmsAdHocCompletion
+  profile: { id: string; full_name: string | null; email: string }
+  onSign:  (item: MxlmsAdHocCompletion, data: SignatureData) => void
+  signing: boolean
+}) {
+  return (
+    <div className="rounded-lg overflow-hidden"
+      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(16,185,129,0.2)" }}>
+      <EventCardHeader item={item} />
+      <EventCardBody item={item} />
+
+      {/* Manager signature */}
+      {item.manager_signed_at && (
+        <div className="px-5 pb-3">
+          <SignatureBlock
+            name={item.initiated_by_name}
+            email={item.initiated_by_email}
+            timestamp={item.manager_signed_at}
+            hash={item.manager_signature_hash}
+            role="Manager"
+          />
+        </div>
+      )}
+
+      {/* Tech signature */}
+      {item.acknowledged_at && (
+        <div className="px-5 pb-3">
+          <SignatureBlock
+            name={item.tech_signed_by_name}
+            email={item.tech_signed_by_email}
+            timestamp={item.acknowledged_at}
+            hash={item.tech_signature_hash}
+            role="Technician"
+          />
+        </div>
+      )}
+
+      {/* Witness signing panel */}
+      <div className="px-5 py-4" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.08)" }}>
+        <p className="text-[10px] uppercase tracking-wider text-white/20 mb-3" style={{ fontFamily: "var(--font-heading)" }}>
+          Witness Sign-Off Required
+        </p>
+        <SignaturePanel
+          userId={profile.id}
+          name={profile.full_name ?? profile.email}
+          email={profile.email}
+          recordId={item.id}
+          role="Witness"
+          confirmText={`I, ${profile.full_name ?? profile.email}, confirm I have witnessed and verified this training event record.`}
+          onSign={data => onSign(item, data)}
+          signing={signing}
+        />
+      </div>
+    </div>
+  )
+}
+
+function PendingWitnessSection({
+  items,
+  loading,
+  profile,
+  onSign,
+  signingId,
+}: {
+  items:     MxlmsAdHocCompletion[]
+  loading:   boolean
+  profile:   { id: string; full_name: string | null; email: string }
+  onSign:    (item: MxlmsAdHocCompletion, data: SignatureData) => void
+  signingId: number | null
+}) {
+  if (loading || items.length === 0) return null
+
+  return (
+    <div className="rounded-lg overflow-hidden"
+      style={{ border: "1px solid rgba(16,185,129,0.3)", background: "rgba(16,185,129,0.02)" }}>
+      <div className="px-5 py-3.5 flex items-center gap-3"
+        style={{ borderBottom: "1px solid rgba(16,185,129,0.15)", background: "rgba(16,185,129,0.05)" }}>
+        <Bell className="h-4 w-4 shrink-0" style={{ color: "#10b981" }} />
+        <div>
+          <p className="text-xs font-semibold" style={{ color: "#10b981", fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}>
+            PENDING WITNESS SIGN-OFF
+          </p>
+          <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+            {items.length} record{items.length !== 1 ? "s" : ""} awaiting your witness signature
+          </p>
+        </div>
+      </div>
+      <div className="p-4 space-y-3">
+        {items.map(item => (
+          <WitnessAcknowledgmentCard
+            key={item.id}
+            item={item}
+            profile={profile}
+            onSign={onSign}
+            signing={signingId === item.id}
           />
         ))}
       </div>
@@ -482,7 +635,17 @@ export default function MyTraining() {
     enabled: !!techId,
   })
 
-  const [acknowledgingId, setAcknowledgingId] = useState<number | null>(null)
+  const {
+    data: pendingWitness = [],
+    isLoading: loadingWitness,
+    refetch: refetchWitness,
+  } = useQuery({
+    queryKey: ["my-training-pending-witness", profile?.id],
+    queryFn: () => fetchPendingWitness(profile!.id),
+    enabled: !!profile?.id,
+  })
+
+  const [signingId, setSigningId] = useState<number | null>(null)
 
   const qc = useQueryClient()
 
@@ -502,30 +665,64 @@ export default function MyTraining() {
   // Unlinked rejections (no matched_training_item_id) — shown in banner
   const unlinkedRejections = pending.filter(p => p.status === "rejected" && p.matched_training_item_id == null)
 
-  async function handleAcknowledge(id: number): Promise<void> {
-    setAcknowledgingId(id)
+  function fireArchive(adHocId: number) {
+    fetch("/.netlify/functions/adhoc-drive-archive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adHocId, technicianId: techId }),
+    }).catch(() => {})
+  }
+
+  async function handleTechSign(item: MxlmsAdHocCompletion, sig: SignatureData): Promise<void> {
+    setSigningId(item.id)
+    const nextStatus = item.witness_user_id ? "pending_witness_ack" : "complete"
     try {
       const { error } = await mxlms
         .from("ad_hoc_completions")
-        .update({ acknowledged_at: new Date().toISOString(), status: "acknowledged" })
-        .eq("id", id)
+        .update({
+          acknowledged_at:     sig.timestamp,
+          tech_signed_by_name:  sig.name,
+          tech_signed_by_email: sig.email,
+          tech_signature_hash:  sig.hash,
+          status:               nextStatus,
+        })
+        .eq("id", item.id)
       if (error) throw error
 
-      toast.success("Acknowledged")
+      toast.success(
+        nextStatus === "complete"
+          ? "Signed — archiving to Drive…"
+          : `Signed — routing to ${item.witness_name ?? "witness"} for sign-off`
+      )
       refetchAck()
-
-      // Fire-and-forget: ask Netlify function to generate PDF + archive to Drive
-      fetch("/.netlify/functions/adhoc-drive-archive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adHocId: id, technicianId: techId }),
-      }).catch(() => {
-        // Non-fatal — Drive archive failure doesn't block the tech
-      })
+      if (nextStatus === "complete") fireArchive(item.id)
     } catch (err: any) {
-      toast.error(err.message ?? "Failed to acknowledge")
+      toast.error(err?.message ?? "Failed to sign")
     } finally {
-      setAcknowledgingId(null)
+      setSigningId(null)
+    }
+  }
+
+  async function handleWitnessSign(item: MxlmsAdHocCompletion, sig: SignatureData): Promise<void> {
+    setSigningId(item.id)
+    try {
+      const { error } = await mxlms
+        .from("ad_hoc_completions")
+        .update({
+          witness_signed_at:      sig.timestamp,
+          witness_signature_hash: sig.hash,
+          status:                 "complete",
+        })
+        .eq("id", item.id)
+      if (error) throw error
+
+      toast.success("Witness signature applied — archiving to Drive…")
+      refetchWitness()
+      fireArchive(item.id)
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to sign")
+    } finally {
+      setSigningId(null)
     }
   }
 
@@ -582,6 +779,17 @@ export default function MyTraining() {
         </p>
       </div>
 
+      {/* Witness sign-off — visible to any user designated as witness, regardless of tech link */}
+      {profile && (
+        <PendingWitnessSection
+          items={pendingWitness}
+          loading={loadingWitness}
+          profile={profile}
+          onSign={handleWitnessSign}
+          signingId={signingId}
+        />
+      )}
+
       {!techId ? (
         <Card className="card-elevated border-0">
           <NotLinked />
@@ -626,12 +834,15 @@ export default function MyTraining() {
           )}
 
           {/* Pending Acknowledgments */}
-          <PendingAcknowledgments
-            items={pendingAck}
-            loading={loadingAck}
-            onAcknowledge={handleAcknowledge}
-            acknowledgingId={acknowledgingId}
-          />
+          {profile && (
+            <PendingAcknowledgments
+              items={pendingAck}
+              loading={loadingAck}
+              profile={profile}
+              onSign={handleTechSign}
+              signingId={signingId}
+            />
+          )}
 
           {/* Active Assignments */}
           <Card className="card-elevated border-0 overflow-hidden">
