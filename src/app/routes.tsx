@@ -16,6 +16,8 @@ const PermissionsIndex = lazy(() => import("@/pages/admin/PermissionsIndex"))
 const AccessRestricted = lazy(() => import("@/pages/AccessRestricted"))
 const AircraftInfo = lazy(() => import("@/pages/AircraftInfo"))
 const MyTraining   = lazy(() => import("@/pages/training/MyTraining"))
+const MyJourney    = lazy(() => import("@/pages/training/MyJourney"))
+const AiAssistant  = lazy(() => import("@/pages/AiAssistant"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -63,7 +65,7 @@ const routes: RouteObject[] = [
       },
       { path: "aircraft",    element: wrap(<AircraftInfo />) },
       { path: "dev/access-denied", element: wrap(<AccessDenied name="Aircraft Conformity" />) },
-      { path: "ai-assistant", element: wrap(<ComingSoon name="AI Assistant" />) },
+      { path: "ai-assistant", element: wrap(<AiAssistant />) },
       { path: "conformity",  element: wrap(<ComingSoon name="Aircraft Conformity" />) },
       { path: "14-day-check", element: wrap(<ComingSoon name="14-Day Check" />) },
       { path: "planning",    element: wrap(<ComingSoon name="Maintenance Planning" />) },
@@ -71,6 +73,7 @@ const routes: RouteObject[] = [
       { path: "terminal-ogd", element: wrap(<ComingSoon name="Terminal-OGD" />) },
       { path: "projects",    element: wrap(<ComingSoon name="Projects" />) },
       { path: "training",    element: wrap(<MyTraining />) },
+      { path: "journey",     element: wrap(<MyJourney />) },
       { path: "docs",        element: wrap(<ComingSoon name="Docs & Links" />) },
       {
         path: "admin/users",

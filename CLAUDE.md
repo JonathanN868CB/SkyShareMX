@@ -140,3 +140,15 @@ When building new pages, follow this structure:
 // Section divider
 <div className="stripe-divider" />
 ```
+
+---
+
+## Database & Supabase Rules
+
+- All user-scoped tables must have a `user_id UUID` referencing `auth.users(id) ON DELETE CASCADE` — not `profiles.id`
+- RLS must be enabled on every new table before any data is inserted
+- Always write explicit, scoped RLS policies — `USING (true)` or `WITH CHECK (true)` on write operations is not acceptable
+- Use the existing DB helpers (`has_role`, `has_permission`, `is_admin_or_super`) for role checks in policies — do not re-implement inline
+- Sensitive mutations (role changes, status changes, permission grants/revokes) go through Netlify functions using the service role — not direct client-side Supabase calls
+- After any schema change, regenerate and update `src/entities/supabase.ts`
+- `access_requests` is the only table that permits unauthenticated inserts — all others require auth
