@@ -3,11 +3,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   Users, UserPlus, CheckCircle, XCircle, Settings,
-  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut,
+  Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut, Link2,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
+import { mxlms } from "@/lib/supabase-mxlms"
 import { APP_ROLES, APP_SECTIONS, type Profile, type AppRole, type UserStatus, type AppSection } from "@/entities/supabase"
+import type { MxlmsTechnician } from "@/entities/mxlms"
 import { useAuth } from "@/features/auth"
 import { Button } from "@/shared/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
@@ -100,8 +102,9 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
       "Ten or More",
       "Terminal-OGD",
       "Projects",
-      "Training",
       "Docs & Links",
+      "Training",
+      "My Journey",
     ],
   },
 ]
@@ -183,7 +186,7 @@ function PermissionsDialog({
         style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
       >
         {/* Gold stripe */}
-        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "4px 4px 0 0", marginTop: "-1px", marginLeft: "-1px", marginRight: "-1px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "8px 8px 0 0", marginTop: "-1px", marginLeft: "-25px", marginRight: "-25px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
 
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
@@ -374,7 +377,7 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
         style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
       >
         {/* Gold stripe top */}
-        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "4px 4px 0 0", marginTop: "-1px", marginLeft: "-1px", marginRight: "-1px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "8px 8px 0 0", marginTop: "-1px", marginLeft: "-25px", marginRight: "-25px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
 
         <DialogHeader>
           <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
@@ -568,15 +571,232 @@ function RemoveUserDialog({
   )
 }
 
+// ─── MX-LMS Link / Unlink Dialog ─────────────────────────────────────────────
+// No dropdown in the happy path — auto-matches by email, shows a confirm only.
+// Falls back to a small picker only when there's no email match.
+// Unlinking your OWN profile requires a two-step confirm.
+
+async function fetchMxlmsTechnicians(): Promise<MxlmsTechnician[]> {
+  const { data, error } = await mxlms
+    .from("technicians")
+    .select("id,name,tech_code,role,status,email")
+    .eq("status", "active")
+    .order("name")
+  if (error) throw error
+  return (data ?? []) as MxlmsTechnician[]
+}
+
+function MxlmsLinkDialog({
+  user,
+  isSelf,
+  technicians,
+  open,
+  onClose,
+}: {
+  user: Profile | null
+  isSelf: boolean
+  technicians: MxlmsTechnician[]
+  open: boolean
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const isLinked = user?.mxlms_technician_id != null
+  const action   = isLinked ? "unlink" : "link"
+
+  // Auto-match by email; null = no match found (fallback to picker)
+  const autoMatch = !isLinked
+    ? technicians.find(t => t.email?.toLowerCase() === user?.email?.toLowerCase()) ?? null
+    : null
+
+  const currentTech = isLinked
+    ? technicians.find(t => t.id === user?.mxlms_technician_id) ?? null
+    : null
+
+  // Picker fallback state (used only when auto-match fails)
+  const [pickedId, setPickedId] = useState<string>("__none__")
+  const [step, setStep]         = useState<1 | 2>(1)   // step 2 = extra confirm for self-unlink
+  const [saving, setSaving]     = useState(false)
+
+  useEffect(() => {
+    if (open) { setStep(1); setPickedId("__none__") }
+  }, [open, user])
+
+  const resolvedTech = action === "link"
+    ? (autoMatch ?? technicians.find(t => String(t.id) === pickedId) ?? null)
+    : currentTech
+
+  const canConfirm = action === "unlink" || resolvedTech != null
+
+  async function doSave() {
+    if (!user) return
+    setSaving(true)
+    try {
+      const newValue = action === "link" ? resolvedTech!.id : null
+      const { error } = await supabase
+        .from("profiles")
+        .update({ mxlms_technician_id: newValue })
+        .eq("id", user.id)
+      if (error) throw error
+      toast.success(action === "link" ? `Linked to MX-LMS` : "MX-LMS link removed")
+      qc.invalidateQueries({ queryKey: ["admin-users"] })
+      onClose()
+    } catch (e: any) {
+      toast.error(e.message ?? "Failed to save")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handleConfirm() {
+    if (action === "unlink" && isSelf && step === 1) {
+      setStep(2)
+      return
+    }
+    doSave()
+  }
+
+  if (!user) return null
+
+  const displayName = user.full_name ?? user.email
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent
+        className="max-w-sm"
+        style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "8px 8px 0 0", marginTop: "-1px", marginLeft: "-25px", marginRight: "-25px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+
+        <DialogHeader>
+          <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
+            {action === "link" ? "Enable MX-LMS Access" : step === 2 ? "Are You Sure?" : "Remove MX-LMS Access"}
+          </DialogTitle>
+          <DialogDescription className="text-white/35" style={{ fontFamily: "var(--font-heading)", fontSize: "11px", letterSpacing: "0.08em" }}>
+            {displayName}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 py-1">
+
+          {/* ── LINK flow ── */}
+          {action === "link" && (
+            <>
+              {autoMatch ? (
+                // Happy path: show the match, just confirm
+                <div className="rounded-lg px-4 py-3.5 space-y-1"
+                  style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.2)" }}>
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--skyshare-gold)] opacity-60" style={{ fontFamily: "var(--font-heading)" }}>
+                    Matched by email
+                  </p>
+                  <p className="text-base font-semibold text-white/90">{autoMatch.name}</p>
+                  <p className="text-[11px] text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                    {autoMatch.tech_code && `[${autoMatch.tech_code}]`}
+                    {autoMatch.role && ` · ${autoMatch.role}`}
+                  </p>
+                </div>
+              ) : (
+                // No email match — data fix needed in MX-LMS
+                <div className="rounded px-4 py-3.5 space-y-1.5"
+                  style={{ background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                  <p className="text-[10px] uppercase tracking-wider text-amber-400 opacity-70" style={{ fontFamily: "var(--font-heading)" }}>
+                    No match found
+                  </p>
+                  <p className="text-sm text-white/70">
+                    No MX-LMS technician matched <strong className="text-white/85">{user?.email}</strong>.
+                  </p>
+                  <p className="text-xs text-white/35 leading-relaxed mt-1" style={{ fontFamily: "var(--font-heading)" }}>
+                    Update the technician&apos;s email in MX-LMS to match, then try again.
+                  </p>
+                </div>
+              )}
+              {autoMatch && (
+                <p className="text-xs text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+                  This enables My Training and My Journey for {displayName}.
+                </p>
+              )}
+            </>
+          )}
+
+          {/* ── UNLINK flow — step 1 ── */}
+          {action === "unlink" && step === 1 && (
+            <>
+              {currentTech && (
+                <div className="rounded-lg px-4 py-3 space-y-0.5"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <p className="text-sm text-white/60">Currently linked to</p>
+                  <p className="text-base font-semibold text-white/85">{currentTech.name}</p>
+                </div>
+              )}
+              {isSelf && (
+                <div className="rounded px-3 py-2.5 text-xs text-red-400"
+                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                  You are modifying <strong>your own profile</strong>. Removing this link will disable
+                  your My Training and My Journey tabs.
+                </div>
+              )}
+              <p className="text-xs text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+                My Training and My Journey will show a "not connected" state until re-linked.
+              </p>
+            </>
+          )}
+
+          {/* ── UNLINK flow — step 2 (self only) ── */}
+          {action === "unlink" && step === 2 && (
+            <div className="space-y-3">
+              <div className="rounded px-4 py-3.5 text-sm text-red-300 leading-relaxed"
+                style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}>
+                <strong className="block mb-1">Final confirmation</strong>
+                This will remove your own MX-LMS connection. You will lose access to
+                My Training and My Journey until an admin re-links your profile.
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="mt-2 gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={saving}
+            className="text-white/40 hover:text-white/60">
+            {action === "link" && !autoMatch ? "Close" : "Cancel"}
+          </Button>
+          {(action === "unlink" || autoMatch) && (
+            <Button
+              onClick={handleConfirm}
+              disabled={!canConfirm || saving}
+              style={{
+                background: action === "unlink"
+                  ? (step === 2 ? "rgba(239,68,68,0.8)" : "rgba(239,68,68,0.15)")
+                  : "var(--skyshare-gold)",
+                color: action === "unlink"
+                  ? (step === 2 ? "#fff" : "#f87171")
+                  : "hsl(0 0% 8%)",
+                border: action === "unlink" ? `1px solid rgba(239,68,68,${step === 2 ? 0.5 : 0.3})` : "none",
+                fontFamily: "var(--font-heading)",
+                letterSpacing: "0.1em",
+              }}
+            >
+              {saving ? "Saving…" : action === "link"
+                ? "Enable Access"
+                : step === 1 && isSelf
+                  ? "Remove My Link →"
+                  : "Yes, Remove Link"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
   const { profile: me } = useAuth()
   const qc = useQueryClient()
 
-  const [permTarget, setPermTarget] = useState<Profile | null>(null)
+  const [permTarget, setPermTarget]   = useState<Profile | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
-  const [inviteOpen, setInviteOpen] = useState(false)
+  const [linkTarget, setLinkTarget]   = useState<Profile | null>(null)
+  const [inviteOpen, setInviteOpen]   = useState(false)
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -584,6 +804,13 @@ export default function UsersPage() {
     queryKey: ["admin-users"],
     queryFn: fetchProfiles,
     enabled: isAdmin,
+  })
+
+  const { data: mxlmsTechs = [] } = useQuery({
+    queryKey: ["mxlms-technicians"],
+    queryFn: fetchMxlmsTechnicians,
+    enabled: isAdmin,
+    staleTime: 60_000,
   })
 
 
@@ -777,7 +1004,7 @@ export default function UsersPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-white/[0.07] hover:bg-transparent">
-                    {["User", "Role", "Status", "Last Login", ""].map(h => (
+                    {["User", "Role", "Status", "Last Login", "MX-LMS", ""].map(h => (
                       <TableHead key={h} className="text-white/40" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase" }}>
                         {h}
                       </TableHead>
@@ -836,6 +1063,40 @@ export default function UsersPage() {
                         {user.last_login
                           ? formatDistanceToNow(new Date(user.last_login), { addSuffix: true })
                           : "Never"}
+                      </TableCell>
+
+                      {/* MX-LMS linked indicator */}
+                      <TableCell>
+                        {user.mxlms_technician_id ? (
+                          <button
+                            onClick={() => setLinkTarget(user)}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold border tracking-wider uppercase transition-colors hover:border-[rgba(212,160,23,0.4)]"
+                            style={{
+                              fontFamily: "var(--font-heading)",
+                              background: "rgba(212,160,23,0.08)",
+                              border: "1px solid rgba(212,160,23,0.2)",
+                              color: "var(--skyshare-gold)",
+                            }}
+                            title="Edit MX-LMS link"
+                          >
+                            <Link2 className="h-2.5 w-2.5" />
+                            Linked
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setLinkTarget(user)}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold border tracking-wider uppercase transition-colors hover:border-white/20 hover:text-white/50"
+                            style={{
+                              fontFamily: "var(--font-heading)",
+                              background: "transparent",
+                              border: "1px solid rgba(255,255,255,0.08)",
+                              color: "rgba(255,255,255,0.2)",
+                            }}
+                            title="Link to MX-LMS"
+                          >
+                            —
+                          </button>
+                        )}
                       </TableCell>
 
                       {/* Actions */}
@@ -995,6 +1256,13 @@ export default function UsersPage() {
         user={permTarget}
         open={!!permTarget}
         onClose={() => setPermTarget(null)}
+      />
+      <MxlmsLinkDialog
+        user={linkTarget}
+        isSelf={linkTarget?.id === me?.id}
+        technicians={mxlmsTechs}
+        open={!!linkTarget}
+        onClose={() => setLinkTarget(null)}
       />
       <InviteDialog
         open={inviteOpen}
