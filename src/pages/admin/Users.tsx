@@ -604,7 +604,7 @@ function LinkMxlmsDialog({
 
   useEffect(() => {
     if (open && user) {
-      setSelectedId(user.mxlms_technician_id != null ? String(user.mxlms_technician_id) : "")
+      setSelectedId(user.mxlms_technician_id != null ? String(user.mxlms_technician_id) : "__none__")
     }
   }, [open, user])
 
@@ -612,7 +612,7 @@ function LinkMxlmsDialog({
     if (!user) return
     setSaving(true)
     try {
-      const value = selectedId === "" ? null : Number(selectedId)
+      const value = selectedId === "__none__" ? null : Number(selectedId)
       const { error } = await supabase
         .from("profiles")
         .update({ mxlms_technician_id: value })
@@ -666,7 +666,7 @@ function LinkMxlmsDialog({
                     <SelectValue placeholder="— Not linked —" />
                   </SelectTrigger>
                   <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                    <SelectItem value="" className="text-white/40 focus:bg-white/10 focus:text-white text-xs italic">
+                    <SelectItem value="__none__" className="text-white/40 focus:bg-white/10 focus:text-white text-xs italic">
                       — Not linked —
                     </SelectItem>
                     {technicians.map(t => (
