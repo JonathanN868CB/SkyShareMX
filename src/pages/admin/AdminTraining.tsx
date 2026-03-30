@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { GraduationCap, Link2, Unlink, ExternalLink } from "lucide-react"
 import { toast } from "sonner"
@@ -48,20 +48,20 @@ function LinkDialog({
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const [selectedId, setSelectedId] = useState<string>("")
+  const [selectedId, setSelectedId] = useState<string>("__none__")
   const [saving, setSaving] = useState(false)
 
-  useState(() => {
+  useEffect(() => {
     if (open && user) {
-      setSelectedId(user.mxlms_technician_id != null ? String(user.mxlms_technician_id) : "")
+      setSelectedId(user.mxlms_technician_id != null ? String(user.mxlms_technician_id) : "__none__")
     }
-  })
+  }, [open, user])
 
   const save = async () => {
     if (!user) return
     setSaving(true)
     try {
-      const value = selectedId === "" ? null : Number(selectedId)
+      const value = selectedId === "__none__" ? null : Number(selectedId)
       const { error } = await supabase.from("profiles").update({ mxlms_technician_id: value }).eq("id", user.id)
       if (error) throw error
       toast.success(value ? "MX-LMS profile linked" : "MX-LMS link removed")
@@ -97,7 +97,7 @@ function LinkDialog({
                 <SelectValue placeholder="— Not linked —" />
               </SelectTrigger>
               <SelectContent style={{ background: "hsl(0 0% 14%)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                <SelectItem value="" className="text-white/40 focus:bg-white/10 focus:text-white text-xs italic">— Not linked —</SelectItem>
+                <SelectItem value="__none__" className="text-white/40 focus:bg-white/10 focus:text-white text-xs italic">— Not linked —</SelectItem>
                 {technicians.map(t => (
                   <SelectItem key={t.id} value={String(t.id)} className="text-white/80 focus:bg-white/10 focus:text-white">
                     <span className="font-medium">{t.name}</span>
