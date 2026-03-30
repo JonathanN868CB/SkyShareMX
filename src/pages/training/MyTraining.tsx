@@ -1,5 +1,6 @@
+import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { GraduationCap, Unlink, XCircle } from "lucide-react"
+import { GraduationCap, Unlink, XCircle, Bell, CheckCheck, ShieldAlert, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { Card } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
@@ -33,6 +34,7 @@ async function fetchAdHoc(): Promise<MxlmsAdHocCompletion[]> {
   const { data, error } = await mxlms
     .from("ad_hoc_completions")
     .select("*")
+    .in("status", ["acknowledged", "archived"])
     .order("completed_date", { ascending: false })
     .limit(50)
   if (error) throw error
@@ -47,6 +49,16 @@ async function fetchPending(): Promise<MxlmsPendingCompletion[]> {
     .order("detected_at", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsPendingCompletion[]
+}
+
+async function fetchPendingAcknowledgments(): Promise<MxlmsAdHocCompletion[]> {
+  const { data, error } = await mxlms
+    .from("ad_hoc_completions")
+    .select("*")
+    .eq("status", "pending_acknowledgment")
+    .order("completed_date", { ascending: false })
+  if (error) throw error
+  return (data ?? []) as MxlmsAdHocCompletion[]
 }
 
 // ─── Not-linked placeholder ───────────────────────────────────────────────────
@@ -104,6 +116,17 @@ function CompletionHistory({
     date: string | null
     source: "assigned" | "ad-hoc"
     docUrl: string | null
+    eventType?: string | null
+    severity?: string | null
+  }
+
+  const EVENT_TYPE_SHORT: Record<string, string> = {
+    "safety-observation":  "Safety",
+    "procedure-refresher": "Procedure",
+    "tooling-equipment":   "Tooling",
+    "regulatory-briefing": "Regulatory",
+    "ojt-mentorship":      "OJT",
+    "general":             "General",
   }
 
   const rows: HistoryRow[] = [
@@ -121,7 +144,9 @@ function CompletionHistory({
       category: a.category,
       date: a.completed_date,
       source: "ad-hoc" as const,
-      docUrl: null,
+      docUrl: a.drive_url,
+      eventType: a.event_type ?? null,
+      severity: a.severity ?? null,
     })),
   ].sort((a, b) => {
     if (!a.date) return 1
@@ -162,7 +187,28 @@ function CompletionHistory({
           {rows.map(row => (
             <tr key={row.key} className="transition-colors" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
               <td className="px-4 py-3">
-                <span className="text-sm text-white/75">{row.name}</span>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-white/75">{row.name}</span>
+                  {row.source === "ad-hoc" && row.eventType && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+                        style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "var(--font-heading)" }}>
+                        {EVENT_TYPE_SHORT[row.eventType] ?? row.eventType}
+                      </span>
+                      {row.severity && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+                          style={{
+                            background: row.severity === "high" ? "rgba(193,2,48,0.12)" : row.severity === "medium" ? "rgba(245,158,11,0.1)" : "rgba(16,185,129,0.08)",
+                            color:      row.severity === "high" ? "#e05070"              : row.severity === "medium" ? "#f59e0b"              : "#10b981",
+                            border:     `1px solid ${row.severity === "high" ? "rgba(193,2,48,0.2)" : row.severity === "medium" ? "rgba(245,158,11,0.18)" : "rgba(16,185,129,0.15)"}`,
+                            fontFamily: "var(--font-heading)",
+                          }}>
+                          {row.severity}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </td>
               <td className="px-4 py-3">
                 <Pill label={row.category} />
@@ -198,6 +244,171 @@ function CompletionHistory({
         <span className="text-[10px]" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.35 }}>
           {rows.length} record{rows.length !== 1 ? "s" : ""}
         </span>
+      </div>
+    </div>
+  )
+}
+
+// ─── Pending Acknowledgments ──────────────────────────────────────────────────
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  "safety-observation":  "Safety Observation",
+  "procedure-refresher": "Procedure Refresher",
+  "tooling-equipment":   "Tooling / Equipment",
+  "regulatory-briefing": "Regulatory Briefing",
+  "ojt-mentorship":      "OJT / Mentorship",
+  "general":             "General",
+}
+
+const SEVERITY_STYLES: Record<string, { bg: string; color: string; border: string }> = {
+  low:    { bg: "rgba(16,185,129,0.1)",  color: "#10b981",              border: "rgba(16,185,129,0.2)" },
+  medium: { bg: "rgba(245,158,11,0.12)", color: "#f59e0b",              border: "rgba(245,158,11,0.2)" },
+  high:   { bg: "rgba(193,2,48,0.12)",   color: "#e05070",              border: "rgba(193,2,48,0.25)" },
+}
+
+function AcknowledgmentCard({
+  item,
+  onAcknowledge,
+  acknowledging,
+}: {
+  item: MxlmsAdHocCompletion
+  onAcknowledge: (id: number) => void
+  acknowledging: boolean
+}) {
+  const eventLabel  = EVENT_TYPE_LABELS[item.event_type] ?? item.event_type
+  const sevStyle    = item.severity ? SEVERITY_STYLES[item.severity] : null
+
+  return (
+    <div className="rounded-lg overflow-hidden"
+      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(212,160,23,0.2)" }}>
+
+      {/* Header row */}
+      <div className="px-5 py-3.5 flex items-center gap-3"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(212,160,23,0.04)" }}>
+        <Bell className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-white/80">{item.name}</span>
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+              style={{ background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-heading)" }}>
+              {eventLabel}
+            </span>
+            {sevStyle && item.severity && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+                style={{ background: sevStyle.bg, color: sevStyle.color, border: `1px solid ${sevStyle.border}`, fontFamily: "var(--font-heading)" }}>
+                <ShieldAlert className="h-2.5 w-2.5" />
+                {item.severity}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+            <span className="text-[11px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
+              {formatDate(item.completed_date)}
+            </span>
+            {item.initiated_by_name && (
+              <span className="text-[11px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+                Recorded by {item.initiated_by_name}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="px-5 py-4 space-y-3">
+        {item.description && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+              What Happened
+            </p>
+            <p className="text-sm text-white/60 leading-relaxed">{item.description}</p>
+          </div>
+        )}
+        {item.corrective_action && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+              Training Delivered / Corrective Action
+            </p>
+            <p className="text-sm text-white/60 leading-relaxed">{item.corrective_action}</p>
+          </div>
+        )}
+        {item.notes && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-white/25 mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+              Notes
+            </p>
+            <p className="text-sm text-white/45 leading-relaxed">{item.notes}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Acknowledge footer */}
+      <div className="px-5 py-3 flex items-center justify-between gap-4"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.12)" }}>
+        <p className="text-[11px] text-white/30 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+          By acknowledging, you confirm you have reviewed this record.
+        </p>
+        <button
+          onClick={() => onAcknowledge(item.id)}
+          disabled={acknowledging}
+          className="shrink-0 inline-flex items-center gap-1.5 px-4 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider transition-all hover:opacity-80 disabled:opacity-40"
+          style={{
+            background: "var(--skyshare-gold)",
+            color: "hsl(0 0% 8%)",
+            fontFamily: "var(--font-heading)",
+          }}
+        >
+          {acknowledging ? (
+            <RefreshCw className="h-3 w-3 animate-spin" />
+          ) : (
+            <CheckCheck className="h-3 w-3" />
+          )}
+          {acknowledging ? "Acknowledging…" : "Acknowledge"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function PendingAcknowledgments({
+  items,
+  loading,
+  onAcknowledge,
+  acknowledgingId,
+}: {
+  items: MxlmsAdHocCompletion[]
+  loading: boolean
+  onAcknowledge: (id: number) => void
+  acknowledgingId: number | null
+}) {
+  if (loading || items.length === 0) return null
+
+  return (
+    <div className="rounded-lg overflow-hidden"
+      style={{ border: "1px solid rgba(212,160,23,0.3)", background: "rgba(212,160,23,0.03)" }}>
+      {/* Header */}
+      <div className="px-5 py-3.5 flex items-center gap-3"
+        style={{ borderBottom: "1px solid rgba(212,160,23,0.15)", background: "rgba(212,160,23,0.06)" }}>
+        <Bell className="h-4 w-4 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+        <div>
+          <p className="text-xs font-semibold" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}>
+            PENDING ACKNOWLEDGMENTS
+          </p>
+          <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+            {items.length} event{items.length !== 1 ? "s" : ""} require your acknowledgment
+          </p>
+        </div>
+      </div>
+      {/* Cards */}
+      <div className="p-4 space-y-3">
+        {items.map(item => (
+          <AcknowledgmentCard
+            key={item.id}
+            item={item}
+            onAcknowledge={onAcknowledge}
+            acknowledging={acknowledgingId === item.id}
+          />
+        ))}
       </div>
     </div>
   )
@@ -261,6 +472,18 @@ export default function MyTraining() {
     enabled: !!techId,
   })
 
+  const {
+    data: pendingAck = [],
+    isLoading: loadingAck,
+    refetch: refetchAck,
+  } = useQuery({
+    queryKey: ["my-training-pending-ack", techId],
+    queryFn: fetchPendingAcknowledgments,
+    enabled: !!techId,
+  })
+
+  const [acknowledgingId, setAcknowledgingId] = useState<number | null>(null)
+
   const qc = useQueryClient()
 
   // Build submission map: training_item_id → most recent submission (pending beats rejected)
@@ -278,6 +501,33 @@ export default function MyTraining() {
 
   // Unlinked rejections (no matched_training_item_id) — shown in banner
   const unlinkedRejections = pending.filter(p => p.status === "rejected" && p.matched_training_item_id == null)
+
+  async function handleAcknowledge(id: number): Promise<void> {
+    setAcknowledgingId(id)
+    try {
+      const { error } = await mxlms
+        .from("ad_hoc_completions")
+        .update({ acknowledged_at: new Date().toISOString(), status: "acknowledged" })
+        .eq("id", id)
+      if (error) throw error
+
+      toast.success("Acknowledged")
+      refetchAck()
+
+      // Fire-and-forget: ask Netlify function to generate PDF + archive to Drive
+      fetch("/.netlify/functions/adhoc-drive-archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adHocId: id, technicianId: techId }),
+      }).catch(() => {
+        // Non-fatal — Drive archive failure doesn't block the tech
+      })
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to acknowledge")
+    } finally {
+      setAcknowledgingId(null)
+    }
+  }
 
   async function handleCancelSubmission(id: number): Promise<void> {
     // Get the row first so we can clean up the storage file
@@ -374,6 +624,14 @@ export default function MyTraining() {
               </div>
             </div>
           )}
+
+          {/* Pending Acknowledgments */}
+          <PendingAcknowledgments
+            items={pendingAck}
+            loading={loadingAck}
+            onAcknowledge={handleAcknowledge}
+            acknowledgingId={acknowledgingId}
+          />
 
           {/* Active Assignments */}
           <Card className="card-elevated border-0 overflow-hidden">
