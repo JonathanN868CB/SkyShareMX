@@ -9,34 +9,39 @@ import { Card } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
 import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
+import { useViewAsTech } from "@/hooks/useViewAsTech"
+import { ViewAsBar } from "@/components/training/ViewAsBar"
 import type { MxlmsTechnicianTraining, MxlmsTrainingCompletion, MxlmsAdHocCompletion, MxlmsPendingCompletion } from "@/entities/mxlms"
 import TrainingDashboard, { DueBadge } from "./TrainingDashboard"
 
 // ─── Data fetching ────────────────────────────────────────────────────────────
 
-async function fetchAssignments(): Promise<MxlmsTechnicianTraining[]> {
+async function fetchAssignments(techId: number): Promise<MxlmsTechnicianTraining[]> {
   const { data, error } = await mxlms
     .from("technician_training")
     .select("*, training_item:training_items(id,name,category,type,description,material_url,recurrence_interval)")
+    .eq("technician_id", techId)
     .order("created_at", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsTechnicianTraining[]
 }
 
-async function fetchCompletions(): Promise<MxlmsTrainingCompletion[]> {
+async function fetchCompletions(techId: number): Promise<MxlmsTrainingCompletion[]> {
   const { data, error } = await mxlms
     .from("training_completions")
     .select("*, training_item:training_items(id,name,category)")
+    .eq("technician_id", techId)
     .order("completed_date", { ascending: false })
     .limit(50)
   if (error) throw error
   return (data ?? []) as MxlmsTrainingCompletion[]
 }
 
-async function fetchAdHoc(): Promise<MxlmsAdHocCompletion[]> {
+async function fetchAdHoc(techId: number): Promise<MxlmsAdHocCompletion[]> {
   const { data, error } = await mxlms
     .from("ad_hoc_completions")
     .select("*")
+    .eq("technician_id", techId)
     .in("status", ["complete", "archived"])
     .order("completed_date", { ascending: false })
     .limit(50)
@@ -44,20 +49,22 @@ async function fetchAdHoc(): Promise<MxlmsAdHocCompletion[]> {
   return (data ?? []) as MxlmsAdHocCompletion[]
 }
 
-async function fetchPending(): Promise<MxlmsPendingCompletion[]> {
+async function fetchPending(techId: number): Promise<MxlmsPendingCompletion[]> {
   const { data, error } = await mxlms
     .from("pending_completions")
     .select("id,technician_id,matched_training_item_id,status,review_notes,file_name,detected_at,storage_path")
+    .eq("technician_id", techId)
     .in("status", ["pending", "rejected"])
     .order("detected_at", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsPendingCompletion[]
 }
 
-async function fetchPendingAcknowledgments(): Promise<MxlmsAdHocCompletion[]> {
+async function fetchPendingAcknowledgments(techId: number): Promise<MxlmsAdHocCompletion[]> {
   const { data, error } = await mxlms
     .from("ad_hoc_completions")
     .select("*")
+    .eq("technician_id", techId)
     .eq("status", "pending_tech_ack")
     .order("completed_date", { ascending: false })
   if (error) throw error
@@ -647,7 +654,8 @@ function SectionHeader({ title, sub }: { title: string; sub?: string }) {
 
 export default function MyTraining() {
   const { profile } = useAuth()
-  const techId = profile?.mxlms_technician_id ?? null
+  const { effectiveTechId, isViewingOther } = useViewAsTech()
+  const techId = effectiveTechId
 
   const {
     data: assignments = [],
@@ -655,7 +663,7 @@ export default function MyTraining() {
     refetch: refetchAssignments,
   } = useQuery({
     queryKey: ["my-training-assignments", techId],
-    queryFn: fetchAssignments,
+    queryFn: () => fetchAssignments(techId!),
     enabled: !!techId,
   })
 
@@ -664,7 +672,7 @@ export default function MyTraining() {
     isLoading: loadingCompletions,
   } = useQuery({
     queryKey: ["my-training-completions", techId],
-    queryFn: fetchCompletions,
+    queryFn: () => fetchCompletions(techId!),
     enabled: !!techId,
   })
 
@@ -673,7 +681,7 @@ export default function MyTraining() {
     isLoading: loadingAdHoc,
   } = useQuery({
     queryKey: ["my-training-adhoc", techId],
-    queryFn: fetchAdHoc,
+    queryFn: () => fetchAdHoc(techId!),
     enabled: !!techId,
   })
 
@@ -682,7 +690,7 @@ export default function MyTraining() {
     refetch: refetchPending,
   } = useQuery({
     queryKey: ["my-training-pending", techId],
-    queryFn: fetchPending,
+    queryFn: () => fetchPending(techId!),
     enabled: !!techId,
   })
 
@@ -692,7 +700,7 @@ export default function MyTraining() {
     refetch: refetchAck,
   } = useQuery({
     queryKey: ["my-training-pending-ack", techId],
-    queryFn: fetchPendingAcknowledgments,
+    queryFn: () => fetchPendingAcknowledgments(techId!),
     enabled: !!techId,
   })
 
@@ -858,6 +866,9 @@ export default function MyTraining() {
         onSuccess={() => {}}
       />
 
+      {/* View As bar — Super Admin only */}
+      <ViewAsBar page="training" />
+
       {/* Witness sign-off — visible to any user designated as witness, regardless of tech link */}
       {profile && (
         <PendingWitnessSection
@@ -912,7 +923,7 @@ export default function MyTraining() {
             </div>
           )}
 
-          {/* Pending Acknowledgments */}
+          {/* Pending Acknowledgments — Super Admins can sign on behalf of the viewed tech */}
           {profile && (
             <PendingAcknowledgments
               items={pendingAck}
@@ -936,6 +947,7 @@ export default function MyTraining() {
               submissionsByItemId={submissionsByItemId}
               onCancelSubmission={handleCancelSubmission}
               onRefresh={() => { refetchAssignments(); refetchPending() }}
+              readOnly={isViewingOther}
             />
           </Card>
 

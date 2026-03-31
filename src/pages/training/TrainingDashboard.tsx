@@ -391,12 +391,14 @@ function AssignmentRow({
   submission,
   onCancelSubmission,
   onUploadSuccess,
+  readOnly = false,
 }: {
   row: MxlmsTechnicianTraining
   techId: number
   submission: MxlmsPendingCompletion | null
   onCancelSubmission: (id: number) => Promise<void>
   onUploadSuccess: () => void
+  readOnly?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -448,9 +450,9 @@ function AssignmentRow({
           <Pill label={row.status} />
         </td>
 
-        {/* Upload button — hidden while a submission is active */}
+        {/* Upload button — hidden while a submission is active or in read-only mode */}
         <td className="px-3 py-3 pr-4">
-          {!isDone && !submission && (
+          {!isDone && !submission && !readOnly && (
             <button
               onClick={() => setUploadOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-[10px] font-bold tracking-wider uppercase transition-all hover:opacity-80"
@@ -538,9 +540,10 @@ interface Props {
   submissionsByItemId: Map<number, MxlmsPendingCompletion>
   onCancelSubmission: (id: number) => Promise<void>
   onRefresh:          () => void
+  readOnly?:          boolean
 }
 
-export default function TrainingDashboard({ assignments, loading, techId, submissionsByItemId, onCancelSubmission, onRefresh }: Props) {
+export default function TrainingDashboard({ assignments, loading, techId, submissionsByItemId, onCancelSubmission, onRefresh, readOnly = false }: Props) {
   const [categoryFilter, setCategoryFilter] = useState("all")
   const [statusFilter,   setStatusFilter]   = useState("open")
 
@@ -659,6 +662,7 @@ export default function TrainingDashboard({ assignments, loading, techId, submis
                   submission={submissionsByItemId.get(row.training_item_id) ?? null}
                   onCancelSubmission={onCancelSubmission}
                   onUploadSuccess={onRefresh}
+                  readOnly={readOnly}
                 />
               ))}
             </tbody>
