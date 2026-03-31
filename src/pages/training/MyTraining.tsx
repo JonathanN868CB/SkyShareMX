@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { GraduationCap, Unlink, XCircle, Bell, ShieldAlert } from "lucide-react"
+import { GraduationCap, Unlink, XCircle, Bell, ShieldAlert, Plus } from "lucide-react"
 import { SignaturePanel, SignatureBlock, type SignatureData } from "@/components/training/SignaturePanel"
+import { ProposeTrainingItemModal } from "@/components/training/ProposeTrainingItemModal"
+import { Button } from "@/shared/ui/button"
 import { toast } from "sonner"
 import { Card } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
@@ -35,7 +37,7 @@ async function fetchAdHoc(): Promise<MxlmsAdHocCompletion[]> {
   const { data, error } = await mxlms
     .from("ad_hoc_completions")
     .select("*")
-    .in("status", ["acknowledged", "archived"])
+    .in("status", ["complete", "archived"])
     .order("completed_date", { ascending: false })
     .limit(50)
   if (error) throw error
@@ -567,6 +569,65 @@ function PendingWitnessSection({
   )
 }
 
+// ─── Submitted Proposals Panel ───────────────────────────────────────────────
+
+async function fetchMyProposals(userId: string) {
+  const { data, error } = await mxlms
+    .from("pending_training_items")
+    .select("id,name,category,priority,status,proposed_at,review_notes")
+    .eq("proposed_by_user_id", userId)
+    .order("proposed_at", { ascending: false })
+  if (error) throw error
+  return data ?? []
+}
+
+const STATUS_STYLE: Record<string, { color: string; label: string }> = {
+  proposed: { color: "rgba(212,160,23,0.85)",  label: "Pending Review" },
+  accepted: { color: "#10b981",                label: "Accepted" },
+  rejected: { color: "#e05070",                label: "Rejected" },
+}
+
+function SubmittedProposalsPanel({ userId }: { userId: string }) {
+  const { data: proposals = [], isLoading } = useQuery({
+    queryKey: ["my-proposals", userId],
+    queryFn: () => fetchMyProposals(userId),
+    enabled: !!userId,
+  })
+
+  if (isLoading) return (
+    <div className="px-5 py-6 text-xs text-white/30 text-center">Loading…</div>
+  )
+  if (proposals.length === 0) return (
+    <div className="px-5 py-6 text-xs text-white/30 text-center">No proposals submitted yet.</div>
+  )
+
+  return (
+    <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+      {proposals.map((p: { id: number; name: string; category: string; priority: string; status: string; proposed_at: string; review_notes: string | null }) => {
+        const s = STATUS_STYLE[p.status] ?? STATUS_STYLE.proposed
+        return (
+          <div key={p.id} className="px-5 py-3 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm text-white/80 truncate">{p.name}</p>
+              <p className="text-[11px] text-white/35 mt-0.5"
+                style={{ fontFamily: "var(--font-heading)" }}>
+                {p.category} · {new Date(p.proposed_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </p>
+              {p.status === "rejected" && p.review_notes && (
+                <p className="text-[11px] mt-1" style={{ color: "#e05070" }}>Note: {p.review_notes}</p>
+              )}
+            </div>
+            <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: `${s.color}18`, color: s.color, fontFamily: "var(--font-heading)", border: `1px solid ${s.color}40` }}>
+              {s.label}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Section header ───────────────────────────────────────────────────────────
 
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
@@ -640,12 +701,15 @@ export default function MyTraining() {
     isLoading: loadingWitness,
     refetch: refetchWitness,
   } = useQuery({
-    queryKey: ["my-training-pending-witness", profile?.id],
-    queryFn: () => fetchPendingWitness(profile!.id),
-    enabled: !!profile?.id,
+    queryKey: ["my-training-pending-witness", profile?.user_id],
+    queryFn: () => fetchPendingWitness(profile!.user_id),
+    enabled: !!profile?.user_id,
   })
 
-  const [signingId, setSigningId] = useState<number | null>(null)
+  const [signingId,        setSigningId]        = useState<number | null>(null)
+  const [proposeModalOpen, setProposeModalOpen] = useState(false)
+
+  const canProposeTraining = profile?.role === "Super Admin" || profile?.role === "Admin"
 
   const qc = useQueryClient()
 
@@ -665,14 +729,6 @@ export default function MyTraining() {
   // Unlinked rejections (no matched_training_item_id) — shown in banner
   const unlinkedRejections = pending.filter(p => p.status === "rejected" && p.matched_training_item_id == null)
 
-  function fireArchive(adHocId: number) {
-    fetch("/.netlify/functions/adhoc-drive-archive", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ adHocId, technicianId: techId }),
-    }).catch(() => {})
-  }
-
   async function handleTechSign(item: MxlmsAdHocCompletion, sig: SignatureData): Promise<void> {
     setSigningId(item.id)
     const nextStatus = item.witness_user_id ? "pending_witness_ack" : "complete"
@@ -680,7 +736,7 @@ export default function MyTraining() {
       const { error } = await mxlms
         .from("ad_hoc_completions")
         .update({
-          acknowledged_at:     sig.timestamp,
+          acknowledged_at:      sig.timestamp,
           tech_signed_by_name:  sig.name,
           tech_signed_by_email: sig.email,
           tech_signature_hash:  sig.hash,
@@ -691,11 +747,10 @@ export default function MyTraining() {
 
       toast.success(
         nextStatus === "complete"
-          ? "Signed — archiving to Drive…"
+          ? "Signed — record complete, MX-LMS will archive to Drive"
           : `Signed — routing to ${item.witness_name ?? "witness"} for sign-off`
       )
       refetchAck()
-      if (nextStatus === "complete") fireArchive(item.id)
     } catch (err: any) {
       toast.error(err?.message ?? "Failed to sign")
     } finally {
@@ -716,9 +771,8 @@ export default function MyTraining() {
         .eq("id", item.id)
       if (error) throw error
 
-      toast.success("Witness signature applied — archiving to Drive…")
+      toast.success("Witness signature applied — record complete, MX-LMS will archive to Drive")
       refetchWitness()
-      fireArchive(item.id)
     } catch (err: any) {
       toast.error(err?.message ?? "Failed to sign")
     } finally {
@@ -763,21 +817,46 @@ export default function MyTraining() {
 
       {/* Hero */}
       <div className="hero-area">
-        <div className="flex items-center gap-3">
-          <GraduationCap className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
-          <div>
-            <h1 className="text-[2.6rem] leading-none text-foreground"
-              style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
-              MY TRAINING
-            </h1>
-            <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <GraduationCap className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
+            <div>
+              <h1 className="text-[2.6rem] leading-none text-foreground"
+                style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
+                MY TRAINING
+              </h1>
+              <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
+            </div>
           </div>
+          {canProposeTraining && (
+            <Button
+              onClick={() => setProposeModalOpen(true)}
+              variant="outline"
+              className="gap-2 mt-1 shrink-0"
+              style={{
+                borderColor: "rgba(212,160,23,0.4)",
+                color: "rgba(212,160,23,0.85)",
+                fontFamily: "var(--font-heading)",
+                letterSpacing: "0.08em",
+                background: "transparent",
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Propose Training
+            </Button>
+          )}
         </div>
         <p className="mt-3 text-sm text-muted-foreground"
           style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}>
           Assignments, completion docs, and your training record
         </p>
       </div>
+
+      <ProposeTrainingItemModal
+        open={proposeModalOpen}
+        onClose={() => setProposeModalOpen(false)}
+        onSuccess={() => {}}
+      />
 
       {/* Witness sign-off — visible to any user designated as witness, regardless of tech link */}
       {profile && (
@@ -872,6 +951,17 @@ export default function MyTraining() {
               loading={loadingCompletions || loadingAdHoc}
             />
           </Card>
+
+          {/* Submitted Training Proposals — Admin / Manager only */}
+          {(profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager") && profile?.id && (
+            <Card className="card-elevated border-0 overflow-hidden">
+              <SectionHeader
+                title="Submitted Training Proposals"
+                sub="Training items you've proposed for Jonathan's review"
+              />
+              <SubmittedProposalsPanel userId={profile.id} />
+            </Card>
+          )}
         </>
       )}
     </div>

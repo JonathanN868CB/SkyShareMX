@@ -79,6 +79,7 @@ export type AdHocStatus =
   | 'pending_witness_ack'
   | 'complete'
   | 'archived'
+  | 'cancelled'
 
 export interface MxlmsAdHocCompletion {
   id: number
@@ -114,6 +115,8 @@ export interface MxlmsAdHocCompletion {
   witness_email: string | null
   witness_signed_at: string | null
   witness_signature_hash: string | null
+  // manager override
+  override_note: string | null
 }
 
 export interface MxlmsAdHocInsert {
