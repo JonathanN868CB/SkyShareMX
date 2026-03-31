@@ -3,8 +3,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   Compass, Unlink, CalendarDays, Target, CheckSquare, BookOpen,
   ChevronDown, ChevronRight, CheckCircle2, Circle, AlertCircle,
-  Plus, Send, Lock, Briefcase,
+  Plus, Send, Lock, Briefcase, Trash2,
 } from "lucide-react"
+import { useViewAsTech } from "@/hooks/useViewAsTech"
+import { ViewAsBar } from "@/components/training/ViewAsBar"
 import { toast } from "sonner"
 import { Card } from "@/shared/ui/card"
 import { Button } from "@/shared/ui/button"
@@ -16,16 +18,18 @@ import type {
   MxlmsGoal,
   MxlmsActionItem,
   MxlmsCareerInterests,
+  MxlmsCareerHistoryEntry,
   MxlmsJournalEntry,
   MxlmsJournalInsert,
 } from "@/entities/mxlms"
 
 // ─── Data fetchers ────────────────────────────────────────────────────────────
 
-async function fetchSessions(): Promise<MxlmsSession[]> {
+async function fetchSessions(techId: number): Promise<MxlmsSession[]> {
   const { data, error } = await mxlms
     .from("sessions")
     .select("id,technician_id,session_number,session_year,status,conducted_date,scheduled_date,wins,concerns,next_quarter_focus,end_summary,drive_url,created_at")
+    .eq("technician_id", techId)
     .order("session_year", { ascending: false })
     .order("session_number", { ascending: false })
     .limit(20)
@@ -33,37 +37,51 @@ async function fetchSessions(): Promise<MxlmsSession[]> {
   return (data ?? []) as MxlmsSession[]
 }
 
-async function fetchGoals(): Promise<MxlmsGoal[]> {
+async function fetchGoals(techId: number): Promise<MxlmsGoal[]> {
   const { data, error } = await mxlms
     .from("technician_goals")
     .select("*")
+    .eq("technician_id", techId)
     .order("created_at", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsGoal[]
 }
 
-async function fetchActionItems(): Promise<MxlmsActionItem[]> {
+async function fetchActionItems(techId: number): Promise<MxlmsActionItem[]> {
   const { data, error } = await mxlms
     .from("action_items")
     .select("*")
+    .eq("technician_id", techId)
     .order("created_at", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsActionItem[]
 }
 
-async function fetchCareerInterests(): Promise<MxlmsCareerInterests | null> {
+async function fetchCareerHistory(techId: number): Promise<MxlmsCareerHistoryEntry[]> {
+  const { data, error } = await mxlms
+    .from("technician_career_history")
+    .select("*, badge:career_badges(*)")
+    .eq("technician_id", techId)
+    .order("display_order", { ascending: true })
+  if (error) throw error
+  return (data ?? []) as MxlmsCareerHistoryEntry[]
+}
+
+async function fetchCareerInterests(techId: number): Promise<MxlmsCareerInterests | null> {
   const { data, error } = await mxlms
     .from("career_interests")
     .select("*")
+    .eq("technician_id", techId)
     .maybeSingle()
   if (error) throw error
   return data as MxlmsCareerInterests | null
 }
 
-async function fetchJournal(): Promise<MxlmsJournalEntry[]> {
+async function fetchJournal(techId: number): Promise<MxlmsJournalEntry[]> {
   const { data, error } = await mxlms
     .from("technician_journal")
     .select("*")
+    .eq("technician_id", techId)
     .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(50)
@@ -99,6 +117,120 @@ function formatDateRelative(str: string | null): string {
   if (diff > 0 && diff <= 14) return `In ${diff} days`
   if (diff < 0 && diff >= -14) return `${Math.abs(diff)} days ago`
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+// ─── Career Strip ─────────────────────────────────────────────────────────────
+
+function CareerStrip({ history, loading }: { history: MxlmsCareerHistoryEntry[]; loading: boolean }) {
+  if (loading) return (
+    <div className="h-28 rounded-xl animate-pulse" style={{ background: "rgba(255,255,255,0.03)", border: "0.5px solid rgba(212,160,23,0.1)" }} />
+  )
+  if (!history.length) return null
+
+  return (
+    <div className="rounded-xl px-6 py-5"
+      style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(212,160,23,0.18)" }}>
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-5">
+        <span style={{
+          fontSize: "0.6rem", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase",
+          fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)",
+        }}>
+          SkyShare Career Record
+        </span>
+        <div style={{ flex: 1, height: "0.5px", background: "rgba(212,160,23,0.2)" }} />
+      </div>
+
+      {/* Badge strip */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {history.map((entry, i) => {
+          const isCurrent = i === history.length - 1
+          const { color, short_code, title } = entry.badge
+          const code = short_code ?? title.slice(0, 3).toUpperCase()
+          const smallCode = code.length > 5
+
+          return (
+            <div key={entry.id} className="flex items-center gap-3">
+              {/* Patch badge */}
+              <div
+                className="flex flex-col items-center justify-center rounded-lg transition-all"
+                style={{
+                  background: isCurrent ? `${color}1a` : "rgba(255,255,255,0.04)",
+                  border: isCurrent ? `1.5px solid ${color}` : "1px solid rgba(255,255,255,0.1)",
+                  boxShadow: isCurrent ? `0 0 18px ${color}28` : "none",
+                  minWidth: 76,
+                  padding: "10px 14px",
+                  gap: 5,
+                }}
+              >
+                {/* Short code — the big text on the badge face */}
+                <span style={{
+                  fontFamily: "var(--font-display)",
+                  fontSize: smallCode ? "0.8rem" : "1.15rem",
+                  fontWeight: 800,
+                  letterSpacing: smallCode ? "0.05em" : "0.1em",
+                  color: isCurrent ? color : "rgba(255,255,255,0.4)",
+                  lineHeight: 1,
+                }}>
+                  {code}
+                </span>
+
+                {/* Title */}
+                <span style={{
+                  fontFamily: "var(--font-heading)",
+                  fontSize: "0.52rem",
+                  fontWeight: 600,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: isCurrent ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.25)",
+                  textAlign: "center",
+                  lineHeight: 1.35,
+                  maxWidth: 88,
+                }}>
+                  {title}
+                </span>
+
+                {/* From date if known */}
+                {entry.from_date && (
+                  <span style={{
+                    fontFamily: "var(--font-heading)",
+                    fontSize: "0.47rem",
+                    color: "rgba(255,255,255,0.18)",
+                    letterSpacing: "0.06em",
+                  }}>
+                    {formatDate(entry.from_date)}
+                  </span>
+                )}
+
+                {/* "NOW" pill on current badge */}
+                {isCurrent && (
+                  <span style={{
+                    marginTop: 2,
+                    fontSize: "0.45rem", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
+                    fontFamily: "var(--font-heading)",
+                    background: `${color}30`,
+                    color: color,
+                    border: `0.5px solid ${color}60`,
+                    borderRadius: 3,
+                    padding: "1px 5px",
+                  }}>
+                    NOW
+                  </span>
+                )}
+              </div>
+
+              {/* Arrow connector between badges */}
+              {i < history.length - 1 && (
+                <span style={{ color: "rgba(255,255,255,0.15)", fontSize: "0.9rem", userSelect: "none" }}>
+                  →
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 // ─── Not Linked ───────────────────────────────────────────────────────────────
@@ -546,17 +678,32 @@ function JournalPanel({
   techId,
   userId,
   onSuccess,
+  readOnly = false,
 }: {
   entries: MxlmsJournalEntry[]
   loading: boolean
   techId: number
   userId: string
   onSuccess: () => void
+  readOnly?: boolean
 }) {
   const qc = useQueryClient()
   const [text, setText] = useState("")
   const [entryType, setEntryType] = useState("note")
   const [visibleToManager, setVisibleToManager] = useState(true)
+
+  const deleteEntry = useMutation({
+    mutationFn: async (id: number) => {
+      const { error } = await mxlms.from("technician_journal").delete().eq("id", id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-journey-journal"] })
+      onSuccess()
+      toast.success("Entry deleted")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to delete entry"),
+  })
 
   const addEntry = useMutation({
     mutationFn: async () => {
@@ -585,8 +732,8 @@ function JournalPanel({
 
   return (
     <div>
-      {/* New entry composer */}
-      <div className="p-5 space-y-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+      {/* New entry composer — hidden in read-only mode */}
+      {!readOnly && <div className="p-5 space-y-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
         <Textarea
           placeholder="Write a journal entry… wins, reflections, concerns, anything you want to remember."
           value={text}
@@ -654,7 +801,7 @@ function JournalPanel({
             </Button>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Entry list */}
       {loading ? (
@@ -668,7 +815,7 @@ function JournalPanel({
           {entries.map(entry => {
             const typeStyle = entryTypeStyle(entry.entry_type)
             return (
-              <div key={entry.id} className="flex gap-4 px-5 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+              <div key={entry.id} className="group flex gap-4 px-5 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
                 {/* Date */}
                 <div className="shrink-0 text-right" style={{ minWidth: 60 }}>
                   <p className="text-[10px] text-white/25 leading-tight" style={{ fontFamily: "var(--font-heading)" }}>
@@ -699,6 +846,19 @@ function JournalPanel({
                   </div>
                   <p className="text-sm text-white/65 leading-relaxed whitespace-pre-wrap">{entry.content}</p>
                 </div>
+
+                {/* Delete */}
+                {!readOnly && (
+                  <button
+                    onClick={() => deleteEntry.mutate(entry.id)}
+                    disabled={deleteEntry.isPending}
+                    className="shrink-0 self-start mt-0.5 p-1.5 rounded opacity-30 hover:opacity-80 transition-opacity hover:bg-white/5"
+                    style={{ color: "rgba(255,255,255,0.6)" }}
+                    title="Delete entry"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
               </div>
             )
           })}
@@ -717,14 +877,16 @@ function JournalPanel({
 
 export default function MyJourney() {
   const { profile } = useAuth()
-  const techId = profile?.mxlms_technician_id ?? null
+  const { effectiveTechId, isViewingOther } = useViewAsTech()
+  const techId = effectiveTechId
   const userId = profile?.user_id ?? ""
 
-  const { data: sessions = [],  isLoading: ls } = useQuery({ queryKey: ["my-journey-sessions",  techId], queryFn: fetchSessions,       enabled: !!techId })
-  const { data: goals = [],     isLoading: lg } = useQuery({ queryKey: ["my-journey-goals",     techId], queryFn: fetchGoals,          enabled: !!techId })
-  const { data: items = [],     isLoading: li } = useQuery({ queryKey: ["my-journey-items",     techId], queryFn: fetchActionItems,    enabled: !!techId })
-  const { data: interests,      isLoading: lc } = useQuery({ queryKey: ["my-journey-career",    techId], queryFn: fetchCareerInterests, enabled: !!techId })
-  const { data: journal = [],   isLoading: lj, refetch: refetchJournal } = useQuery({ queryKey: ["my-journey-journal",  techId], queryFn: fetchJournal,        enabled: !!techId })
+  const { data: sessions = [],  isLoading: ls } = useQuery({ queryKey: ["my-journey-sessions",  techId], queryFn: () => fetchSessions(techId!),       enabled: !!techId })
+  const { data: goals = [],     isLoading: lg } = useQuery({ queryKey: ["my-journey-goals",     techId], queryFn: () => fetchGoals(techId!),          enabled: !!techId })
+  const { data: items = [],     isLoading: li } = useQuery({ queryKey: ["my-journey-items",     techId], queryFn: () => fetchActionItems(techId!),    enabled: !!techId })
+  const { data: interests,      isLoading: lc } = useQuery({ queryKey: ["my-journey-career",    techId], queryFn: () => fetchCareerInterests(techId!), enabled: !!techId })
+  const { data: journal = [],   isLoading: lj, refetch: refetchJournal } = useQuery({ queryKey: ["my-journey-journal",  techId], queryFn: () => fetchJournal(techId!),        enabled: !!techId })
+  const { data: careerHistory = [], isLoading: lh } = useQuery({ queryKey: ["my-journey-career-history", techId], queryFn: () => fetchCareerHistory(techId!), enabled: !!techId })
 
   return (
     <div className="space-y-8">
@@ -753,6 +915,12 @@ export default function MyJourney() {
         </Card>
       ) : (
         <>
+          {/* View As bar — Super Admin only */}
+          <ViewAsBar page="journey" />
+
+          {/* Career Record */}
+          <CareerStrip history={careerHistory} loading={lh} />
+
           {/* Disclaimer */}
           <div className="rounded-lg px-5 py-4"
             style={{ background: "rgba(70,100,129,0.10)", border: "1px solid rgba(70,100,129,0.18)" }}>
@@ -772,6 +940,7 @@ export default function MyJourney() {
               techId={techId}
               userId={userId}
               onSuccess={() => refetchJournal()}
+              readOnly={isViewingOther}
             />
           </Section>
 
