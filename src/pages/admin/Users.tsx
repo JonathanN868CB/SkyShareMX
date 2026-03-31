@@ -97,6 +97,11 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
   {
     label: "Operations",
     items: [
+      "My Journey",
+      "Training",
+      "Vendor Map",
+      "Compliance",
+      "Safety",
       "Aircraft Conformity",
       "14-Day Check",
       "Maintenance Planning",
@@ -104,8 +109,6 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
       "Terminal-OGD",
       "Projects",
       "Docs & Links",
-      "Training",
-      "My Journey",
     ],
   },
 ]
