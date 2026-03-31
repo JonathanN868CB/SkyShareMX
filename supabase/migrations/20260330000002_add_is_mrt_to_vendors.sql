@@ -1,0 +1,1 @@
+ALTER TABLE vendors ADD COLUMN IF NOT EXISTS is_mrt boolean NOT NULL DEFAULT false;
