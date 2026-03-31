@@ -208,6 +208,26 @@ export interface MxlmsActionItem {
   created_at: string
 }
 
+export interface MxlmsCareerBadge {
+  id: number
+  title: string
+  short_code: string | null
+  description: string | null
+  color: string
+  active: boolean
+}
+
+export interface MxlmsCareerHistoryEntry {
+  id: number
+  technician_id: number
+  badge_id: number
+  from_date: string | null
+  to_date: string | null
+  notes: string | null
+  display_order: number
+  badge: MxlmsCareerBadge
+}
+
 export interface MxlmsCareerInterests {
   id: number
   technician_id: number
