@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import {
   APIProvider, Map, Marker, InfoWindow,
   useMap, useMapsLibrary,
@@ -6,9 +6,11 @@ import {
 import {
   Phone, Globe, Star, MapPin, Plus, X,
   CheckCircle, ChevronLeft, ExternalLink, Pencil, ChevronDown, ChevronUp, Truck, Maximize2, Minimize2,
+  Search, Plane,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/features/auth"
+import UTAH_AIRPORTS from "@/data/utahAirports"
 
 const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string
 const GOLD    = "#d4a017"
@@ -198,6 +200,10 @@ export default function VendorMap() {
   const [poiNotes,     setPoiNotes]     = useState("")
   const [sidebarTab,      setSidebarTab]      = useState<"vendors" | "mrt">("vendors")
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
+  const [mapZoom,         setMapZoom]         = useState(4)
+  const [showAirports,    setShowAirports]    = useState(true)
+  const [airportQuery,    setAirportQuery]    = useState("")
+  const [flyToCode,       setFlyToCode]       = useState<string | null>(null)
 
   const blankForm = {
     name: "", airport_code: "", city: "", state: "", country: "USA",
@@ -276,12 +282,19 @@ export default function VendorMap() {
 
   function openDetail(v: Vendor) { setSelected(null); setDetailVendor(v) }
 
+  const airportSuggestions = airportQuery.trim().length >= 1
+    ? UTAH_AIRPORTS.filter(a =>
+        a.code.startsWith(airportQuery.toUpperCase()) ||
+        a.name.toLowerCase().includes(airportQuery.toLowerCase())
+      ).slice(0, 5)
+    : []
+
   return (
     <div className="flex flex-col" style={{ margin: "-1.5rem", height: "calc(100vh - 3.5rem)", background: "hsl(var(--background))", overflow: "hidden" }}>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-3 flex-shrink-0" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
-        <div>
+      <div className="flex items-center justify-between gap-4 px-6 py-3 flex-shrink-0" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
+        <div className="shrink-0">
           <h1 className="text-xl font-bold tracking-wide" style={{ fontFamily: "var(--font-heading)", color: GOLD }}>
             MX Vendor Map
           </h1>
@@ -291,7 +304,56 @@ export default function VendorMap() {
             {canEditVendors && <span className="ml-2 opacity-40">· Click any business to add</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* Airport search */}
+        <div className="relative shrink-0" style={{ width: 200 }}>
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm"
+            style={{ background: "hsl(var(--muted)/0.4)", border: "1px solid hsl(var(--border))" }}>
+            <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <input
+              value={airportQuery}
+              onChange={e => setAirportQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && airportSuggestions.length > 0) {
+                  setFlyToCode(airportSuggestions[0].code)
+                  setAirportQuery("")
+                }
+                if (e.key === "Escape") setAirportQuery("")
+              }}
+              onBlur={() => setTimeout(() => setAirportQuery(""), 150)}
+              placeholder="Fly to airport…"
+              className="bg-transparent outline-none text-xs w-full placeholder:text-muted-foreground/50"
+            />
+          </div>
+          {airportSuggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 rounded-sm shadow-xl z-50 overflow-hidden"
+              style={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))" }}>
+              {airportSuggestions.map(a => (
+                <button key={a.code}
+                  onMouseDown={() => { setFlyToCode(a.code); setAirportQuery("") }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/50 transition-colors">
+                  <span className="text-xs font-bold shrink-0" style={{ color: GOLD, minWidth: 32 }}>{a.code}</span>
+                  <span className="text-xs text-muted-foreground truncate">{a.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Airport layer toggle */}
+          <button
+            onClick={() => setShowAirports(v => !v)}
+            title={showAirports ? "Hide airport layer" : "Show airports (zoom in to see)"}
+            className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-sm border transition-colors"
+            style={{
+              borderColor: showAirports ? "rgba(107,159,212,0.5)" : "hsl(var(--border))",
+              color: showAirports ? "#6b9fd4" : "hsl(var(--muted-foreground))",
+              background: showAirports ? "rgba(107,159,212,0.08)" : "transparent",
+            }}
+          >
+            <Plane className="w-3.5 h-3.5" />
+          </button>
           <LegendDropdown />
           {canEditVendors && (
             <button onClick={() => setShowForm(true)}
@@ -317,9 +379,16 @@ export default function VendorMap() {
               style={{ width: "100%", height: "100%" }}
               gestureHandling="greedy"
               onBoundsChanged={(e: any) => setMapBounds(e.detail.bounds)}
+              onZoomChanged={(e: any) => setMapZoom(e.detail.zoom)}
               onClick={() => setSelected(null)}
             >
               {canEditVendors && <PoiClickHandler onPoiClick={handlePoiClick} />}
+              <AirportLayer
+                show={showAirports}
+                zoom={mapZoom}
+                flyToCode={flyToCode}
+                onFlownTo={() => setFlyToCode(null)}
+              />
 
               {mappedVendors.map(v => (
                 <Marker
@@ -1213,6 +1282,91 @@ function VendorFormModal({ title, form, saving, onSave, onCancel, onChange }: {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Airport reference dot layer ───────────────────────────────────────────────
+
+const AIRPORT_DOT = {
+  url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">' +
+    '<g transform="rotate(-35 13 13)">' +
+    // Runway surface
+    '<rect x="9.5" y="1" width="7" height="24" rx="1.5" fill="#4a6f8a" stroke="rgba(255,255,255,0.35)" stroke-width="0.75"/>' +
+    // Threshold bars — top
+    '<rect x="10.5" y="2.5"  width="5" height="1.5" fill="white" opacity="0.85"/>' +
+    // Threshold bars — bottom
+    '<rect x="10.5" y="22"   width="5" height="1.5" fill="white" opacity="0.85"/>' +
+    // Centerline dashes
+    '<line x1="13" y1="6"    x2="13" y2="9"    stroke="white" stroke-width="1.1" stroke-opacity="0.7"/>' +
+    '<line x1="13" y1="11.5" x2="13" y2="14.5" stroke="white" stroke-width="1.1" stroke-opacity="0.7"/>' +
+    '<line x1="13" y1="17"   x2="13" y2="20"   stroke="white" stroke-width="1.1" stroke-opacity="0.7"/>' +
+    '</g>' +
+    '</svg>'
+  )}`,
+  scaledSize: { width: 26, height: 26 },
+  anchor: { x: 13, y: 13 },
+}
+
+function AirportLayer({
+  show, zoom, flyToCode, onFlownTo,
+}: {
+  show: boolean; zoom: number; flyToCode: string | null; onFlownTo: () => void
+}) {
+  const map = useMap()
+  const [hovered, setHovered] = useState<string | null>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!map || !flyToCode) return
+    const a = UTAH_AIRPORTS.find(x => x.code === flyToCode)
+    if (a) { map.panTo({ lat: a.lat, lng: a.lng }); map.setZoom(11) }
+    onFlownTo()
+  }, [map, flyToCode, onFlownTo])
+
+  const hoveredAirport = hovered ? (UTAH_AIRPORTS.find(a => a.code === hovered) ?? null) : null
+
+  if (!show || zoom < 7) return null
+
+  return (
+    <>
+      {UTAH_AIRPORTS.map(a => (
+        <Marker
+          key={a.code}
+          position={{ lat: a.lat, lng: a.lng }}
+          icon={AIRPORT_DOT as any}
+          zIndex={1}
+          onMouseOver={() => {
+            if (closeTimer.current) clearTimeout(closeTimer.current)
+            setHovered(a.code)
+          }}
+          onMouseOut={() => {
+            closeTimer.current = setTimeout(() => setHovered(null), 150)
+          }}
+        />
+      ))}
+      {hoveredAirport && (
+        <InfoWindow
+          position={{ lat: hoveredAirport.lat, lng: hoveredAirport.lng }}
+          headerDisabled
+          onCloseClick={() => setHovered(null)}
+        >
+          <div style={{
+            background: "#0f1117",
+            border: "0.5px solid rgba(212,160,23,0.45)",
+            borderRadius: 5,
+            padding: "5px 10px",
+          }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#d4a017", letterSpacing: "0.1em", fontFamily: "monospace" }}>
+              {hoveredAirport.code}
+            </p>
+            <p style={{ margin: "2px 0 0", fontSize: 11, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
+              {hoveredAirport.name}
+            </p>
+          </div>
+        </InfoWindow>
+      )}
+    </>
   )
 }
 
