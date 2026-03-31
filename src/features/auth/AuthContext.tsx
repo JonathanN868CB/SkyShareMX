@@ -69,6 +69,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(profileData ?? null)
 
     if (profileData) {
+      supabase
+        .from("profiles")
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .then(() => {})
+    }
+
+    if (profileData) {
       const { data: perms } = await supabase
         .from("user_permissions")
         .select("section")

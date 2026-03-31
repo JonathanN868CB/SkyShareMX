@@ -21,6 +21,7 @@ export type Database = {
           status: Database["public"]["Enums"]["user_status"]
           is_readonly: boolean
           last_login: string | null
+          last_seen_at: string | null
           mxlms_technician_id: number | null
           created_at: string
           updated_at: string
@@ -36,6 +37,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["user_status"]
           is_readonly?: boolean
           last_login?: string | null
+          last_seen_at?: string | null
           mxlms_technician_id?: number | null
           created_at?: string
           updated_at?: string
@@ -51,6 +53,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["user_status"]
           is_readonly?: boolean
           last_login?: string | null
+          last_seen_at?: string | null
           mxlms_technician_id?: number | null
           created_at?: string
           updated_at?: string
@@ -150,7 +153,7 @@ export type Database = {
     }
     Enums: {
       app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Read-Only"
-      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey"
+      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "Vendor Map"
       user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
@@ -201,6 +204,7 @@ export const APP_SECTIONS: AppSection[] = [
   "Training",
   "Docs & Links",
   "My Journey",
+  "Vendor Map",
 ]
 
 export const DEFAULT_PERMISSIONS: AppSection[] = [
