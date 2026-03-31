@@ -172,12 +172,12 @@ export function RecordAdHocEventModal({ open, onClose, onSuccess, techs, profile
       requires_acknowledgment: requiresAck,
       status,
       // Manager identity
-      initiated_by_user_id:  profile.id,
+      initiated_by_user_id:  profile.user_id,
       initiated_by_name:     profile.full_name ?? null,
       initiated_by_email:    profile.email,
       manager_signed_at:     now,
       // Witness designation
-      witness_user_id:  selectedWitness?.id   ?? null,
+      witness_user_id:  selectedWitness?.user_id ?? null,
       witness_name:     selectedWitness?.full_name ?? null,
       witness_email:    selectedWitness?.email ?? null,
       // Notes (combines duration + freeform)
@@ -205,21 +205,12 @@ export function RecordAdHocEventModal({ open, onClose, onSuccess, techs, profile
         .eq("id", inserted.id)
       // Non-fatal if this update fails — identity is still captured in the other fields
 
-      // If status is 'complete' (no ack, no witness), trigger archive immediately
-      if (status === "complete") {
-        fetch("/.netlify/functions/adhoc-drive-archive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ adHocId: inserted.id, technicianId: Number(techId) }),
-        }).catch(() => {})
-      }
-
       const techName = techs.find(t => t.id === Number(techId))?.name ?? "tech"
       const nextStep = status === "pending_tech_ack"
         ? `Card is live in ${techName}'s My Training`
         : status === "pending_witness_ack"
         ? `Waiting for ${selectedWitness?.full_name ?? "witness"} to sign`
-        : "Archived immediately — no acknowledgment required"
+        : "Recorded — MX-LMS will archive to Drive"
 
       toast.success(`Event recorded & signed — ${nextStep}`)
       onSuccess()

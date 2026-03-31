@@ -1,7 +1,9 @@
+import { useState } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   Home,
   Plane,
+  MapPin,
   CheckSquare,
   CalendarClock,
   ClipboardList,
@@ -16,6 +18,8 @@ import {
   GraduationCap,
   Compass,
   Lock,
+  HardHat,
+  ChevronRight,
 } from "lucide-react"
 import {
   Sidebar,
@@ -42,7 +46,20 @@ type SidebarItem = {
   superAdminOnly?: boolean
 }
 
-const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[] }[] = [
+type SidebarItemGroup = {
+  label: string
+  icon: React.ElementType
+  items: SidebarItem[]
+}
+
+type SidebarSection = {
+  title: string
+  adminOnly?: boolean
+  items: SidebarItem[]
+  groups?: SidebarItemGroup[]
+}
+
+const sidebarSections: SidebarSection[] = [
   {
     title: "Overview",
     items: [
@@ -54,26 +71,37 @@ const sidebarSections: { title: string; adminOnly?: boolean; items: SidebarItem[
   {
     title: "Operations",
     items: [
-      { name: "Aircraft Conformity",  path: "/app/conformity",    icon: CheckSquare,  section: "Aircraft Conformity"  },
-      { name: "14-Day Check",         path: "/app/14-day-check",  icon: CalendarClock, section: "14-Day Check"        },
-      { name: "Maintenance Planning", path: "/app/planning",      icon: ClipboardList, section: "Maintenance Planning" },
-      { name: "Ten or More",          path: "/app/ten-or-more",   icon: ShieldCheck,   section: "Ten or More"         },
-      { name: "Terminal-OGD",         path: "/app/terminal-ogd",  icon: Building,      section: "Terminal-OGD"        },
-      { name: "Projects",             path: "/app/projects",      icon: Kanban,        section: "Projects"            },
-      { name: "Docs & Links",         path: "/app/docs",          icon: FileText,      section: "Docs & Links"        },
-      { name: "My Training",          path: "/app/training",      icon: GraduationCap, section: "Training"            },
-      { name: "My Journey™",          path: "/app/journey",       icon: Compass,       section: "My Journey"          },
+      { name: "My Journey™",  path: "/app/journey",    icon: Compass,       section: "My Journey" },
+      { name: "My Training",  path: "/app/training",   icon: GraduationCap, section: "Training"   },
+      { name: "MX Vendor Map",  path: "/app/vendor-map",   icon: MapPin,        section: "Vendor Map"  },
+      { name: "Compliance",     path: "/app/compliance",   icon: ClipboardList, section: "Dashboard"   },
+      { name: "Safety's House", path: "/app/safety",       icon: ShieldCheck,   section: "Dashboard"   },
+    ],
+    groups: [
+      {
+        label: "Pending Cert.",
+        icon: HardHat,
+        items: [
+          { name: "Aircraft Conformity",  path: "/app/conformity",   icon: CheckSquare,   section: "Aircraft Conformity"  },
+          { name: "14-Day Check",         path: "/app/14-day-check", icon: CalendarClock, section: "14-Day Check"         },
+          { name: "Maintenance Planning", path: "/app/planning",     icon: ClipboardList, section: "Maintenance Planning" },
+          { name: "Ten or More",          path: "/app/ten-or-more",  icon: ShieldCheck,   section: "Ten or More"          },
+          { name: "Terminal-OGD",         path: "/app/terminal-ogd", icon: Building,      section: "Terminal-OGD"         },
+          { name: "Projects",             path: "/app/projects",     icon: Kanban,        section: "Projects"             },
+          { name: "Docs & Links",         path: "/app/docs",         icon: FileText,      section: "Docs & Links"         },
+        ],
+      },
     ],
   },
   {
     title: "Administration",
     adminOnly: true,
     items: [
-      { name: "Users",                  path: "/app/admin/users",       icon: Users,       section: "Dashboard" },
+      { name: "Users",                   path: "/app/admin/users",       icon: Users,         section: "Dashboard"                   },
       { name: "Team Training & Journey", path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
-      { name: "Alerts & Notifications", path: "/app/admin/alerts",      icon: Bell,       section: "Dashboard" },
-      { name: "Settings",               path: "/app/admin/settings",    icon: Settings,   section: "Dashboard" },
-      { name: "Permissions Index",      path: "/app/admin/permissions", icon: ShieldCheck, section: "Dashboard", superAdminOnly: true },
+      { name: "Alerts & Notifications",  path: "/app/admin/alerts",      icon: Bell,          section: "Dashboard"                   },
+      { name: "Settings",                path: "/app/admin/settings",    icon: Settings,      section: "Dashboard"                   },
+      { name: "Permissions Index",       path: "/app/admin/permissions", icon: ShieldCheck,   section: "Dashboard", superAdminOnly: true },
     ],
   },
 ]
@@ -84,6 +112,9 @@ export function AppSidebar() {
   const navigate = useNavigate()
   const { profile, permissions } = useAuth()
   const collapsed = state === "collapsed"
+
+  // Track which collapsible groups are open — keyed by "SectionTitle|GroupLabel"
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
   const isSuperAdmin = profile?.role === "Super Admin"
@@ -96,6 +127,69 @@ export function AppSidebar() {
 
   function handleLockedClick(itemName: string) {
     navigate(`/app/access-restricted?feature=${encodeURIComponent(itemName)}`)
+  }
+
+  function toggleGroup(key: string) {
+    setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  function renderItem(item: SidebarItem, indented = false) {
+    const isActive = item.exact
+      ? location.pathname === item.path
+      : location.pathname.startsWith(item.path)
+    const accessible = hasAccess(item.section)
+
+    return (
+      <SidebarMenuItem key={item.name}>
+        <SidebarMenuButton asChild tooltip={collapsed ? item.name : undefined}>
+          {accessible ? (
+            <NavLink
+              to={item.path}
+              end={Boolean(item.exact)}
+              className={cn(
+                "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
+                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
+                indented && !collapsed && "pl-7",
+                isActive
+                  ? "active text-white font-medium"
+                  : "text-white/45 hover:text-white/80 font-normal"
+              )}
+              style={isActive ? {
+                background: "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
+                fontFamily: "var(--font-heading)",
+                letterSpacing: "0.02em",
+              } : {}}
+            >
+              <item.icon
+                className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
+                style={isActive ? { color: "var(--skyshare-gold)" } : {}}
+              />
+              {!collapsed && <span className="truncate tracking-wide">{item.name}</span>}
+            </NavLink>
+          ) : (
+            <button
+              onClick={() => handleLockedClick(item.name)}
+              className={cn(
+                "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150 w-full",
+                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
+                indented && !collapsed && "pl-7",
+                "text-white/25 hover:text-white/40 font-normal cursor-pointer"
+              )}
+            >
+              <item.icon
+                className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
+              />
+              {!collapsed && (
+                <span className="truncate tracking-wide flex-1 text-left">{item.name}</span>
+              )}
+              {!collapsed && (
+                <Lock className="w-[11px] h-[11px] flex-shrink-0 opacity-40" />
+              )}
+            </button>
+          )}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    )
   }
 
   return (
@@ -127,7 +221,6 @@ export function AppSidebar() {
               >
                 Maintenance
               </span>
-              {/* Gold rule under MAINTENANCE label */}
               <div
                 className="w-8 mt-0.5"
                 style={{ height: "1px", background: "var(--skyshare-gold)", opacity: 0.5 }}
@@ -161,62 +254,79 @@ export function AppSidebar() {
               )}
               <SidebarGroupContent>
                 <SidebarMenu className="space-y-0.5">
-                  {section.items.filter(item => !item.superAdminOnly || isSuperAdmin).map(item => {
-                    const isActive = item.exact
-                      ? location.pathname === item.path
-                      : location.pathname.startsWith(item.path)
-                    const accessible = hasAccess(item.section)
+
+                  {/* Flat items */}
+                  {section.items
+                    .filter(item => !item.superAdminOnly || isSuperAdmin)
+                    .map(item => renderItem(item))}
+
+                  {/* Collapsible groups */}
+                  {section.groups?.map(group => {
+                    const groupKey = `${section.title}|${group.label}`
+                    const isOpen = !!openGroups[groupKey]
 
                     return (
-                      <SidebarMenuItem key={item.name}>
-                        <SidebarMenuButton asChild tooltip={collapsed ? item.name : undefined}>
-                          {accessible ? (
-                            <NavLink
-                              to={item.path}
-                              end={Boolean(item.exact)}
-                              className={cn(
-                                "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150",
-                                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
-                                isActive
-                                  ? "active text-white font-medium"
-                                  : "text-white/45 hover:text-white/80 font-normal"
-                              )}
-                              style={isActive ? {
-                                background: "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
-                                fontFamily: "var(--font-heading)",
-                                letterSpacing: "0.02em",
-                              } : {}}
-                            >
-                              <item.icon
-                                className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
-                                style={isActive ? { color: "var(--skyshare-gold)" } : {}}
-                              />
-                              {!collapsed && <span className="truncate tracking-wide">{item.name}</span>}
-                            </NavLink>
-                          ) : (
+                      <div key={groupKey}>
+
+                        {/* Group header row */}
+                        <SidebarMenuItem>
+                          <SidebarMenuButton asChild tooltip={collapsed ? group.label : undefined}>
                             <button
-                              onClick={() => handleLockedClick(item.name)}
+                              onClick={() => toggleGroup(groupKey)}
                               className={cn(
                                 "sidebar-nav-link flex items-center gap-3 rounded-sm text-sm transition-all duration-150 w-full",
                                 collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
-                                "text-white/25 hover:text-white/40 font-normal cursor-pointer"
                               )}
+                              style={{ color: "rgba(255,255,255,0.35)" }}
+                              onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.6)")}
+                              onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.35)")}
                             >
-                              <item.icon
+                              <group.icon
                                 className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
+                                style={{ color: "rgba(212,160,23,0.5)" }}
                               />
                               {!collapsed && (
-                                <span className="truncate tracking-wide flex-1 text-left">{item.name}</span>
-                              )}
-                              {!collapsed && (
-                                <Lock className="w-[11px] h-[11px] flex-shrink-0 opacity-40" />
+                                <>
+                                  <span
+                                    className="flex-1 truncate tracking-wide text-left"
+                                    style={{
+                                      fontFamily: "var(--font-heading)",
+                                      fontSize: "12px",
+                                      letterSpacing: "0.04em",
+                                    }}
+                                  >
+                                    {group.label}
+                                  </span>
+                                  <ChevronRight
+                                    className="w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200"
+                                    style={{
+                                      color: "rgba(212,160,23,0.4)",
+                                      transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
+                                    }}
+                                  />
+                                </>
                               )}
                             </button>
-                          )}
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+
+                        {/* Group children */}
+                        {!collapsed && isOpen && (
+                          <div
+                            className="mt-0.5 mb-1 space-y-0.5 overflow-hidden"
+                            style={{
+                              borderLeft: "1px solid rgba(212,160,23,0.15)",
+                              marginLeft: "1.35rem",
+                            }}
+                          >
+                            {group.items.map(item => renderItem(item, true))}
+                          </div>
+                        )}
+
+                      </div>
                     )
                   })}
+
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
