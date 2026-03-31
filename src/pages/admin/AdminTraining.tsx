@@ -1,9 +1,11 @@
 import { useState, Fragment } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   GraduationCap, AlertCircle, Clock, Target, CheckSquare,
-  BookOpen, ChevronDown, ChevronRight, ExternalLink, FileText, Users, CheckCircle2,
+  BookOpen, ChevronDown, ChevronRight, ExternalLink, FileText, Users, CheckCircle2, Plus,
+  Bell, ShieldAlert,
 } from "lucide-react"
+import { Button } from "@/shared/ui/button"
 import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
 import { useAuth } from "@/features/auth"
@@ -11,7 +13,10 @@ import type { Profile } from "@/entities/supabase"
 import type {
   MxlmsTechnician, MxlmsPendingCompletion,
   MxlmsSession, MxlmsGoal, MxlmsActionItem, MxlmsJournalEntry,
+  MxlmsAdHocCompletion,
 } from "@/entities/mxlms"
+import { RecordAdHocEventModal } from "@/components/training/RecordAdHocEventModal"
+import { ProposeTrainingItemModal } from "@/components/training/ProposeTrainingItemModal"
 
 // ─── Lightweight training row (no join needed for aggregate stats) ─────────────
 
@@ -675,13 +680,332 @@ function SharedJournalFeed({
   )
 }
 
+// ─── Active Ad Hoc Tracker ────────────────────────────────────────────────────
+
+async function fetchActiveAdHoc(): Promise<MxlmsAdHocCompletion[]> {
+  const { data, error } = await mxlms
+    .from("ad_hoc_completions")
+    .select("*")
+    .in("status", ["pending_tech_ack", "pending_witness_ack", "complete"])
+    .order("completed_date", { ascending: false })
+  if (error) throw error
+  return (data ?? []) as MxlmsAdHocCompletion[]
+}
+
+const EVENT_TYPE_SHORT: Record<string, string> = {
+  "safety-observation":  "Safety",
+  "procedure-refresher": "Procedure",
+  "tooling-equipment":   "Tooling",
+  "regulatory-briefing": "Regulatory",
+  "ojt-mentorship":      "OJT",
+  "general":             "General",
+}
+
+const STATUS_CONFIG = {
+  pending_tech_ack:    { label: "Awaiting Tech",    color: "var(--skyshare-gold)",        bg: "rgba(212,160,23,0.1)",    border: "rgba(212,160,23,0.25)" },
+  pending_witness_ack: { label: "Awaiting Witness",  color: "#10b981",                    bg: "rgba(16,185,129,0.08)",   border: "rgba(16,185,129,0.2)"  },
+  complete:            { label: "Ready to Archive",  color: "var(--skyshare-blue-mid, #4e7fa0)", bg: "rgba(70,100,129,0.12)", border: "rgba(70,100,129,0.25)" },
+} as const
+
+function AdHocPipelineDot({ active }: { active: boolean }) {
+  return (
+    <div style={{
+      width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+      background: active ? "currentColor" : "rgba(255,255,255,0.1)",
+      border: active ? "none" : "1px solid rgba(255,255,255,0.15)",
+    }} />
+  )
+}
+
+function ActiveAdHocTracker({
+  records,
+  techMap,
+  isSuperAdmin,
+}: {
+  records:      MxlmsAdHocCompletion[]
+  techMap:      Map<number, MxlmsTechnician>
+  isSuperAdmin: boolean
+}) {
+  const [open,         setOpen]         = useState(true)
+  const [overridingId, setOverridingId] = useState<number | null>(null)
+  const [overrideNote, setOverrideNote] = useState('')
+  const [submitting,   setSubmitting]   = useState(false)
+  const qc = useQueryClient()
+
+  async function handleForceComplete(record: MxlmsAdHocCompletion) {
+    if (!overrideNote.trim()) return
+    setSubmitting(true)
+    try {
+      const { error } = await mxlms
+        .from("ad_hoc_completions")
+        .update({ status: "complete", override_note: overrideNote.trim() })
+        .eq("id", record.id)
+      if (error) throw error
+      qc.invalidateQueries({ queryKey: ["admin-active-adhoc"] })
+      setOverridingId(null)
+      setOverrideNote("")
+    } catch (err) {
+      console.error("Force complete failed:", err)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleSoftCancel(record: MxlmsAdHocCompletion) {
+    if (!window.confirm(`Cancel "${record.name}"?\n\nThe record will be marked cancelled and removed from the active pipeline. This can be undone by a database admin if needed.`)) return
+    try {
+      const { error } = await mxlms
+        .from("ad_hoc_completions")
+        .update({ status: "cancelled" })
+        .eq("id", record.id)
+      if (error) throw error
+      qc.invalidateQueries({ queryKey: ["admin-active-adhoc"] })
+    } catch (err) {
+      console.error("Soft cancel failed:", err)
+    }
+  }
+
+  async function handleHardDelete(record: MxlmsAdHocCompletion) {
+    if (!window.confirm(`PERMANENTLY DELETE "${record.name}"?\n\nThis cannot be undone. The record will be removed from Supabase entirely. Drive files (if any) must be cleaned up manually.`)) return
+    try {
+      const { error } = await mxlms
+        .from("ad_hoc_completions")
+        .delete()
+        .eq("id", record.id)
+      if (error) throw error
+      qc.invalidateQueries({ queryKey: ["admin-active-adhoc"] })
+    } catch (err) {
+      console.error("Hard delete failed:", err)
+    }
+  }
+
+  if (records.length === 0) return null
+
+  return (
+    <div className="card-elevated rounded-lg overflow-hidden"
+      style={{ borderLeft: "3px solid rgba(212,160,23,0.6)" }}>
+
+      {/* Header */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-5 py-3.5 text-left transition-colors hover:bg-white/[0.02]"
+        style={{ borderBottom: open ? "1px solid rgba(255,255,255,0.07)" : "none", background: "rgba(212,160,23,0.04)" }}
+      >
+        <div className="flex items-center gap-3">
+          <Bell className="h-4 w-4 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+          <div>
+            <p className="text-xs font-semibold text-white/70" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}>
+              ACTIVE AD HOC EVENTS
+            </p>
+            <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+              {records.length} event{records.length !== 1 ? "s" : ""} in progress — tracking through final archival
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Mini status counts */}
+          {(["pending_tech_ack", "pending_witness_ack", "complete"] as const).map(s => {
+            const n = records.filter(r => r.status === s).length
+            if (n === 0) return null
+            const cfg = STATUS_CONFIG[s]
+            return (
+              <span key={s} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
+                style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`, fontFamily: "var(--font-heading)" }}>
+                {n} {cfg.label}
+              </span>
+            )
+          })}
+          <ChevronDown
+            className="h-4 w-4 text-white/25 shrink-0 transition-transform duration-200"
+            style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}
+          />
+        </div>
+      </button>
+
+      {/* Table */}
+      {open && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                {["Event", "Team Member", "Date", "Status", "Next Action"].map(h => (
+                  <th key={h} className="px-5 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider"
+                    style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {records.map(r => {
+                const tech = techMap.get(r.technician_id)
+                const cfg  = STATUS_CONFIG[r.status as keyof typeof STATUS_CONFIG]
+                const sevStyle = r.severity === "high"   ? { color: "#e05070" }
+                               : r.severity === "medium" ? { color: "#f59e0b" }
+                               : null
+
+                const nextAction =
+                  r.status === "pending_tech_ack"
+                    ? `${tech?.name ?? "Tech"} to sign`
+                    : r.status === "pending_witness_ack"
+                    ? `${r.witness_name ?? "Witness"} to sign`
+                    : "MX-LMS archival pending"
+
+                return (
+                  <tr key={r.id} className="transition-colors hover:bg-white/[0.02]"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+
+                    {/* Event name + type */}
+                    <td className="px-5 py-3">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm text-white/80">{r.name}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+                            style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "var(--font-heading)" }}>
+                            {EVENT_TYPE_SHORT[r.event_type] ?? r.event_type}
+                          </span>
+                          {sevStyle && r.severity && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] tracking-wider uppercase"
+                              style={{ ...sevStyle, fontFamily: "var(--font-heading)" }}>
+                              <ShieldAlert className="h-2.5 w-2.5" />
+                              {r.severity}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Tech */}
+                    <td className="px-5 py-3">
+                      <p className="text-sm text-white/65">{tech?.name ?? `Tech #${r.technician_id}`}</p>
+                      {tech?.tech_code && (
+                        <p className="text-[10px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>{tech.tech_code}</p>
+                      )}
+                    </td>
+
+                    {/* Date */}
+                    <td className="px-5 py-3">
+                      <span className="text-xs text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                        {formatDate(r.completed_date)}
+                      </span>
+                    </td>
+
+                    {/* Status badge + pipeline dots */}
+                    <td className="px-5 py-3">
+                      <div className="flex flex-col gap-1.5">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] tracking-wider self-start"
+                          style={{ background: cfg?.bg, color: cfg?.color, border: `1px solid ${cfg?.border}`, fontFamily: "var(--font-heading)" }}>
+                          {cfg?.label ?? r.status}
+                        </span>
+                        {/* Pipeline: Manager → Tech → Witness → Drive */}
+                        <div className="flex items-center gap-1" style={{ color: cfg?.color }}>
+                          <AdHocPipelineDot active={!!r.manager_signed_at} />
+                          <div style={{ width: 8, height: 1, background: "rgba(255,255,255,0.1)" }} />
+                          {r.requires_acknowledgment && (
+                            <>
+                              <AdHocPipelineDot active={!!r.acknowledged_at} />
+                              <div style={{ width: 8, height: 1, background: "rgba(255,255,255,0.1)" }} />
+                            </>
+                          )}
+                          {r.witness_name && (
+                            <>
+                              <AdHocPipelineDot active={!!r.witness_signed_at} />
+                              <div style={{ width: 8, height: 1, background: "rgba(255,255,255,0.1)" }} />
+                            </>
+                          )}
+                          <AdHocPipelineDot active={r.status === "complete"} />
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Next action */}
+                    <td className="px-5 py-3 pr-6">
+                      {overridingId === r.id ? (
+                        <div className="flex flex-col gap-2" style={{ minWidth: 220 }}>
+                          <textarea
+                            autoFocus
+                            value={overrideNote}
+                            onChange={e => setOverrideNote(e.target.value)}
+                            placeholder="Reason for override (required)"
+                            rows={2}
+                            className="w-full text-xs rounded px-2 py-1.5 resize-none"
+                            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.8)", outline: "none", fontFamily: "inherit" }}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleForceComplete(r)}
+                              disabled={submitting || !overrideNote.trim()}
+                              style={{ fontSize: 10, padding: "3px 10px", borderRadius: 4, background: "rgba(212,160,23,0.2)", color: "#d4a017", border: "1px solid rgba(212,160,23,0.35)", cursor: submitting || !overrideNote.trim() ? "not-allowed" : "pointer", opacity: !overrideNote.trim() ? 0.5 : 1 }}
+                            >
+                              {submitting ? "Saving…" : "Confirm"}
+                            </button>
+                            <button
+                              onClick={() => { setOverridingId(null); setOverrideNote("") }}
+                              disabled={submitting}
+                              style={{ fontSize: 10, padding: "3px 10px", borderRadius: 4, background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-xs"
+                            style={{ color: r.status === "complete" ? "rgba(70,100,129,0.9)" : "rgba(255,255,255,0.4)", fontFamily: "var(--font-heading)" }}>
+                            {nextAction}
+                          </span>
+                          {(r.status === "pending_tech_ack" || r.status === "pending_witness_ack") && (
+                            <button
+                              onClick={() => { setOverridingId(r.id); setOverrideNote("") }}
+                              style={{ alignSelf: "flex-start", fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(212,160,23,0.07)", color: "rgba(212,160,23,0.55)", border: "1px solid rgba(212,160,23,0.18)", cursor: "pointer", fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+                            >
+                              Force Complete ↗
+                            </button>
+                          )}
+                          {/* Retract actions — always available to managers */}
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <button
+                              onClick={() => handleSoftCancel(r)}
+                              style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.09)", cursor: "pointer", fontFamily: "var(--font-heading)" }}
+                            >
+                              Cancel
+                            </button>
+                            {isSuperAdmin && (
+                              <button
+                                onClick={() => handleHardDelete(r)}
+                                style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(193,2,48,0.07)", color: "rgba(193,2,48,0.55)", border: "1px solid rgba(193,2,48,0.18)", cursor: "pointer", fontFamily: "var(--font-heading)" }}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminTraining() {
   const { profile: me } = useAuth()
   const isSuperAdmin = me?.role === "Super Admin"
+  const canProposeTraining = me?.role === "Super Admin" || me?.role === "Admin" || me?.role === "Manager"
+  const [adHocModalOpen,     setAdHocModalOpen]     = useState(false)
+  const [proposeModalOpen,   setProposeModalOpen]   = useState(false)
 
   const enabled = isSuperAdmin
+
+  const qc = useQueryClient()
 
   const { data: profiles  = [], isLoading: lp } = useQuery({ queryKey: ["admin-training-profiles"],   queryFn: fetchProfiles,     enabled })
   const { data: techs     = []                 } = useQuery({ queryKey: ["mxlms-technicians"],         queryFn: fetchTechnicians,  enabled })
@@ -691,6 +1015,7 @@ export default function AdminTraining() {
   const { data: goals     = []                 } = useQuery({ queryKey: ["admin-all-goals"],           queryFn: fetchAllGoals,     enabled })
   const { data: actions   = []                 } = useQuery({ queryKey: ["admin-all-actions"],         queryFn: fetchAllActions,   enabled })
   const { data: journal   = [], isLoading: lj  } = useQuery({ queryKey: ["admin-shared-journal"],     queryFn: fetchSharedJournal, enabled })
+  const { data: activeAdHoc = []               } = useQuery({ queryKey: ["admin-active-adhoc"],        queryFn: fetchActiveAdHoc,   enabled })
 
   const techMap = new Map(techs.map(t => [t.id, t]))
 
@@ -713,20 +1038,71 @@ export default function AdminTraining() {
 
       {/* Hero */}
       <div className="hero-area">
-        <div className="flex items-center gap-3">
-          <GraduationCap className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
-          <div>
-            <h1 className="text-[2.6rem] leading-none text-foreground"
-              style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
-              TEAM TRAINING & JOURNEY
-            </h1>
-            <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <GraduationCap className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
+            <div>
+              <h1 className="text-[2.6rem] leading-none text-foreground"
+                style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
+                TEAM TRAINING & JOURNEY
+              </h1>
+              <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-1 shrink-0">
+            {canProposeTraining && (
+              <Button
+                onClick={() => setProposeModalOpen(true)}
+                variant="outline"
+                className="gap-2"
+                style={{
+                  borderColor: "rgba(212,160,23,0.4)",
+                  color: "rgba(212,160,23,0.85)",
+                  fontFamily: "var(--font-heading)",
+                  letterSpacing: "0.08em",
+                  background: "transparent",
+                }}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Propose Training
+              </Button>
+            )}
+            <Button
+              onClick={() => setAdHocModalOpen(true)}
+              className="gap-2"
+              style={{
+                background: "var(--skyshare-gold)",
+                color: "hsl(0 0% 8%)",
+                fontFamily: "var(--font-heading)",
+                letterSpacing: "0.08em",
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Record Ad Hoc Event
+            </Button>
           </div>
         </div>
         <p className="mt-3 text-sm text-muted-foreground" style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}>
           The manager view — what your team sees in My Training &amp; My Journey™
         </p>
       </div>
+
+      <RecordAdHocEventModal
+        open={adHocModalOpen}
+        onClose={() => setAdHocModalOpen(false)}
+        onSuccess={() => {
+          qc.invalidateQueries({ queryKey: ["admin-all-pending"] })
+          qc.invalidateQueries({ queryKey: ["admin-active-adhoc"] })
+        }}
+        techs={techs}
+        profiles={profiles}
+      />
+
+      <ProposeTrainingItemModal
+        open={proposeModalOpen}
+        onClose={() => setProposeModalOpen(false)}
+        onSuccess={() => {}}
+      />
 
       {/* Stats */}
       {loading ? (
@@ -742,6 +1118,9 @@ export default function AdminTraining() {
 
           {/* Pending completions inbox */}
           <PendingInbox pending={pending} techMap={techMap} />
+
+          {/* Active ad hoc tracker */}
+          <ActiveAdHocTracker records={activeAdHoc} techMap={techMap} isSuperAdmin={isSuperAdmin} />
 
           {/* Team table */}
           <TeamOverviewTable

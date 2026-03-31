@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Switch } from "@/shared/ui/switch"
 import { Label } from "@/shared/ui/label"
 import { Textarea } from "@/shared/ui/textarea"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/shared/ui/tooltip"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -928,6 +929,7 @@ export default function UsersPage() {
   ]
 
   return (
+    <TooltipProvider delayDuration={400}>
     <div className="space-y-8">
 
       {/* Hero */}
@@ -1004,7 +1006,7 @@ export default function UsersPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-white/[0.07] hover:bg-transparent">
-                    {["User", "Role", "Status", "Last Login", "MX-LMS", ""].map(h => (
+                    {["User", "Role", "Status", "Last Seen", "MX-LMS", ""].map(h => (
                       <TableHead key={h} className="text-white/40" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase" }}>
                         {h}
                       </TableHead>
@@ -1058,10 +1060,10 @@ export default function UsersPage() {
                         <StatusBadge status={user.status} />
                       </TableCell>
 
-                      {/* Last Login */}
+                      {/* Last Seen */}
                       <TableCell className="text-xs text-muted-foreground">
-                        {user.last_login
-                          ? formatDistanceToNow(new Date(user.last_login), { addSuffix: true })
+                        {user.last_seen_at
+                          ? formatDistanceToNow(new Date(user.last_seen_at), { addSuffix: true })
                           : "Never"}
                       </TableCell>
 
@@ -1102,69 +1104,86 @@ export default function UsersPage() {
                       {/* Actions */}
                       <TableCell>
                         {user.id !== me?.id && user.role !== "Super Admin" && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-white/30 hover:text-white/70">
-                                <Settings className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="bg-[hsl(0_0%_14%)] border-white/10 text-white/80">
-                              <DropdownMenuItem
-                                className="focus:bg-white/10 cursor-pointer gap-2"
-                                onClick={() => setPermTarget(user)}
-                              >
-                                <Shield className="h-3.5 w-3.5" /> Manage Permissions
-                              </DropdownMenuItem>
-                              {user.status === "Pending" && (
-                                <DropdownMenuItem
-                                  className="focus:bg-white/10 cursor-pointer gap-2 text-[var(--skyshare-gold)]"
-                                  onClick={() => setInviteOpen(true)}
+                          <div className="flex items-center gap-0.5">
+                            {/* Permissions button */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-white/30 hover:text-blue-400 hover:bg-blue-500/10"
+                                  onClick={() => setPermTarget(user)}
                                 >
-                                  <Send className="h-3.5 w-3.5" /> Re-send Invite
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuSeparator className="bg-white/10" />
-                              {user.status !== "Active" && (
+                                  <Shield className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Manage Permissions</TooltipContent>
+                            </Tooltip>
+
+                            {/* Settings cogwheel */}
+                            <DropdownMenu>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-white/30 hover:text-white/70">
+                                      <Settings className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>User Settings</TooltipContent>
+                              </Tooltip>
+                              <DropdownMenuContent align="end" className="bg-[hsl(0_0%_14%)] border-white/10 text-white/80">
+                                {user.status === "Pending" && (
+                                  <DropdownMenuItem
+                                    className="focus:bg-white/10 cursor-pointer gap-2 text-[var(--skyshare-gold)]"
+                                    onClick={() => resendInvite(user)}
+                                  >
+                                    <Send className="h-3.5 w-3.5" /> Re-send Invite
+                                  </DropdownMenuItem>
+                                )}
+                                {user.status === "Pending" && <DropdownMenuSeparator className="bg-white/10" />}
+                                {user.status !== "Active" && (
+                                  <DropdownMenuItem
+                                    className="focus:bg-white/10 cursor-pointer text-emerald-400"
+                                    onClick={() => updateStatus.mutate({ userId: user.id, status: "Active", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
+                                  >
+                                    <CheckCircle className="h-3.5 w-3.5 mr-2" /> Activate
+                                  </DropdownMenuItem>
+                                )}
+                                {user.status === "Active" && (
+                                  <DropdownMenuItem
+                                    className="focus:bg-white/10 cursor-pointer text-amber-400"
+                                    onClick={() => updateStatus.mutate({ userId: user.id, status: "Suspended", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
+                                  >
+                                    <AlertTriangle className="h-3.5 w-3.5 mr-2" /> Suspend
+                                  </DropdownMenuItem>
+                                )}
+                                {user.status !== "Inactive" && (
+                                  <DropdownMenuItem
+                                    className="focus:bg-white/10 cursor-pointer text-red-400"
+                                    onClick={() => updateStatus.mutate({ userId: user.id, status: "Inactive", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
+                                  >
+                                    <XCircle className="h-3.5 w-3.5 mr-2" /> Deactivate
+                                  </DropdownMenuItem>
+                                )}
+                                {isSuperAdmin && (
+                                  <DropdownMenuItem
+                                    className="focus:bg-amber-500/10 cursor-pointer text-amber-400 gap-2"
+                                    onClick={() => forceSignOut.mutate(user.user_id)}
+                                  >
+                                    <LogOut className="h-3.5 w-3.5" /> Force Sign Out
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator className="bg-white/10" />
                                 <DropdownMenuItem
-                                  className="focus:bg-white/10 cursor-pointer text-emerald-400"
-                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Active", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
+                                  className="focus:bg-red-500/10 cursor-pointer text-red-400 gap-2"
+                                  onClick={() => setRemoveTarget(user)}
                                 >
-                                  <CheckCircle className="h-3.5 w-3.5 mr-2" /> Activate
+                                  <Trash2 className="h-3.5 w-3.5" /> Remove User
                                 </DropdownMenuItem>
-                              )}
-                              {user.status === "Active" && (
-                                <DropdownMenuItem
-                                  className="focus:bg-white/10 cursor-pointer text-amber-400"
-                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Suspended", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
-                                >
-                                  <AlertTriangle className="h-3.5 w-3.5 mr-2" /> Suspend
-                                </DropdownMenuItem>
-                              )}
-                              {user.status !== "Inactive" && (
-                                <DropdownMenuItem
-                                  className="focus:bg-white/10 cursor-pointer text-red-400"
-                                  onClick={() => updateStatus.mutate({ userId: user.id, status: "Inactive", userEmail: user.email, userName: user.first_name ?? user.full_name ?? "" })}
-                                >
-                                  <XCircle className="h-3.5 w-3.5 mr-2" /> Deactivate
-                                </DropdownMenuItem>
-                              )}
-                              {isSuperAdmin && (
-                                <DropdownMenuItem
-                                  className="focus:bg-amber-500/10 cursor-pointer text-amber-400 gap-2"
-                                  onClick={() => forceSignOut.mutate(user.user_id)}
-                                >
-                                  <LogOut className="h-3.5 w-3.5" /> Force Sign Out
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuSeparator className="bg-white/10" />
-                              <DropdownMenuItem
-                                className="focus:bg-red-500/10 cursor-pointer text-red-400 gap-2"
-                                onClick={() => setRemoveTarget(user)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" /> Remove User
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
                         )}
                       </TableCell>
                     </TableRow>
@@ -1274,5 +1293,6 @@ export default function UsersPage() {
         onClose={() => setRemoveTarget(null)}
       />
     </div>
+    </TooltipProvider>
   )
 }

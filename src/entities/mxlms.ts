@@ -66,6 +66,21 @@ export interface MxlmsTrainingCompletion {
   training_item?: MxlmsTrainingItem
 }
 
+export type AdHocEventType =
+  | 'safety-observation'
+  | 'procedure-refresher'
+  | 'tooling-equipment'
+  | 'regulatory-briefing'
+  | 'ojt-mentorship'
+  | 'general'
+
+export type AdHocStatus =
+  | 'pending_tech_ack'
+  | 'pending_witness_ack'
+  | 'complete'
+  | 'archived'
+  | 'cancelled'
+
 export interface MxlmsAdHocCompletion {
   id: number
   technician_id: number
@@ -75,6 +90,57 @@ export interface MxlmsAdHocCompletion {
   document_path: string | null
   notes: string | null
   created_at: string
+  // event classification
+  event_type: AdHocEventType
+  description: string | null
+  corrective_action: string | null
+  severity: 'low' | 'medium' | 'high' | null
+  requires_acknowledgment: boolean
+  drive_url: string | null
+  status: AdHocStatus
+  // manager signature (captured at creation)
+  initiated_by_user_id: string | null
+  initiated_by_name: string | null
+  initiated_by_email: string | null
+  manager_signed_at: string | null
+  manager_signature_hash: string | null
+  // tech signature (captured when tech acknowledges)
+  acknowledged_at: string | null        // tech_signed_at
+  tech_signed_by_name: string | null
+  tech_signed_by_email: string | null
+  tech_signature_hash: string | null
+  // witness / second manager
+  witness_user_id: string | null
+  witness_name: string | null
+  witness_email: string | null
+  witness_signed_at: string | null
+  witness_signature_hash: string | null
+  // manager override
+  override_note: string | null
+}
+
+export interface MxlmsAdHocInsert {
+  technician_id: number
+  name: string
+  category?: string | null
+  completed_date: string
+  notes?: string | null
+  event_type: AdHocEventType
+  description?: string | null
+  corrective_action?: string | null
+  severity?: 'low' | 'medium' | 'high' | null
+  requires_acknowledgment: boolean
+  status: AdHocStatus
+  // manager signature
+  initiated_by_user_id?: string | null
+  initiated_by_name?: string | null
+  initiated_by_email?: string | null
+  manager_signed_at?: string | null
+  manager_signature_hash?: string | null
+  // witness designation
+  witness_user_id?: string | null
+  witness_name?: string | null
+  witness_email?: string | null
 }
 
 export interface MxlmsPendingCompletion {
@@ -170,6 +236,57 @@ export interface MxlmsJournalInsert {
   entry_type?: string
   content: string
   visible_to_manager?: boolean
+}
+
+export interface MxlmsPendingTrainingItem {
+  id: number
+  name: string
+  category: string
+  subcategory: string | null
+  training_authority: string
+  priority: string
+  type: string
+  recurrence_interval: number
+  regulatory_basis: string | null
+  applies_to_roles: string | null
+  estimated_hours: number | null
+  description: string | null
+  objectives: string | null
+  passing_criteria: string | null
+  owner: string | null
+  revision_date: string | null
+  revision_number: string | null
+  tags: string | null
+  links_json: string | null
+  status: string
+  proposed_by_user_id: string | null
+  proposed_by_name: string | null
+  proposed_at: string
+  review_notes: string | null
+  reviewed_at: string | null
+}
+
+export interface MxlmsPendingTrainingInsert {
+  name: string
+  category: string
+  subcategory?: string | null
+  training_authority?: string
+  priority?: string
+  type?: string
+  recurrence_interval?: number
+  regulatory_basis?: string | null
+  applies_to_roles?: string | null
+  estimated_hours?: number | null
+  description?: string | null
+  objectives?: string | null
+  passing_criteria?: string | null
+  owner?: string | null
+  revision_date?: string | null
+  revision_number?: string | null
+  tags?: string | null
+  links_json?: string | null
+  proposed_by_user_id?: string
+  proposed_by_name?: string
 }
 
 export interface MxlmsPendingInsert {
