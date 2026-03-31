@@ -10,7 +10,7 @@ import {
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/features/auth"
 
-const API_KEY = "AIzaSyCoLTfGLvn7uTrxHhpXz4kXJTRYLxDfshY"
+const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string
 const GOLD    = "#d4a017"
 
 // ── 10 Vendor types ───────────────────────────────────────────────────────────
