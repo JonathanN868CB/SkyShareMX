@@ -71,6 +71,18 @@ type SidebarSection = {
   groups?: SidebarItemGroup[]
 }
 
+/**
+ * SIDEBAR STRUCTURE SYNC
+ * ──────────────────────
+ * When you add or modify sidebar items, update FOUR files:
+ * 1. Add/update the item here with its AppSection
+ * 2. Add to APP_SECTIONS (entities/supabase.ts)
+ * 3. Add rule() in HARDCODED_RULES (pages/admin/PermissionsIndex.tsx)
+ * 4. Add to PERMISSION_GROUPS (pages/admin/Users.tsx)
+ *
+ * This keeps the sidebar, permissions index, and module access dialog all in sync.
+ */
+
 const sidebarSections: SidebarSection[] = [
   {
     title: "Overview",
