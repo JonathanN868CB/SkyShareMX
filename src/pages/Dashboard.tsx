@@ -29,6 +29,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Mar 31", text: "Vendor governance system launched: dual-lane compliance (9-or-less / 10-or-more), document tracking, review & audit logging, and on-demand compliance reporting with PDF and CSV export." },
   { date: "Mar 30", text: "Department directory and core values sections added to the portal." },
   { date: "Mar 28", text: "SkyShare MX portal is live. Welcome to the team intranet." },
   { date: "Mar 28", text: "User management and invite system are fully operational." },

@@ -1,5 +1,5 @@
-import { Plus, X, CheckCircle } from "lucide-react"
-import { GOLD, TYPE_CONFIG, TYPE_ORDER, type VendorType, type PoiCard } from "../constants"
+import { Plus, X, CheckCircle, AlertCircle } from "lucide-react"
+import { GOLD, STATUS_DISPLAY, TYPE_CONFIG, TYPE_ORDER, type VendorType, type PoiCard } from "../constants"
 
 export function PoiQuickAdd({
   poiCard, poiSaved, poiName, poiPhone, poiNotes, poiType, poiPreferred, saving,
@@ -21,9 +21,12 @@ export function PoiQuickAdd({
     <div className="absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md shadow-2xl z-10"
       style={{ background: "hsl(var(--background))", border: `1px solid ${GOLD}`, width: 360 }}>
       {poiSaved ? (
-        <div className="flex items-center justify-center gap-2 py-5">
-          <CheckCircle className="w-5 h-5" style={{ color: GOLD }} />
-          <span className="text-sm font-medium">Added to vendor list!</span>
+        <div className="flex flex-col items-center justify-center gap-1.5 py-5">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-5 h-5" style={{ color: GOLD }} />
+            <span className="text-sm font-medium">Added to vendor list!</span>
+          </div>
+          <span className="text-[10px] text-muted-foreground">Status: Discovered — needs evaluation before use</span>
         </div>
       ) : (
         <>
@@ -65,17 +68,25 @@ export function PoiQuickAdd({
               <input className="form-input" value={poiNotes} onChange={e => onPoiNotesChange(e.target.value)} placeholder="Optional" />
             </div>
           </div>
-          <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: "1px solid hsl(var(--border))" }}>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={poiPreferred} onChange={e => onPoiPreferredChange(e.target.checked)} />
-              <span className="text-xs" style={{ color: poiPreferred ? GOLD : "hsl(var(--muted-foreground))" }}>Preferred</span>
-            </label>
-            <button onClick={onSave} disabled={saving || !poiName.trim()}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-sm text-white disabled:opacity-50"
-              style={{ background: GOLD }}>
-              <Plus className="w-3.5 h-3.5" />
-              {saving ? "Saving…" : "Add Vendor"}
-            </button>
+          <div className="px-4 py-2" style={{ borderTop: "1px solid hsl(var(--border))" }}>
+            <div className="flex items-center gap-1.5 mb-2">
+              <AlertCircle className="w-3 h-3 flex-shrink-0" style={{ color: STATUS_DISPLAY.discovered.color }} />
+              <span className="text-[10px] text-muted-foreground">
+                Saved as <span className="font-bold" style={{ color: STATUS_DISPLAY.discovered.color }}>Discovered</span> — needs evaluation before use
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={poiPreferred} onChange={e => onPoiPreferredChange(e.target.checked)} />
+                <span className="text-xs" style={{ color: poiPreferred ? GOLD : "hsl(var(--muted-foreground))" }}>Preferred</span>
+              </label>
+              <button onClick={onSave} disabled={saving || !poiName.trim()}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-sm text-white disabled:opacity-50"
+                style={{ background: GOLD }}>
+                <Plus className="w-3.5 h-3.5" />
+                {saving ? "Saving…" : "Add Vendor"}
+              </button>
+            </div>
           </div>
         </>
       )}

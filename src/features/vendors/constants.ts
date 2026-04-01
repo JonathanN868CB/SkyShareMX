@@ -10,6 +10,9 @@ export type VendorType =
   | "preferred" | "general" | "avionics" | "engine"
   | "sheet_metal" | "interior" | "paint"
 
+export type VendorOperationalStatus =
+  | "discovered" | "pending" | "approved" | "restricted" | "inactive" | "archived"
+
 export type Vendor = {
   id: string; name: string; airport_code: string | null
   city: string | null; state: string | null; country: string
@@ -17,6 +20,17 @@ export type Vendor = {
   phone: string | null; email: string | null; website: string | null
   specialties: string[] | null; notes: string | null
   preferred: boolean; vendor_type: VendorType; active: boolean; is_mrt: boolean
+  operational_status: VendorOperationalStatus
+  tags: string[]
+}
+
+export const STATUS_DISPLAY: Record<VendorOperationalStatus, { label: string; color: string; bg: string }> = {
+  discovered:  { label: "Discovered",  color: "#6b7280", bg: "#6b728015" },
+  pending:     { label: "Pending",     color: "#d97706", bg: "#d9770615" },
+  approved:    { label: "Approved",    color: "#16a34a", bg: "#16a34a15" },
+  restricted:  { label: "Restricted",  color: "#dc2626", bg: "#dc262615" },
+  inactive:    { label: "Inactive",    color: "#9ca3af", bg: "#9ca3af15" },
+  archived:    { label: "Archived",    color: "#6b7280", bg: "#6b728015" },
 }
 
 export type VendorContact = {
@@ -52,25 +66,25 @@ export const TYPE_ORDER = Object.keys(TYPE_CONFIG) as VendorType[]
 
 // ── SVG icon generation ─────────────────────────────────────────────────────
 
-function makeIconUrl(type: VendorType): string {
-  const { color } = TYPE_CONFIG[type]
-  const c = color
-  const w = "white"
-
-  const svgs: Record<VendorType, string> = {
-    preferred: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+// Returns raw SVG strings keyed by type — used by both plain icons and status-aware pins
+function makeIconSvgs(): Record<VendorType, string> {
+  const result = {} as Record<VendorType, string>
+  for (const type of TYPE_ORDER) {
+    const { color } = TYPE_CONFIG[type]
+    const c = color
+    const w = "white"
+    const svgs: Record<VendorType, string> = {
+      preferred: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
       <polygon points="16,1 19.8,11.4 31,12 22.6,19.6 25.4,30.5 16,24.5 6.6,30.5 9.4,19.6 1,12 12.2,11.4"
         fill="${c}" stroke="rgba(0,0,0,0.25)" stroke-width="1" stroke-linejoin="round"/>
       <polygon points="16,6 18.4,13 25.5,13.4 20,18 21.8,25 16,21.2 10.2,25 12,18 6.5,13.4 13.6,13"
         fill="white" opacity="0.18"/>
       <circle cx="16" cy="16" r="3" fill="white" opacity="0.35"/>
     </svg>`,
-
-    general: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      general: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
     </svg>`,
-
-    avionics: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+      avionics: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
       <rect x="2" y="4" width="26" height="22" rx="2" fill="${c}" stroke="black" stroke-opacity="0.25" stroke-width="1"/>
       <circle cx="5"  cy="7"  r="1.3" fill="${w}" opacity="0.5"/>
       <circle cx="25" cy="7"  r="1.3" fill="${w}" opacity="0.5"/>
@@ -96,8 +110,7 @@ function makeIconUrl(type: VendorType): string {
       <line x1="20" y1="17" x2="22" y2="17" stroke="${w}" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
       <circle cx="15" cy="15" r="2" fill="${w}" opacity="0.55"/>
     </svg>`,
-
-    engine: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+      engine: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
       <circle cx="15" cy="15" r="13.5" fill="${c}" stroke="black" stroke-opacity="0.2" stroke-width="1"/>
       <path d="M12.5,11 C10,7 9,4 10.5,3.5 L14,3.5 C15.5,5 16.5,8 17.5,11Z" fill="${w}" opacity="0.85" transform="rotate(0 15 15)"/>
       <path d="M12.5,11 C10,7 9,4 10.5,3.5 L14,3.5 C15.5,5 16.5,8 17.5,11Z" fill="${w}" opacity="0.85" transform="rotate(60 15 15)"/>
@@ -109,8 +122,7 @@ function makeIconUrl(type: VendorType): string {
       <circle cx="15" cy="15" r="2.8" fill="${w}" opacity="0.95"/>
       <circle cx="15" cy="15" r="1.3" fill="${c}"/>
     </svg>`,
-
-    sheet_metal: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+      sheet_metal: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
       <rect x="3" y="5" width="19" height="9" rx="3"
         fill="${c}" stroke="black" stroke-opacity="0.25" stroke-width="1"/>
       <path d="M3,5 L3,14 L1,12 L1,7Z" fill="${c}"/>
@@ -118,8 +130,7 @@ function makeIconUrl(type: VendorType): string {
         fill="${c}" stroke="black" stroke-opacity="0.2" stroke-width="0.8"/>
       <rect x="5" y="7" width="13" height="3" rx="1.5" fill="${w}" opacity="0.25"/>
     </svg>`,
-
-    interior: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+      interior: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
       <rect x="5" y="1" width="7" height="5" rx="2.5" fill="${c}"/>
       <path d="M6,4 L10,4 L13,21 L9,21Z" fill="${c}"/>
       <path d="M8,20 Q21,19 23,22 L23,25 Q10,25 8,24Z" fill="${c}"/>
@@ -128,8 +139,7 @@ function makeIconUrl(type: VendorType): string {
       <rect x="18" y="25" width="3" height="4" rx="1.5" fill="${c}"/>
       <line x1="9" y1="7" x2="12" y2="19" stroke="${w}" stroke-width="1.2" opacity="0.3"/>
     </svg>`,
-
-    paint: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+      paint: `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
       <rect x="7" y="14" width="12" height="14" rx="4"
         fill="${c}" stroke="black" stroke-opacity="0.25" stroke-width="1"/>
       <path d="M7,18 Q7,14 13,14 Q19,14 19,18" fill="${c}"/>
@@ -143,9 +153,16 @@ function makeIconUrl(type: VendorType): string {
       <circle cx="20" cy="2" r="1.2" fill="${c}" opacity="0.5"/>
       <rect x="9" y="16" width="4" height="10" rx="2" fill="${w}" opacity="0.15"/>
     </svg>`,
+    }
+    result[type] = svgs[type]
   }
+  return result
+}
 
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svgs[type])}`
+const RAW_SVGS = makeIconSvgs()
+
+function makeIconUrl(type: VendorType): string {
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(RAW_SVGS[type])}`
 }
 
 const ICON_DIMS: Record<VendorType, { w: number; h: number; ax: number; ay: number }> = {
@@ -164,6 +181,73 @@ export const PIN_ICONS = Object.fromEntries(
     return [t, { url: makeIconUrl(t), scaledSize: { width: d.w, height: d.h }, anchor: { x: d.ax, y: d.ay } }]
   })
 ) as Record<VendorType, { url: string; scaledSize: { width: number; height: number }; anchor: { x: number; y: number } }>
+
+// ── Status-aware pin generation ────────────────────────────────────────────
+
+const STATUS_DOT_COLORS: Record<VendorOperationalStatus, string> = {
+  discovered:  "#6b7280",
+  pending:     "#d97706",
+  approved:    "#16a34a",
+  restricted:  "#dc2626",
+  inactive:    "#9ca3af",
+  archived:    "#9ca3af",
+}
+
+// Viewbox dimensions per type — needed so we place the status dot in viewBox coords
+const VIEWBOX_DIMS: Record<VendorType, { vw: number; vh: number }> = {
+  preferred:   { vw: 32, vh: 32 },
+  general:     { vw: 24, vh: 24 },
+  avionics:    { vw: 30, vh: 30 },
+  engine:      { vw: 30, vh: 30 },
+  sheet_metal: { vw: 30, vh: 30 },
+  interior:    { vw: 30, vh: 30 },
+  paint:       { vw: 30, vh: 30 },
+}
+
+const _statusPinCache = new Map<string, { url: string; scaledSize: { width: number; height: number }; anchor: { x: number; y: number } }>()
+
+export function getStatusPin(type: VendorType, status: VendorOperationalStatus) {
+  const key = `${type}__${status}`
+  const cached = _statusPinCache.get(key)
+  if (cached) return cached
+
+  const base = PIN_ICONS[type]
+  const dotColor = STATUS_DOT_COLORS[status]
+  const dim = status === "inactive" || status === "archived"
+  const { vw, vh } = VIEWBOX_DIMS[type]
+
+  // Inject status dot directly into the SVG, right before </svg>
+  // Place dot at bottom-right in viewBox coordinates
+  const dotX = vw - 4
+  const dotY = vh - 4
+  const dotR = 3.5
+  let raw = RAW_SVGS[type]
+
+  // For inactive/archived: add opacity to the root SVG element
+  if (dim) {
+    raw = raw.replace("<svg ", '<svg opacity="0.4" ')
+  }
+
+  // Build the dot elements to inject
+  let dotSvg = `<circle cx="${dotX}" cy="${dotY}" r="${dotR}" fill="${dotColor}" stroke="white" stroke-width="1.2"/>`
+  if (status === "restricted") {
+    dotSvg += `<text x="${dotX}" y="${dotY + 2.5}" text-anchor="middle" fill="white" font-size="6" font-weight="bold">!</text>`
+  }
+  if (status === "discovered") {
+    dotSvg += `<text x="${dotX}" y="${dotY + 2}" text-anchor="middle" fill="white" font-size="5" font-weight="bold">?</text>`
+  }
+
+  // Inject before closing </svg>
+  const injected = raw.replace("</svg>", `${dotSvg}</svg>`)
+
+  const icon = {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(injected)}`,
+    scaledSize: base.scaledSize,
+    anchor: base.anchor,
+  }
+  _statusPinCache.set(key, icon)
+  return icon
+}
 
 export const AIRPORT_DOT = {
   url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
