@@ -20,6 +20,7 @@ import {
   Lock,
   HardHat,
   ChevronRight,
+  Activity,
 } from "lucide-react"
 import {
   Sidebar,
@@ -71,11 +72,12 @@ const sidebarSections: SidebarSection[] = [
   {
     title: "Operations",
     items: [
-      { name: "My Journey™",  path: "/app/journey",    icon: Compass,       section: "My Journey" },
-      { name: "My Training",  path: "/app/training",   icon: GraduationCap, section: "Training"   },
-      { name: "Maintenance Vendors",  path: "/app/vendor-map",   icon: MapPin,        section: "Vendor Map"  },
-      { name: "Compliance",     path: "/app/compliance",   icon: ClipboardList, section: "Compliance" },
-      { name: "Safety's House", path: "/app/safety",       icon: ShieldCheck,   section: "Safety"     },
+      { name: "Discrepancy Intelligence", path: "/app/discrepancy-intelligence", icon: Activity,      section: "Discrepancy Intelligence"  },
+      { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
+      { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
+      { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
+      { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
+      { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],
     groups: [
       {
