@@ -66,7 +66,7 @@ export function NineLanePanel({ data, vendorId, canEdit, onRefresh }: {
           await supabase.from("vendor_lane_nine").insert({
             vendor_id: vendorId,
             status: "not_evaluated",
-            updated_by: profile?.id,
+            updated_by: profile?.user_id,
           })
           await logHistory(vendorId, "nine", "status", null, "not_evaluated", "Lane initialized")
           onRefresh()
@@ -154,7 +154,7 @@ export function TenLanePanel({ data, vendorId, canEdit, onRefresh }: {
           await supabase.from("vendor_lane_ten").insert({
             vendor_id: vendorId,
             status: "not_evaluated",
-            updated_by: profile?.id,
+            updated_by: profile?.user_id,
           })
           await logHistory(vendorId, "ten", "status", null, "not_evaluated", "Lane initialized")
           onRefresh()
@@ -264,12 +264,12 @@ function NineEditMode({ data, vendorId, onSave, onCancel }: {
       last_review_date: form.last_review_date || null,
       next_review_due: form.next_review_due || null,
       notes: form.notes.trim() || null,
-      updated_by: profile?.id,
+      updated_by: profile?.user_id,
     }
 
     // If status changed to usable and wasn't before, set approval
     if (form.status === "usable" && data.status !== "usable") {
-      payload.approved_by = profile?.id
+      payload.approved_by = profile?.user_id
       payload.approved_at = now
     }
 
@@ -400,12 +400,12 @@ function TenEditMode({ data, vendorId, onSave, onCancel }: {
       isbao_rating: form.isbao_rating.trim() || null,
       argus_rating: form.argus_rating.trim() || null,
       notes: form.notes.trim() || null,
-      updated_by: profile?.id,
+      updated_by: profile?.user_id,
     }
 
     // If status changed to recurring_approved and wasn't before, set approval
     if (form.status === "recurring_approved" && data.status !== "recurring_approved") {
-      payload.approved_by = profile?.id
+      payload.approved_by = profile?.user_id
       payload.approved_at = now
     }
 

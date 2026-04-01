@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, lazy, Suspense } from "react"
 import { APIProvider, Map, Marker, InfoWindow } from "@vis.gl/react-google-maps"
-import { Plus, Search, Plane } from "lucide-react"
+import { Plus, Search, Plane, ClipboardList, FileText } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/features/auth"
 import UTAH_AIRPORTS from "@/data/utahAirports"
@@ -16,6 +16,11 @@ import { LegendDropdown } from "@/features/vendors/components/LegendDropdown"
 import { AirportLayer } from "@/features/vendors/components/AirportLayer"
 import { PoiClickHandler } from "@/features/vendors/components/PoiClickHandler"
 import { PoiQuickAdd } from "@/features/vendors/components/PoiQuickAdd"
+import { VendorIndex } from "@/features/vendors/components/VendorIndex"
+
+const VendorReports = lazy(() => import("@/pages/VendorReports"))
+
+type ViewMode = "map" | "index" | "reports"
 
 const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string
 
@@ -41,6 +46,7 @@ export default function VendorMap() {
   const [sidebarTab,      setSidebarTab]      = useState<"vendors" | "mrt">("vendors")
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const [mapZoom,         setMapZoom]         = useState(4)
+  const [viewMode,        setViewMode]        = useState<ViewMode>("map")
   const [showAirports,    setShowAirports]    = useState(true)
   const [airportQuery,    setAirportQuery]    = useState("")
   const [flyToCode,       setFlyToCode]       = useState<string | null>(null)
@@ -87,6 +93,8 @@ export default function VendorMap() {
       specialties: form.specialties ? form.specialties.split(",").map(s => s.trim()).filter(Boolean) : null,
       notes: form.notes.trim() || null,
       preferred: form.preferred, vendor_type: form.vendor_type, is_mrt: form.is_mrt,
+      operational_status: "discovered",
+      created_by: profile?.user_id ?? null,
     })
     setForm(blankForm); setShowForm(false); setSaving(false)
     await loadVendors()
@@ -104,6 +112,8 @@ export default function VendorMap() {
       website: poiCard.website || null,
       notes: poiNotes.trim() || null,
       preferred: poiPreferred, vendor_type: poiType,
+      operational_status: "discovered",
+      created_by: profile?.user_id ?? null,
     })
     setSaving(false); setPoiSaved(true)
     await loadVendors()
@@ -133,81 +143,139 @@ export default function VendorMap() {
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-4 px-6 py-3 flex-shrink-0" style={{ borderBottom: "1px solid hsl(var(--border))" }}>
-        <div className="shrink-0">
-          <h1 className="text-xl font-bold tracking-wide" style={{ fontFamily: "var(--font-heading)", color: GOLD }}>
-            MX Vendor Map
-          </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {vendors.filter(v => !v.is_mrt).length} vendors · <span style={{ color: GOLD }}>{sidebarList.length} in view</span>
-            {mrtVendors.length > 0 && <span className="ml-2" style={{ color: GOLD }}>· {mrtVendors.length} MRT</span>}
-            {canEditVendors && <span className="ml-2 opacity-40">· Click any business to add</span>}
-          </p>
-        </div>
-
-        {/* Airport search */}
-        <div className="relative shrink-0" style={{ width: 200 }}>
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm"
-            style={{ background: "hsl(var(--muted)/0.4)", border: "1px solid hsl(var(--border))" }}>
-            <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <input
-              value={airportQuery}
-              onChange={e => setAirportQuery(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === "Enter" && airportSuggestions.length > 0) {
-                  setFlyToCode(airportSuggestions[0].code)
-                  setAirportQuery("")
-                }
-                if (e.key === "Escape") setAirportQuery("")
-              }}
-              onBlur={() => setTimeout(() => setAirportQuery(""), 150)}
-              placeholder="Fly to airport…"
-              className="bg-transparent outline-none text-xs w-full placeholder:text-muted-foreground/50"
-            />
+        <div className="flex items-center gap-4 shrink-0">
+          {/* View mode buttons */}
+          <div className="flex items-center rounded-sm overflow-hidden" style={{ border: `1px solid ${GOLD}40` }}>
+            {([
+              { mode: "map" as ViewMode,     icon: Search,        label: "Map" },
+              { mode: "index" as ViewMode,   icon: ClipboardList, label: "Control" },
+              { mode: "reports" as ViewMode,  icon: FileText,      label: "Reports" },
+            ]).map(({ mode, icon: Icon, label }) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 transition-colors"
+                style={{
+                  background: viewMode === mode ? `${GOLD}20` : "transparent",
+                  color: viewMode === mode ? GOLD : "hsl(var(--muted-foreground))",
+                  borderRight: mode !== "reports" ? `1px solid ${GOLD}25` : undefined,
+                }}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
           </div>
-          {airportSuggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1 rounded-sm shadow-xl z-50 overflow-hidden"
-              style={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))" }}>
-              {airportSuggestions.map(a => (
-                <button key={a.code}
-                  onMouseDown={() => { setFlyToCode(a.code); setAirportQuery("") }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/50 transition-colors">
-                  <span className="text-xs font-bold shrink-0" style={{ color: GOLD, minWidth: 32 }}>{a.code}</span>
-                  <span className="text-xs text-muted-foreground truncate">{a.name}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          <div>
+            <h1 className="text-xl font-bold tracking-wide" style={{ fontFamily: "var(--font-heading)", color: GOLD }}>
+              Maintenance Vendors
+            </h1>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              <span className="font-semibold" style={{ color: "hsl(var(--foreground))", opacity: 0.6 }}>FAA Vendor Governance</span>
+              <span className="mx-1.5">·</span>
+              {vendors.filter(v => !v.is_mrt).length} vendors · <span style={{ color: GOLD }}>{sidebarList.length} in view</span>
+              {mrtVendors.length > 0 && <span className="ml-2" style={{ color: GOLD }}>· {mrtVendors.length} MRT</span>}
+              {canEditVendors && <span className="ml-2 opacity-40">· Click any business to add</span>}
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setShowAirports(v => !v)}
-            title={showAirports ? "Hide airport layer" : "Show airports (zoom in to see)"}
-            className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-sm border transition-colors"
-            style={{
-              borderColor: showAirports ? "rgba(107,159,212,0.5)" : "hsl(var(--border))",
-              color: showAirports ? "#6b9fd4" : "hsl(var(--muted-foreground))",
-              background: showAirports ? "rgba(107,159,212,0.08)" : "transparent",
-            }}
-          >
-            <Plane className="w-3.5 h-3.5" />
-          </button>
-          <LegendDropdown />
-          {canEditVendors && (
-            <button onClick={() => setShowForm(true)}
-              className="flex items-center gap-1 text-xs px-3 py-1 rounded-sm text-white"
-              style={{ background: GOLD }}
+        {viewMode === "map" && (
+          <div className="flex items-center gap-3 shrink-0">
+            {/* Airport search */}
+            <div className="relative shrink-0" style={{ width: 200 }}>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm"
+                style={{ background: "hsl(var(--muted)/0.4)", border: "1px solid hsl(var(--border))" }}>
+                <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <input
+                  value={airportQuery}
+                  onChange={e => setAirportQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && airportSuggestions.length > 0) {
+                      setFlyToCode(airportSuggestions[0].code)
+                      setAirportQuery("")
+                    }
+                    if (e.key === "Escape") setAirportQuery("")
+                  }}
+                  onBlur={() => setTimeout(() => setAirportQuery(""), 150)}
+                  placeholder="Fly to airport…"
+                  className="bg-transparent outline-none text-xs w-full placeholder:text-muted-foreground/50"
+                />
+              </div>
+              {airportSuggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 rounded-sm shadow-xl z-50 overflow-hidden"
+                  style={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))" }}>
+                  {airportSuggestions.map(a => (
+                    <button key={a.code}
+                      onMouseDown={() => { setFlyToCode(a.code); setAirportQuery("") }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/50 transition-colors">
+                      <span className="text-xs font-bold shrink-0" style={{ color: GOLD, minWidth: 32 }}>{a.code}</span>
+                      <span className="text-xs text-muted-foreground truncate">{a.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowAirports(v => !v)}
+              title={showAirports ? "Hide airport layer" : "Show airports (zoom in to see)"}
+              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-sm border transition-colors"
+              style={{
+                borderColor: showAirports ? "rgba(107,159,212,0.5)" : "hsl(var(--border))",
+                color: showAirports ? "#6b9fd4" : "hsl(var(--muted-foreground))",
+                background: showAirports ? "rgba(107,159,212,0.08)" : "transparent",
+              }}
             >
-              <Plus className="w-3.5 h-3.5" /> Add
+              <Plane className="w-3.5 h-3.5" />
             </button>
-          )}
-        </div>
+            <LegendDropdown />
+            {canEditVendors && (
+              <button onClick={() => setShowForm(true)}
+                className="flex items-center gap-1 text-xs px-3 py-1 rounded-sm text-white"
+                style={{ background: GOLD }}
+              >
+                <Plus className="w-3.5 h-3.5" /> Add
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Body ───────────────────────────────────────────────────────── */}
+      {viewMode === "index" ? (
+        <VendorIndex onClose={() => setViewMode("map")} />
+      ) : viewMode === "reports" ? (
+        <Suspense fallback={<div className="flex items-center justify-center h-40"><p className="text-sm text-muted-foreground">Loading reports…</p></div>}>
+          <VendorReports />
+        </Suspense>
+      ) : (
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Map */}
+        {/* Sidebar — left */}
+        <div className={`${sidebarExpanded ? "w-[62%]" : "w-80"} flex-shrink-0 flex flex-col overflow-hidden transition-[width] duration-200`} style={{ borderRight: "1px solid hsl(var(--border))" }}>
+          {detailVendor ? (
+            <VendorDetail
+              vendor={detailVendor}
+              onBack={() => { setDetailVendor(null); setSidebarExpanded(false) }}
+              isAdmin={canEditVendors}
+              onRefresh={async () => { await loadVendors() }}
+              onUpdated={v => setDetailVendor(v)}
+              expanded={sidebarExpanded}
+              onToggleExpand={() => setSidebarExpanded(e => !e)}
+              isSuperAdmin={isSuperAdmin}
+            />
+          ) : (
+            <VendorSidebar
+              sidebarTab={sidebarTab} setSidebarTab={setSidebarTab}
+              sidebarList={sidebarList} mrtVendors={mrtVendors}
+              mapBounds={!!mapBounds}
+              onSelectVendor={v => setDetailVendor(v)}
+            />
+          )}
+        </div>
+
+        {/* Map — right */}
         <div className="flex-1 relative">
           <APIProvider apiKey={API_KEY} libraries={["places"]}>
             <Map
@@ -266,30 +334,8 @@ export default function VendorMap() {
             />
           )}
         </div>
-
-        {/* Sidebar */}
-        <div className={`${sidebarExpanded ? "w-[62%]" : "w-80"} flex-shrink-0 flex flex-col overflow-hidden transition-[width] duration-200`} style={{ borderLeft: "1px solid hsl(var(--border))" }}>
-          {detailVendor ? (
-            <VendorDetail
-              vendor={detailVendor}
-              onBack={() => { setDetailVendor(null); setSidebarExpanded(false) }}
-              isAdmin={canEditVendors}
-              onRefresh={async () => { await loadVendors() }}
-              onUpdated={v => setDetailVendor(v)}
-              expanded={sidebarExpanded}
-              onToggleExpand={() => setSidebarExpanded(e => !e)}
-              isSuperAdmin={isSuperAdmin}
-            />
-          ) : (
-            <VendorSidebar
-              sidebarTab={sidebarTab} setSidebarTab={setSidebarTab}
-              sidebarList={sidebarList} mrtVendors={mrtVendors}
-              mapBounds={!!mapBounds}
-              onSelectVendor={v => setDetailVendor(v)}
-            />
-          )}
-        </div>
       </div>
+      )}
 
       {/* Manual Add Modal */}
       {showForm && (

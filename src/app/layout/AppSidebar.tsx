@@ -73,7 +73,7 @@ const sidebarSections: SidebarSection[] = [
     items: [
       { name: "My Journey™",  path: "/app/journey",    icon: Compass,       section: "My Journey" },
       { name: "My Training",  path: "/app/training",   icon: GraduationCap, section: "Training"   },
-      { name: "MX Vendor Map",  path: "/app/vendor-map",   icon: MapPin,        section: "Vendor Map"  },
+      { name: "Maintenance Vendors",  path: "/app/vendor-map",   icon: MapPin,        section: "Vendor Map"  },
       { name: "Compliance",     path: "/app/compliance",   icon: ClipboardList, section: "Compliance" },
       { name: "Safety's House", path: "/app/safety",       icon: ShieldCheck,   section: "Safety"     },
     ],
