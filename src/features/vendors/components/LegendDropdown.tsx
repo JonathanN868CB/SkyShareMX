@@ -1,6 +1,8 @@
 import { useState } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
-import { GOLD, TYPE_CONFIG, TYPE_ORDER, PIN_ICONS } from "../constants"
+import { GOLD, STATUS_DISPLAY, TYPE_CONFIG, TYPE_ORDER, PIN_ICONS, type VendorOperationalStatus } from "../constants"
+
+const STATUS_ORDER: VendorOperationalStatus[] = ["approved", "pending", "discovered", "restricted", "inactive"]
 
 export function LegendDropdown() {
   const [open, setOpen] = useState(false)
@@ -21,12 +23,13 @@ export function LegendDropdown() {
       {open && (
         <div
           className="absolute right-0 top-full mt-1 rounded-md shadow-xl z-50"
-          style={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", minWidth: 220 }}
+          style={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", minWidth: 240 }}
         >
+          {/* Vendor type icons */}
           <p className="px-4 pt-3 pb-2 text-[9px] uppercase tracking-widest font-bold" style={{ color: GOLD }}>
-            Vendor Icon Legend
+            Vendor Type
           </p>
-          <div className="px-3 pb-3 space-y-0.5">
+          <div className="px-3 pb-2 space-y-0.5">
             {TYPE_ORDER.map(t => {
               const cfg = TYPE_CONFIG[t]
               return (
@@ -43,6 +46,34 @@ export function LegendDropdown() {
                 </div>
               )
             })}
+          </div>
+
+          {/* Status dot indicators */}
+          <div style={{ borderTop: "1px solid hsl(var(--border))" }}>
+            <p className="px-4 pt-2.5 pb-1.5 text-[9px] uppercase tracking-widest font-bold" style={{ color: GOLD }}>
+              Status Indicator
+            </p>
+            <div className="px-3 pb-3 space-y-0.5">
+              {STATUS_ORDER.map(s => {
+                const cfg = STATUS_DISPLAY[s]
+                return (
+                  <div key={s} className="flex items-center gap-3 px-1 py-1 rounded-sm">
+                    <span className="w-[22px] flex items-center justify-center shrink-0">
+                      <span className="w-[9px] h-[9px] rounded-full inline-block"
+                        style={{ background: cfg.color, border: "1px solid rgba(0,0,0,0.2)" }} />
+                    </span>
+                    <p className="text-xs" style={{ color: cfg.color }}>{cfg.label}</p>
+                  </div>
+                )
+              })}
+              <div className="flex items-center gap-3 px-1 py-1 rounded-sm">
+                <span className="w-[22px] flex items-center justify-center shrink-0">
+                  <span className="w-[9px] h-[9px] rounded-full inline-block opacity-40"
+                    style={{ background: "#9ca3af", border: "1px solid rgba(0,0,0,0.2)" }} />
+                </span>
+                <p className="text-xs text-muted-foreground opacity-50">Dimmed = Inactive/Archived</p>
+              </div>
+            </div>
           </div>
         </div>
       )}
