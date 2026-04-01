@@ -1,5 +1,5 @@
-import { X } from "lucide-react"
-import { GOLD, TYPE_CONFIG, TYPE_ORDER } from "../constants"
+import { X, AlertCircle } from "lucide-react"
+import { GOLD, STATUS_DISPLAY, TYPE_CONFIG, TYPE_ORDER } from "../constants"
 import { Field } from "./Field"
 
 export function VendorFormModal({ title, form, saving, onSave, onCancel, onChange }: {
@@ -64,11 +64,19 @@ export function VendorFormModal({ title, form, saving, onSave, onCancel, onChang
             <span className="text-sm" style={{ color: f.is_mrt ? GOLD : "hsl(var(--muted-foreground))" }}>Mobile Response Team (MRT) — no map pin</span>
           </label>
         </div>
-        <div className="flex justify-end gap-2 px-5 py-4" style={{ borderTop: "1px solid hsl(var(--border))" }}>
-          <button onClick={onCancel} className="px-4 py-1.5 text-sm rounded-sm border text-muted-foreground" style={{ borderColor: "hsl(var(--border))" }}>Cancel</button>
-          <button onClick={onSave} disabled={!f.name?.trim() || saving} className="px-4 py-1.5 text-sm rounded-sm text-white disabled:opacity-50" style={{ background: GOLD }}>
-            {saving ? "Saving…" : "Save Vendor"}
-          </button>
+        <div className="px-5 py-4 space-y-3" style={{ borderTop: "1px solid hsl(var(--border))" }}>
+          <div className="flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: STATUS_DISPLAY.discovered.color }} />
+            <span className="text-xs text-muted-foreground">
+              New vendors are saved as <span className="font-bold" style={{ color: STATUS_DISPLAY.discovered.color }}>Discovered</span> and require evaluation before use.
+            </span>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={onCancel} className="px-4 py-1.5 text-sm rounded-sm border text-muted-foreground" style={{ borderColor: "hsl(var(--border))" }}>Cancel</button>
+            <button onClick={onSave} disabled={!f.name?.trim() || saving} className="px-4 py-1.5 text-sm rounded-sm text-white disabled:opacity-50" style={{ background: GOLD }}>
+              {saving ? "Saving…" : "Save Vendor"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
