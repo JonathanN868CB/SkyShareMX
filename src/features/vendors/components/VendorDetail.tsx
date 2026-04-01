@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   Phone, Globe, Star, MapPin, X,
-  ChevronLeft, ExternalLink, Pencil, Maximize2, Minimize2, Plus, Truck,
+  ChevronLeft, ExternalLink, Pencil, Maximize2, Minimize2, Plus, Truck, ArrowUpRight,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import {
@@ -15,6 +16,7 @@ export function VendorDetail({ vendor, onBack, isAdmin, onRefresh, onUpdated, ex
   onRefresh: () => Promise<void>; onUpdated: (v: Vendor) => void
   expanded: boolean; onToggleExpand: () => void; isSuperAdmin: boolean
 }) {
+  const navigate = useNavigate()
   const cfg = TYPE_CONFIG[vendor.vendor_type]
   const [editing, setEditing] = useState(false)
   const [saving,  setSaving]  = useState(false)
@@ -251,6 +253,13 @@ export function VendorDetail({ vendor, onBack, isAdmin, onRefresh, onUpdated, ex
           <ChevronLeft className="w-3.5 h-3.5" /> Back
         </button>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate(`/app/vendors/${vendor.id}`)}
+            className="flex items-center gap-1.5 text-[10px] font-semibold px-2 py-1 rounded-sm transition-colors"
+            style={{ border: `1px solid ${GOLD}`, color: GOLD, background: `${GOLD}10` }}
+          >
+            <ArrowUpRight className="w-3.5 h-3.5" /> Full Details
+          </button>
           <button
             onClick={onToggleExpand}
             className="flex items-center gap-1.5 text-[10px] font-semibold px-2 py-1 rounded-sm transition-colors"
