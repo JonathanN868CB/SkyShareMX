@@ -1,7 +1,8 @@
 import { useState } from "react"
-import { FLEET, TOTAL_AIRCRAFT, AIRCRAFT_DETAILS } from "./aircraft/fleetData"
-import type { AircraftBase } from "./aircraft/fleetData"
+import { AIRCRAFT_DETAILS } from "./aircraft/fleetData"
+import type { AircraftBase, ManufacturerGroup } from "./aircraft/fleetData"
 import AircraftDetailOverlay from "./aircraft/AircraftDetailOverlay"
+import { useFleet } from "./aircraft/useFleet"
 
 // ─── Aircraft Card ─────────────────────────────────────────────────────────────
 function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftBase) => void }) {
@@ -76,7 +77,7 @@ function FamilyBlock({ family, label, onOpen }: {
 
 // ─── Manufacturer Section ──────────────────────────────────────────────────────
 function ManufacturerSection({ group, onOpen }: {
-  group: typeof FLEET[number]
+  group: ManufacturerGroup
   onOpen: (ac: AircraftBase) => void
 }) {
   const total = group.families.reduce((s, f) => s + f.aircraft.length, 0)
@@ -126,11 +127,34 @@ function ManufacturerSection({ group, onOpen }: {
   )
 }
 
+// ─── Loading Skeleton ──────────────────────────────────────────────────────────
+function FleetSkeleton() {
+  return (
+    <div className="flex flex-col gap-8">
+      {[1, 2].map(i => (
+        <div key={i} className="flex flex-col gap-5">
+          <div>
+            <div className="h-6 w-48 rounded animate-pulse" style={{ background: "rgba(255,255,255,0.07)" }} />
+            <div style={{ height: "1px", marginTop: "0.5rem", background: "rgba(212,160,23,0.15)" }} />
+          </div>
+          <div className="grid gap-2 pl-1" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))" }}>
+            {Array.from({ length: 6 }).map((_, j) => (
+              <div key={j} className="rounded-md px-4 py-3 h-20 animate-pulse" style={{ background: "rgba(255,255,255,0.05)" }} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function AircraftInfo() {
   const [selected, setSelected] = useState<AircraftBase | null>(null)
+  const { data: fleet, isLoading, isError } = useFleet()
 
   const detail = selected ? AIRCRAFT_DETAILS[selected.tailNumber] : null
+  const totalAircraft = fleet?.reduce((sum, g) => sum + g.families.reduce((s, f) => s + f.aircraft.length, 0), 0) ?? "—"
 
   return (
     <>
@@ -167,7 +191,7 @@ export default function AircraftInfo() {
                 lineHeight: 1,
               }}
             >
-              {TOTAL_AIRCRAFT}
+              {totalAircraft}
             </div>
             <div
               className="text-xs uppercase tracking-widest"
@@ -179,7 +203,13 @@ export default function AircraftInfo() {
         </div>
 
         {/* Fleet */}
-        {FLEET.map(group => (
+        {isLoading && <FleetSkeleton />}
+        {isError && (
+          <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+            Failed to load fleet data.
+          </p>
+        )}
+        {fleet?.map(group => (
           <ManufacturerSection key={group.manufacturer} group={group} onOpen={setSelected} />
         ))}
 

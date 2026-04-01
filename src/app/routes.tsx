@@ -22,6 +22,7 @@ const VendorMap    = lazy(() => import("@/pages/VendorMap"))
 const VendorDetailPage = lazy(() => import("@/pages/VendorDetailPage"))
 const Compliance   = lazy(() => import("@/pages/Compliance"))
 const SafetyHouse  = lazy(() => import("@/pages/SafetyHouse"))
+const DiscrepancyIntelligence = lazy(() => import("@/pages/DiscrepancyIntelligence"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -80,6 +81,7 @@ const routes: RouteObject[] = [
       { path: "projects",    element: wrap(<ComingSoon name="Projects" />) },
       { path: "compliance",   element: wrap(<Compliance />) },
       { path: "safety",       element: wrap(<SafetyHouse />) },
+      { path: "discrepancy-intelligence", element: wrap(<DiscrepancyIntelligence />) },
       { path: "training",    element: wrap(<MyTraining />) },
       { path: "journey",     element: wrap(<MyJourney />) },
       { path: "docs",        element: wrap(<ComingSoon name="Docs & Links" />) },
