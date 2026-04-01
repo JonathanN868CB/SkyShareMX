@@ -19,6 +19,7 @@ const MyTraining   = lazy(() => import("@/pages/training/MyTraining"))
 const MyJourney    = lazy(() => import("@/pages/training/MyJourney"))
 const AiAssistant  = lazy(() => import("@/pages/AiAssistant"))
 const VendorMap    = lazy(() => import("@/pages/VendorMap"))
+const VendorDetailPage = lazy(() => import("@/pages/VendorDetailPage"))
 const Compliance   = lazy(() => import("@/pages/Compliance"))
 const SafetyHouse  = lazy(() => import("@/pages/SafetyHouse"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
@@ -68,6 +69,7 @@ const routes: RouteObject[] = [
       },
       { path: "aircraft",    element: wrap(<AircraftInfo />) },
       { path: "vendor-map",  element: wrap(<VendorMap />) },
+      { path: "vendors/:id", element: wrap(<VendorDetailPage />) },
       { path: "dev/access-denied", element: wrap(<AccessDenied name="Aircraft Conformity" />) },
       { path: "ai-assistant", element: wrap(<AiAssistant />) },
       { path: "conformity",  element: wrap(<ComingSoon name="Aircraft Conformity" />) },
