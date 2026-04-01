@@ -89,6 +89,16 @@ async function fetchUserPermissions(userId: string) {
 
 // ─── Permissions Dialog ───────────────────────────────────────────────────────
 
+/**
+ * PERMISSION_GROUPS — UI grouping for module access assignment
+ *
+ * SYNC REQUIREMENT: Keep these in sync with:
+ * • sidebarSections in app/layout/AppSidebar.tsx
+ * • APP_SECTIONS in entities/supabase.ts
+ * • HARDCODED_RULES in pages/admin/PermissionsIndex.tsx
+ *
+ * When adding a new section, update all four places.
+ */
 const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
   {
     label: "Overview",
@@ -97,6 +107,7 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
   {
     label: "Operations",
     items: [
+      "Discrepancy Intelligence",
       "My Journey",
       "Training",
       "Vendor Map",
