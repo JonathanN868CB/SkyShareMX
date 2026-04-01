@@ -23,7 +23,9 @@ export default function VendorDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { profile } = useAuth()
-  const canEdit = profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager"
+  const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
+  const canEditNine = profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager"
+  const canEditTen = isAdmin
 
   const [vendor, setVendor] = useState<(Vendor & { operational_status: VendorOperationalStatus; tags: string[] }) | null>(null)
   const [contacts, setContacts] = useState<VendorContact[]>([])
@@ -207,12 +209,12 @@ export default function VendorDetailPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* 9-or-less */}
             <div className="rounded-md overflow-hidden" style={{ border: "1px solid hsl(var(--border))", minHeight: 280 }}>
-              <NineLanePanel data={laneNine} />
+              <NineLanePanel data={laneNine} vendorId={vendor.id} canEdit={canEditNine} onRefresh={() => loadAll(vendor.id)} />
             </div>
 
             {/* 10-or-more */}
             <div className="rounded-md overflow-hidden" style={{ border: "1px solid hsl(var(--border))", minHeight: 280 }}>
-              <TenLanePanel data={laneTen} />
+              <TenLanePanel data={laneTen} vendorId={vendor.id} canEdit={canEditTen} onRefresh={() => loadAll(vendor.id)} />
             </div>
           </div>
 
@@ -268,6 +270,20 @@ export default function VendorDetailPage() {
           </div>
         </div>
       </div>
+
+      <style>{`
+        .form-input {
+          width: 100%;
+          padding: 0.35rem 0.6rem;
+          border-radius: 0.25rem;
+          border: 1px solid hsl(var(--border));
+          background: hsl(var(--background));
+          color: hsl(var(--foreground));
+          font-size: 0.8rem;
+          outline: none;
+        }
+        .form-input:focus { border-color: ${GOLD}; }
+      `}</style>
     </div>
   )
 }
