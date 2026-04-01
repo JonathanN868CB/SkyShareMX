@@ -153,7 +153,7 @@ export type Database = {
     }
     Enums: {
       app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Read-Only"
-      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "Vendor Map" | "Compliance" | "Safety"
+      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence"
       user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
@@ -207,6 +207,7 @@ export const APP_SECTIONS: AppSection[] = [
   "Vendor Map",
   "Compliance",
   "Safety",
+  "Discrepancy Intelligence",
 ]
 
 export const DEFAULT_PERMISSIONS: AppSection[] = [

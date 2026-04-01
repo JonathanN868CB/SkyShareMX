@@ -29,6 +29,8 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Mar 31", text: "Discrepancy Intelligence launched: browse fleet discrepancy records by aircraft, view full detail with pilot reports, corrective actions, AMM references, turnaround time, and airframe hours between events. 40 records imported for N499CB." },
+  { date: "Mar 31", text: "Aircraft Info now pulls live fleet data from Supabase instead of static config. Portal Updates section is now scrollable." },
   { date: "Mar 31", text: "Vendor governance system launched: dual-lane compliance (9-or-less / 10-or-more), document tracking, review & audit logging, and on-demand compliance reporting with PDF and CSV export." },
   { date: "Mar 30", text: "Department directory and core values sections added to the portal." },
   { date: "Mar 28", text: "SkyShare MX portal is live. Welcome to the team intranet." },
@@ -780,26 +782,35 @@ export default function Dashboard() {
               </CardTitle>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {bulletinItems.map((item, i) => (
-              <div key={i} className="flex gap-5 items-start">
-                <span
-                  style={{
-                    fontFamily: "var(--font-heading)",
-                    fontSize: "10px",
-                    letterSpacing: "0.1em",
-                    color: "rgba(212,160,23,0.5)",
-                    whiteSpace: "nowrap",
-                    paddingTop: "2px",
-                  }}
-                >
-                  {item.date.toUpperCase()}
-                </span>
-                <span className="text-sm text-muted-foreground" style={{ lineHeight: 1.6 }}>
-                  {item.text}
-                </span>
-              </div>
-            ))}
+          <CardContent className="pt-0">
+            <div
+              className="space-y-3 overflow-y-auto pr-2"
+              style={{
+                maxHeight: "9.5rem",
+                scrollbarWidth: "thin",
+                scrollbarColor: "rgba(212,160,23,0.25) transparent",
+              }}
+            >
+              {bulletinItems.map((item, i) => (
+                <div key={i} className="flex gap-5 items-start">
+                  <span
+                    style={{
+                      fontFamily: "var(--font-heading)",
+                      fontSize: "10px",
+                      letterSpacing: "0.1em",
+                      color: "rgba(212,160,23,0.5)",
+                      whiteSpace: "nowrap",
+                      paddingTop: "2px",
+                    }}
+                  >
+                    {item.date.toUpperCase()}
+                  </span>
+                  <span className="text-sm text-muted-foreground" style={{ lineHeight: 1.6 }}>
+                    {item.text}
+                  </span>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
 
