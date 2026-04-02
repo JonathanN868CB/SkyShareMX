@@ -1,9 +1,14 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { GraduationCap, Unlink, XCircle, Bell, ShieldAlert, Plus } from "lucide-react"
+import { GraduationCap, Unlink, XCircle, Bell, ShieldAlert, Plus, Upload, FileText, X, CalendarIcon } from "lucide-react"
 import { SignaturePanel, SignatureBlock, type SignatureData } from "@/components/training/SignaturePanel"
 import { ProposeTrainingItemModal } from "@/components/training/ProposeTrainingItemModal"
 import { Button } from "@/shared/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/shared/ui/dialog"
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover"
+import { Calendar } from "@/shared/ui/calendar"
+import { Label } from "@/shared/ui/label"
+import { Input } from "@/shared/ui/input"
 import { toast } from "sonner"
 import { Card } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
@@ -11,7 +16,7 @@ import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
 import { useViewAsTech } from "@/hooks/useViewAsTech"
 import { ViewAsBar } from "@/components/training/ViewAsBar"
-import type { MxlmsTechnicianTraining, MxlmsTrainingCompletion, MxlmsAdHocCompletion, MxlmsPendingCompletion } from "@/entities/mxlms"
+import type { MxlmsTechnicianTraining, MxlmsTrainingCompletion, MxlmsAdHocCompletion, MxlmsPendingCompletion, MxlmsPendingInsert } from "@/entities/mxlms"
 import TrainingDashboard, { DueBadge } from "./TrainingDashboard"
 
 // ─── Data fetching ────────────────────────────────────────────────────────────
@@ -52,9 +57,22 @@ async function fetchAdHoc(techId: number): Promise<MxlmsAdHocCompletion[]> {
 async function fetchPending(techId: number): Promise<MxlmsPendingCompletion[]> {
   const { data, error } = await mxlms
     .from("pending_completions")
-    .select("id,technician_id,matched_training_item_id,status,review_notes,file_name,detected_at,storage_path")
+    .select("id,technician_id,matched_training_item_id,status,review_notes,file_name,detected_at,storage_path,submitter_note")
     .eq("technician_id", techId)
     .in("status", ["pending", "rejected"])
+    .order("detected_at", { ascending: false })
+  if (error) throw error
+  return (data ?? []) as MxlmsPendingCompletion[]
+}
+
+async function fetchHistoricalSubmissions(techId: number): Promise<MxlmsPendingCompletion[]> {
+  const { data, error } = await mxlms
+    .from("pending_completions")
+    .select("id,technician_id,matched_training_item_id,status,review_notes,file_name,detected_at,storage_path,submitter_note,reviewed_at")
+    .eq("technician_id", techId)
+    .is("matched_training_item_id", null)
+    .not("submitter_note", "is", null)
+    .not("status", "eq", "cleared")
     .order("detected_at", { ascending: false })
   if (error) throw error
   return (data ?? []) as MxlmsPendingCompletion[]
@@ -635,6 +653,339 @@ function SubmittedProposalsPanel({ userId }: { userId: string }) {
   )
 }
 
+// ─── Historical Training Upload Modal ────────────────────────────────────────
+
+function parseSubmitterNote(note: string | null): Record<string, string> {
+  const result: Record<string, string> = {}
+  if (!note) return result
+  for (const part of note.split(" | ")) {
+    const idx = part.indexOf(": ")
+    if (idx > 0) result[part.slice(0, idx)] = part.slice(idx + 2)
+  }
+  return result
+}
+
+function HistoricalUploadModal({
+  techId,
+  open,
+  onClose,
+  onSuccess,
+  editRecord,
+}: {
+  techId: number
+  open: boolean
+  onClose: () => void
+  onSuccess: () => void
+  editRecord?: MxlmsPendingCompletion | null
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const parsed = editRecord ? parseSubmitterNote(editRecord.submitter_note) : null
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
+  const [name, setName] = useState(parsed?.["Name"] ?? "")
+  const [category, setCategory] = useState(parsed?.["Category"] ?? "")
+  const [completionDate, setCompletionDate] = useState(parsed?.["Completed"] ?? "")
+  const [notes, setNotes] = useState(parsed?.["Notes"] ?? "")
+  const [uploading, setUploading] = useState(false)
+
+  // Re-populate when editRecord changes or dialog opens
+  const handleOpenChange = (v: boolean) => {
+    if (v) {
+      const p = editRecord ? parseSubmitterNote(editRecord.submitter_note) : null
+      setName(p?.["Name"] ?? "")
+      setCategory(p?.["Category"] ?? "")
+      setCompletionDate(p?.["Completed"] ?? "")
+      setNotes(p?.["Notes"] ?? "")
+      setFile(null)
+      setUploading(false)
+    }
+    if (!v) onClose()
+  }
+
+  // For edits: file is optional (keep existing), for new: required
+  const isEdit = !!editRecord
+  const canSubmit = name.trim() && completionDate && (file || isEdit) && !uploading
+
+  function handleClose() {
+    setFile(null)
+    setName("")
+    setCategory("")
+    setCompletionDate("")
+    setNotes("")
+    setUploading(false)
+    onClose()
+  }
+
+  async function handleUpload() {
+    if (!name.trim() || !completionDate) return
+    if (!file && !isEdit) return
+    setUploading(true)
+    try {
+      let storagePath = editRecord?.storage_path ?? ""
+      let storageUrl = ""
+
+      if (file) {
+        // Upload new file
+        const timestamp = Date.now()
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+        storagePath = `${techId}/${timestamp}-${safeName}`
+
+        const { error: uploadErr } = await supabase.storage
+          .from("training-docs")
+          .upload(storagePath, file, { upsert: false })
+        if (uploadErr) throw uploadErr
+
+        const { data: signedData, error: signErr } = await supabase.storage
+          .from("training-docs")
+          .createSignedUrl(storagePath, 60 * 60 * 24 * 365 * 10)
+        if (signErr) throw signErr
+        storageUrl = signedData.signedUrl
+
+        // Clean up old file if replacing
+        if (isEdit && editRecord.storage_path) {
+          await supabase.storage.from("training-docs").remove([editRecord.storage_path])
+        }
+      }
+
+      // Build submitter_note
+      const noteParts = [
+        `Name: ${name.trim()}`,
+        category.trim() ? `Category: ${category.trim()}` : null,
+        `Completed: ${completionDate}`,
+        notes.trim() ? `Notes: ${notes.trim()}` : null,
+      ].filter(Boolean)
+
+      if (isEdit) {
+        // Update existing record back to pending
+        const updatePayload: Record<string, unknown> = {
+          status: "pending",
+          submitter_note: noteParts.join(" | "),
+          review_notes: null,
+          reviewed_at: null,
+        }
+        if (file) {
+          updatePayload.storage_path = storagePath
+          updatePayload.storage_url = storageUrl
+          updatePayload.file_name = file.name
+        }
+        const { error: updateErr } = await mxlms
+          .from("pending_completions")
+          .update(updatePayload)
+          .eq("id", editRecord.id)
+        if (updateErr) throw updateErr
+        toast.success("Record resubmitted — pending manager review")
+      } else {
+        // Insert new record
+        const payload: MxlmsPendingInsert = {
+          technician_id: techId,
+          storage_path: storagePath,
+          storage_url: storageUrl,
+          file_name: file!.name,
+          status: "pending",
+          matched_training_item_id: null,
+          submitter_note: noteParts.join(" | "),
+        }
+        const { error: insertErr } = await mxlms.from("pending_completions").insert(payload)
+        if (insertErr) throw insertErr
+        toast.success("Historical record submitted — pending manager review")
+      }
+
+      onSuccess()
+      handleClose()
+    } catch (e: any) {
+      toast.error(e.message ?? "Upload failed")
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-w-md"
+        style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <div style={{ height: "3px", background: "linear-gradient(90deg,#c10230 0%,#012e45 100%)", borderRadius: "8px 8px 0 0", marginTop: "-1px", marginLeft: "-25px", marginRight: "-25px", position: "relative", top: "-24px", marginBottom: "-20px" }} />
+
+        <DialogHeader>
+          <DialogTitle style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
+            {isEdit ? "Edit & Resubmit" : "Add Historical Training Record"}
+          </DialogTitle>
+        </DialogHeader>
+
+        {isEdit && editRecord.review_notes && (
+          <div className="rounded px-3 py-2.5 -mt-1 mb-1"
+            style={{ background: "rgba(193,2,48,0.08)", border: "1px solid rgba(193,2,48,0.2)" }}>
+            <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "#e05070", fontFamily: "var(--font-heading)" }}>Rejection Note</p>
+            <p className="text-xs text-white/60 italic">{editRecord.review_notes}</p>
+          </div>
+        )}
+        <p className="text-[11px] text-white/35 -mt-1 leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+          {isEdit
+            ? "Update the details below and resubmit. You can optionally upload a new document."
+            : "Upload a certificate, completion record, or training document from your history. Your manager will review and match it to the training catalog."}
+        </p>
+
+        <div className="space-y-4 py-1">
+
+          {/* Training Name */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5 block" style={{ fontFamily: "var(--font-heading)" }}>
+              Training Name <span style={{ color: "#e05070" }}>*</span>
+            </Label>
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. Airbus A320 Factory Training"
+              className="h-9 text-sm bg-white/5 border-white/10"
+            />
+          </div>
+
+          {/* Category */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5 block" style={{ fontFamily: "var(--font-heading)" }}>
+              Category <span className="text-white/20 normal-case tracking-normal">(optional)</span>
+            </Label>
+            <Input
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              placeholder="e.g. Airframe, Powerplant, Avionics…"
+              className="h-9 text-sm bg-white/5 border-white/10"
+            />
+          </div>
+
+          {/* Completion Date */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5 block" style={{ fontFamily: "var(--font-heading)" }}>
+              Completion Date <span style={{ color: "#e05070" }}>*</span>
+            </Label>
+            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  className="flex items-center gap-2 h-9 px-3 rounded-md text-sm w-52 border transition-colors hover:border-white/20"
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    borderColor: "rgba(255,255,255,0.1)",
+                    color: completionDate ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.2)",
+                  }}
+                >
+                  <CalendarIcon className="h-3.5 w-3.5 shrink-0" style={{ opacity: 0.5 }} />
+                  {completionDate
+                    ? new Date(completionDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                    : "Select a date"}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start" style={{ background: "hsl(0 0% 13%)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <Calendar
+                  mode="single"
+                  selected={completionDate ? new Date(completionDate + "T12:00:00") : undefined}
+                  onSelect={day => {
+                    if (day) {
+                      const y = day.getFullYear()
+                      const m = String(day.getMonth() + 1).padStart(2, "0")
+                      const d = String(day.getDate()).padStart(2, "0")
+                      setCompletionDate(`${y}-${m}-${d}`)
+                      setCalendarOpen(false)
+                    }
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          {/* Document upload */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5 block" style={{ fontFamily: "var(--font-heading)" }}>
+              Document {isEdit
+                ? <span className="text-white/20 normal-case tracking-normal">(upload new to replace)</span>
+                : <span style={{ color: "#e05070" }}>*</span>}
+            </Label>
+            {isEdit && !file && editRecord.file_name && (
+              <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <FileText className="h-3.5 w-3.5 shrink-0" style={{ color: "rgba(255,255,255,0.3)" }} />
+                <span className="text-xs text-white/40 truncate">Current: {editRecord.file_name}</span>
+              </div>
+            )}
+
+            {file ? (
+              <div className="flex items-center justify-between rounded px-3 py-2.5 gap-3"
+                style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.12)" }}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <FileText className="h-4 w-4 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+                  <span className="text-sm text-white/80 truncate">{file.name}</span>
+                  <span className="text-[11px] text-white/30 shrink-0">
+                    {(file.size / 1024 / 1024).toFixed(1)} MB
+                  </span>
+                </div>
+                <button onClick={() => setFile(null)} className="text-white/30 hover:text-white/60 shrink-0">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full rounded px-4 py-6 flex flex-col items-center gap-2 transition-colors hover:border-white/20"
+                style={{ background: "hsl(0 0% 10%)", border: "2px dashed rgba(255,255,255,0.1)" }}
+              >
+                <Upload className="h-5 w-5 text-white/25" />
+                <span className="text-xs text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                  Click to select a file
+                </span>
+                <span className="text-[10px] text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+                  PDF · JPG · PNG · HEIC — max 50 MB
+                </span>
+              </button>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+              className="hidden"
+              onChange={e => setFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-widest text-white/40 mb-1.5 block" style={{ fontFamily: "var(--font-heading)" }}>
+              Notes <span className="text-white/20 normal-case tracking-normal">(optional)</span>
+            </Label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="e.g. 3-week factory course, pre-hire — applicable to current ops"
+              rows={3}
+              className="w-full text-sm rounded-md px-3 py-2 bg-white/5 border border-white/10 text-white/80 placeholder:text-white/20 focus:outline-none focus:ring-1 focus:ring-white/20 resize-none"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={handleClose} disabled={uploading} className="text-white/40 hover:text-white/60">
+            Cancel
+          </Button>
+          <Button
+            onClick={handleUpload}
+            disabled={!canSubmit}
+            className="gap-2"
+            style={{
+              background: canSubmit ? "var(--skyshare-gold)" : "rgba(212,160,23,0.3)",
+              color: canSubmit ? "hsl(0 0% 8%)" : "rgba(0,0,0,0.4)",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.1em",
+            }}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            {uploading ? "Uploading…" : isEdit ? "Resubmit" : "Submit"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Section header ───────────────────────────────────────────────────────────
 
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
@@ -695,6 +1046,15 @@ export default function MyTraining() {
   })
 
   const {
+    data: historicalSubs = [],
+    refetch: refetchHistorical,
+  } = useQuery({
+    queryKey: ["my-historical-submissions", techId],
+    queryFn: () => fetchHistoricalSubmissions(techId!),
+    enabled: !!techId,
+  })
+
+  const {
     data: pendingAck = [],
     isLoading: loadingAck,
     refetch: refetchAck,
@@ -716,6 +1076,8 @@ export default function MyTraining() {
 
   const [signingId,        setSigningId]        = useState<number | null>(null)
   const [proposeModalOpen, setProposeModalOpen] = useState(false)
+  const [historicalOpen,   setHistoricalOpen]   = useState(false)
+  const [editingRecord,    setEditingRecord]    = useState<MxlmsPendingCompletion | null>(null)
 
   const canProposeTraining = profile?.role === "Super Admin" || profile?.role === "Admin"
 
@@ -818,6 +1180,20 @@ export default function MyTraining() {
 
     toast.success("Submission retracted")
     qc.invalidateQueries({ queryKey: ["my-training-pending", techId] })
+    qc.invalidateQueries({ queryKey: ["my-historical-submissions", techId] })
+  }
+
+  async function handleDismissHistorical(id: number): Promise<void> {
+    const { error } = await mxlms
+      .from("pending_completions")
+      .update({ status: "cleared" })
+      .eq("id", id)
+    if (error) {
+      toast.error(error.message ?? "Failed to clear record")
+      return
+    }
+    toast.success("Record cleared")
+    refetchHistorical()
   }
 
   return (
@@ -836,23 +1212,42 @@ export default function MyTraining() {
               <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
             </div>
           </div>
-          {canProposeTraining && (
-            <Button
-              onClick={() => setProposeModalOpen(true)}
-              variant="outline"
-              className="gap-2 mt-1 shrink-0"
-              style={{
-                borderColor: "rgba(212,160,23,0.4)",
-                color: "rgba(212,160,23,0.85)",
-                fontFamily: "var(--font-heading)",
-                letterSpacing: "0.08em",
-                background: "transparent",
-              }}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Propose Training
-            </Button>
-          )}
+          <div className="flex items-center gap-2 mt-1 shrink-0">
+            {techId && !isViewingOther && (
+              <Button
+                onClick={() => setHistoricalOpen(true)}
+                variant="outline"
+                className="gap-2"
+                style={{
+                  borderColor: "rgba(255,255,255,0.15)",
+                  color: "rgba(255,255,255,0.6)",
+                  fontFamily: "var(--font-heading)",
+                  letterSpacing: "0.08em",
+                  background: "transparent",
+                }}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Add Historical Record
+              </Button>
+            )}
+            {canProposeTraining && (
+              <Button
+                onClick={() => setProposeModalOpen(true)}
+                variant="outline"
+                className="gap-2"
+                style={{
+                  borderColor: "rgba(212,160,23,0.4)",
+                  color: "rgba(212,160,23,0.85)",
+                  fontFamily: "var(--font-heading)",
+                  letterSpacing: "0.08em",
+                  background: "transparent",
+                }}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Propose Training
+              </Button>
+            )}
+          </div>
         </div>
         <p className="mt-3 text-sm text-muted-foreground"
           style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}>
@@ -865,6 +1260,19 @@ export default function MyTraining() {
         onClose={() => setProposeModalOpen(false)}
         onSuccess={() => {}}
       />
+
+      {techId && (
+        <HistoricalUploadModal
+          techId={techId}
+          open={historicalOpen || !!editingRecord}
+          onClose={() => { setHistoricalOpen(false); setEditingRecord(null) }}
+          onSuccess={() => {
+            refetchPending()
+            refetchHistorical()
+          }}
+          editRecord={editingRecord}
+        />
+      )}
 
       {/* View As bar — Super Admin only */}
       <ViewAsBar page="training" />
@@ -963,6 +1371,93 @@ export default function MyTraining() {
               loading={loadingCompletions || loadingAdHoc}
             />
           </Card>
+
+          {/* Submitted Historical Records */}
+          {historicalSubs.length > 0 && (
+            <Card className="card-elevated border-0 overflow-hidden">
+              <SectionHeader
+                title="Submitted Historical Records"
+                sub="Training documents you've uploaded for review"
+              />
+              <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+                {historicalSubs.map(sub => {
+                  const statusStyle =
+                    sub.status === "pending"  ? { color: "rgba(212,160,23,0.85)", label: "Pending Review", bg: "rgba(212,160,23,0.12)" } :
+                    sub.status === "approved" ? { color: "#10b981", label: "Accepted", bg: "rgba(16,185,129,0.12)" } :
+                    sub.status === "rejected" ? { color: "#e05070", label: "Rejected", bg: "rgba(193,2,48,0.12)" } :
+                                                { color: "rgba(255,255,255,0.3)", label: sub.status, bg: "rgba(255,255,255,0.05)" }
+
+                  // Parse submitter_note for display
+                  const noteParts: Record<string, string> = {}
+                  if (sub.submitter_note) {
+                    for (const part of sub.submitter_note.split(" | ")) {
+                      const idx = part.indexOf(": ")
+                      if (idx > 0) noteParts[part.slice(0, idx)] = part.slice(idx + 2)
+                    }
+                  }
+
+                  return (
+                    <div key={sub.id} className="px-5 py-3 flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-white/80 truncate">{noteParts["Name"] || sub.file_name || "Historical Record"}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {noteParts["Category"] && (
+                            <span className="text-[10px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
+                              {noteParts["Category"]}
+                            </span>
+                          )}
+                          {noteParts["Completed"] && (
+                            <span className="text-[10px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
+                              {noteParts["Category"] ? "·" : ""} Completed {noteParts["Completed"]}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+                            · Submitted {new Date(sub.detected_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          </span>
+                        </div>
+                        {sub.status === "rejected" && sub.review_notes && (
+                          <p className="text-[11px] mt-1" style={{ color: "#e05070" }}>Note: {sub.review_notes}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                          style={{ background: statusStyle.bg, color: statusStyle.color, fontFamily: "var(--font-heading)", border: `1px solid ${statusStyle.color}40` }}>
+                          {statusStyle.label}
+                        </span>
+                        {sub.status === "rejected" && (
+                          <button
+                            onClick={() => setEditingRecord(sub)}
+                            className="text-[10px] uppercase tracking-wider transition-colors px-2 py-0.5 rounded"
+                            style={{ color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.3)", fontFamily: "var(--font-heading)" }}
+                          >
+                            Edit & Resubmit
+                          </button>
+                        )}
+                        {sub.status === "approved" && (
+                          <button
+                            onClick={() => handleDismissHistorical(sub.id)}
+                            className="text-[10px] uppercase tracking-wider text-white/25 hover:text-white/50 transition-colors"
+                            style={{ fontFamily: "var(--font-heading)" }}
+                          >
+                            Clear
+                          </button>
+                        )}
+                        {sub.status === "pending" && (
+                          <button
+                            onClick={() => handleCancelSubmission(sub.id)}
+                            className="text-[10px] uppercase tracking-wider text-white/25 hover:text-white/50 transition-colors"
+                            style={{ fontFamily: "var(--font-heading)" }}
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
 
           {/* Submitted Training Proposals — Admin / Manager only */}
           {(profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager") && profile?.id && (

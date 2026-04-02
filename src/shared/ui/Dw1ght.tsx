@@ -27,11 +27,12 @@ export function Dw1ght() {
     setLoading(true);
 
     try {
-      const res = await fetch("/.netlify/functions/dw1ght-chat", {
+      const res = await fetch("/.netlify/functions/dw1ght-intel-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
+          mode: "schrute",
           history: newMessages.slice(0, -1).map((m) => ({
             role: m.role,
             content: m.content,

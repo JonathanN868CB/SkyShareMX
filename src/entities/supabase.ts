@@ -17,6 +17,10 @@ export type Database = {
           first_name: string | null
           last_name: string | null
           full_name: string | null
+          display_name: string | null
+          avatar_color: string | null
+          avatar_url: string | null
+          avatar_initials: string | null
           role: Database["public"]["Enums"]["app_role"]
           status: Database["public"]["Enums"]["user_status"]
           is_readonly: boolean
@@ -33,6 +37,10 @@ export type Database = {
           first_name?: string | null
           last_name?: string | null
           full_name?: string | null
+          display_name?: string | null
+          avatar_color?: string | null
+          avatar_url?: string | null
+          avatar_initials?: string | null
           role?: Database["public"]["Enums"]["app_role"]
           status?: Database["public"]["Enums"]["user_status"]
           is_readonly?: boolean
@@ -49,6 +57,10 @@ export type Database = {
           first_name?: string | null
           last_name?: string | null
           full_name?: string | null
+          display_name?: string | null
+          avatar_color?: string | null
+          avatar_url?: string | null
+          avatar_initials?: string | null
           role?: Database["public"]["Enums"]["app_role"]
           status?: Database["public"]["Enums"]["user_status"]
           is_readonly?: boolean
