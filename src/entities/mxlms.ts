@@ -155,6 +155,7 @@ export interface MxlmsPendingCompletion {
   quality_rating: number | null
   review_notes: string | null
   reviewed_at: string | null
+  submitter_note: string | null
 }
 
 export interface MxlmsSession {
@@ -316,4 +317,5 @@ export interface MxlmsPendingInsert {
   file_name: string
   status?: string
   matched_training_item_id?: number | null
+  submitter_note?: string | null
 }
