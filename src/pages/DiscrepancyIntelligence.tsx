@@ -1,9 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
-import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X } from "lucide-react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2 } from "lucide-react"
 import { useFleet } from "./aircraft/useFleet"
 import { useDiscrepancyCounts } from "./aircraft/useDiscrepancyCounts"
+import { useFleetStats } from "./aircraft/useFleetStats"
+import FleetStatsPanel from "./aircraft/FleetStatsPanel"
 import { useAircraftDiscrepancies, type DiscrepancyRow } from "./aircraft/useAircraftDiscrepancies"
 import type { AircraftBase, ManufacturerGroup } from "./aircraft/fleetData"
+import { useAuth } from "@/features/auth"
+import { supabase } from "@/lib/supabase"
 
 // ─── Highlight Helper ─────────────────────────────────────────────────────────
 function Hl({ text, q }: { text: string; q: string }) {
@@ -22,7 +26,33 @@ function Hl({ text, q }: { text: string; q: string }) {
 }
 
 // ─── Discrepancy Card ─────────────────────────────────────────────────────────
-function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d: DiscrepancyRow; hoursSinceLast: number | null; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string }) {
+type InterviewStatus = "none" | "assigned" | "in_progress" | "completed" | "reviewed" | "approved" | "rejected"
+
+function InterviewBadge({ status }: { status: InterviewStatus }) {
+  const colors: Record<string, { bg: string; fg: string; label: string }> = {
+    none:        { bg: "rgba(255,255,255,0.04)", fg: "rgba(255,255,255,0.2)",  label: "no interview" },
+    assigned:    { bg: "rgba(212,160,23,0.1)",   fg: "rgba(212,160,23,0.7)",   label: "assigned" },
+    in_progress: { bg: "rgba(100,180,255,0.1)",  fg: "rgba(100,180,255,0.8)",  label: "interviewing" },
+    completed:   { bg: "rgba(255,165,0,0.1)",    fg: "rgba(255,165,0,0.8)",    label: "needs review" },
+    reviewed:    { bg: "rgba(138,43,226,0.1)",   fg: "rgba(178,130,255,0.85)", label: "reviewed" },
+    approved:    { bg: "rgba(100,220,100,0.1)",  fg: "rgba(100,220,100,0.8)",  label: "archived" },
+    rejected:    { bg: "rgba(255,100,100,0.08)", fg: "rgba(255,100,100,0.7)",  label: "rejected" },
+  }
+  const c = colors[status] || colors.none
+
+  return (
+    <span
+      className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded flex items-center gap-1 font-semibold"
+      style={{ background: c.bg, color: c.fg }}
+      title={`Interview: ${c.label}`}
+    >
+      <MessageSquare className="w-2.5 h-2.5" />
+      {c.label}
+    </span>
+  )
+}
+
+function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "", interviewStatus = "none" }: { d: DiscrepancyRow; hoursSinceLast: number | null; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatus?: InterviewStatus }) {
   const date = d.found_at ? new Date(d.found_at) : null
   const signoff = d.signoff_date ? new Date(d.signoff_date) : null
   const daysOpen = date && signoff ? Math.round((signoff.getTime() - date.getTime()) / 86_400_000) : null
@@ -41,7 +71,7 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d:
           {/* ID + Title */}
           <div className="flex items-center gap-2 mb-1">
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+              className="text-[11px] px-1.5 py-0.5 rounded font-medium"
               style={{
                 background: "rgba(212,160,23,0.1)",
                 color: "var(--skyshare-gold)",
@@ -51,19 +81,20 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d:
               <Hl text={d.jetinsight_discrepancy_id} q={searchQuery} />
             </span>
             {d.import_confidence === "medium" && (
-              <span className="text-[9px] px-1 py-0.5 rounded" style={{ background: "rgba(255,165,0,0.15)", color: "rgba(255,165,0,0.8)" }}>
+              <span className="text-[10px] px-1 py-0.5 rounded" style={{ background: "rgba(255,165,0,0.15)", color: "rgba(255,165,0,0.8)" }}>
                 review
               </span>
             )}
+            <InterviewBadge status={interviewStatus} />
           </div>
           <p
-            className="text-sm font-medium truncate"
+            className="text-base font-medium truncate"
             style={{ color: "hsl(var(--foreground))", fontFamily: "var(--font-heading)", letterSpacing: "0.02em" }}
           >
             <Hl text={d.title} q={searchQuery} />
           </p>
           {d.pilot_report && (
-            <p className="text-xs mt-1 line-clamp-2" style={{ color: "hsl(var(--muted-foreground))", lineHeight: 1.5 }}>
+            <p className="text-sm mt-1 line-clamp-2" style={{ color: "hsl(var(--muted-foreground))", lineHeight: 1.5 }}>
               <Hl text={d.pilot_report} q={searchQuery} />
             </p>
           )}
@@ -71,25 +102,25 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d:
           {/* Meta row */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
             {date && (
-              <span className="flex items-center gap-1 text-[11px]" style={{ color: "hsl(var(--muted-foreground))" }}>
+              <span className="flex items-center gap-1 text-[12px]" style={{ color: "hsl(var(--muted-foreground))" }}>
                 <Clock className="w-3 h-3" />
                 {date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
               </span>
             )}
             {(d.location_icao || d.location_raw) && (
-              <span className="flex items-center gap-1 text-[11px]" style={{ color: "hsl(var(--muted-foreground))" }}>
+              <span className="flex items-center gap-1 text-[12px]" style={{ color: "hsl(var(--muted-foreground))" }}>
                 <MapPin className="w-3 h-3" />
                 <Hl text={d.location_icao || d.location_raw || ""} q={searchQuery} />
               </span>
             )}
             {d.technician_name && (
-              <span className="flex items-center gap-1 text-[11px]" style={{ color: "hsl(var(--muted-foreground))" }}>
+              <span className="flex items-center gap-1 text-[12px]" style={{ color: "hsl(var(--muted-foreground))" }}>
                 <Wrench className="w-3 h-3" />
                 <Hl text={d.technician_name + (d.company ? ` · ${d.company}` : "")} q={searchQuery} />
               </span>
             )}
             {d.airframe_hours != null && (
-              <span className="text-[11px]" style={{ color: "hsl(var(--muted-foreground))" }}>
+              <span className="text-[12px]" style={{ color: "hsl(var(--muted-foreground))" }}>
                 {Number(d.airframe_hours).toLocaleString()} hrs{d.airframe_cycles != null ? ` / ${d.airframe_cycles.toLocaleString()} cyc` : ""}
               </span>
             )}
@@ -101,12 +132,12 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d:
           {daysOpen !== null && (
             <div>
               <div
-                className="text-sm font-semibold"
+                className="text-base font-semibold"
                 style={{ color: daysOpen <= 1 ? "rgba(100,220,100,0.8)" : daysOpen <= 7 ? "var(--skyshare-gold)" : "rgba(255,165,0,0.8)" }}
               >
                 {daysOpen}d
               </div>
-              <div className="text-[9px] uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
+              <div className="text-[10px] uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
                 turnaround
               </div>
             </div>
@@ -114,12 +145,12 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d:
           {hoursSinceLast !== null && (
             <div>
               <div
-                className="text-sm font-semibold"
+                className="text-base font-semibold"
                 style={{ color: hoursSinceLast >= 100 ? "rgba(100,220,100,0.8)" : hoursSinceLast >= 20 ? "var(--skyshare-gold)" : "rgba(255,165,0,0.8)" }}
               >
                 {hoursSinceLast.toFixed(1)}h
               </div>
-              <div className="text-[9px] uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
+              <div className="text-[10px] uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
                 since last
               </div>
             </div>
@@ -131,7 +162,7 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "" }: { d:
 }
 
 // ─── Compact Row ─────────────────────────────────────────────────────────────
-function CompactRow({ d, onSelect, searchQuery = "" }: { d: DiscrepancyRow; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string }) {
+function CompactRow({ d, onSelect, searchQuery = "", interviewStatus = "none" }: { d: DiscrepancyRow; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatus?: InterviewStatus }) {
   const date = d.found_at ? new Date(d.found_at) : null
   return (
     <button
@@ -143,7 +174,7 @@ function CompactRow({ d, onSelect, searchQuery = "" }: { d: DiscrepancyRow; onSe
       }}
     >
       <span
-        className="text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+        className="text-[11px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
         style={{
           background: "rgba(212,160,23,0.1)",
           color: "var(--skyshare-gold)",
@@ -155,18 +186,19 @@ function CompactRow({ d, onSelect, searchQuery = "" }: { d: DiscrepancyRow; onSe
         <Hl text={d.jetinsight_discrepancy_id} q={searchQuery} />
       </span>
       {date && (
-        <span className="text-[11px] flex-shrink-0" style={{ color: "hsl(var(--muted-foreground))", minWidth: "5.5rem" }}>
+        <span className="text-[12px] flex-shrink-0" style={{ color: "hsl(var(--muted-foreground))", minWidth: "5.5rem" }}>
           {date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
         </span>
       )}
       <span
-        className="text-xs truncate flex-1"
+        className="text-sm truncate flex-1"
         style={{ color: "hsl(var(--foreground))", fontFamily: "var(--font-heading)", letterSpacing: "0.02em" }}
       >
         <Hl text={d.title} q={searchQuery} />
       </span>
+      <InterviewBadge status={interviewStatus} />
       <span
-        className="text-[9px] uppercase tracking-widest flex-shrink-0 px-1.5 py-0.5 rounded"
+        className="text-[10px] uppercase tracking-widest flex-shrink-0 px-1.5 py-0.5 rounded"
         style={{
           color: d.status === "open" ? "rgba(255,165,0,0.8)" : "rgba(100,220,100,0.7)",
           background: d.status === "open" ? "rgba(255,165,0,0.08)" : "rgba(100,220,100,0.06)",
@@ -179,67 +211,286 @@ function CompactRow({ d, onSelect, searchQuery = "" }: { d: DiscrepancyRow; onSe
   )
 }
 
+
+
+// ─── Interview This Event Button (dropdown) ─────────────────────────────────
+function InterviewThisEventButton({
+  discrepancyId,
+  discrepancyTitle,
+  tailNumber,
+  profileId,
+  assignerName,
+  assignments,
+  onAssigned,
+  onStartInterview,
+}: {
+  discrepancyId: string
+  discrepancyTitle: string
+  tailNumber: string
+  profileId?: string
+  assignerName: string
+  assignments: Array<{ id: string; status: string; assigned_to: string }>
+  onAssigned: () => void
+  onStartInterview: (assignmentId: string, discrepancyId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [technicians, setTechnicians] = useState<Array<{ id: string; full_name: string; email: string }>>([])
+  const [domNote, setDomNote] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [open])
+
+  // Fetch technicians when opened
+  useEffect(() => {
+    if (!open || technicians.length > 0) return
+    supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .eq("status", "Active")
+      .in("role", ["Technician", "Manager", "Admin", "Super Admin"])
+      .order("full_name")
+      .then(({ data }) => {
+        if (data) setTechnicians(data.filter((t) => t.full_name) as Array<{ id: string; full_name: string; email: string }>)
+      })
+  }, [open])
+
+  async function handleSelect(techId: string) {
+    if (!profileId || submitting) return
+    setSubmitting(true)
+
+    // Check if there's already an active assignment for this person
+    const existing = assignments.find(
+      (a) => a.assigned_to === techId && (a.status === "assigned" || a.status === "in_progress"),
+    )
+
+    if (existing) {
+      // If it's me, jump straight into the interview
+      if (techId === profileId) {
+        onStartInterview(existing.id, discrepancyId)
+      }
+      setOpen(false)
+      setSubmitting(false)
+      return
+    }
+
+    // Create assignment
+    const { data: newAssignment, error } = await supabase
+      .from("interview_assignments")
+      .insert({
+        discrepancy_id: discrepancyId,
+        assigned_to: techId,
+        assigned_by: profileId,
+        dom_note: domNote.trim() || null,
+      })
+      .select("id")
+      .single()
+
+    if (!error && newAssignment) {
+      onAssigned()
+
+      // Send interview notification email
+      const tech = technicians.find((t) => t.id === techId)
+      if (tech?.email) {
+        fetch("/.netlify/functions/send-interview-invite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            technicianEmail: tech.email,
+            technicianName: tech.full_name,
+            assignerName,
+            discrepancyTitle,
+            tailNumber,
+            domNote: domNote.trim() || null,
+          }),
+        }).catch(() => {}) // fire-and-forget
+      }
+
+      // If I selected myself, start immediately
+      if (techId === profileId) {
+        onStartInterview(newAssignment.id, discrepancyId)
+      }
+    }
+
+    setOpen(false)
+    setDomNote("")
+    setSubmitting(false)
+  }
+
+  return (
+    <div className="relative flex-shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest px-3 py-2 rounded-md transition-all hover:brightness-125"
+        style={{
+          background: "rgba(212,160,23,0.12)",
+          color: "var(--skyshare-gold)",
+          border: "1px solid rgba(212,160,23,0.3)",
+        }}
+      >
+        <MessageSquare size={13} />
+        Interview This Event
+        <ChevronDown size={11} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 w-72 rounded-lg border shadow-2xl z-50 overflow-hidden"
+          style={{ background: "#161616", borderColor: "rgba(255,255,255,0.1)" }}
+        >
+          <div className="px-3 py-2 border-b" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+            <p className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--skyshare-gold)" }}>
+              Assign to
+            </p>
+          </div>
+
+          <div className="max-h-48 overflow-y-auto">
+            {technicians.length === 0 ? (
+              <p className="text-sm text-white/30 px-3 py-3">Loading...</p>
+            ) : (
+              technicians.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => handleSelect(t.id)}
+                  disabled={submitting}
+                  className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/5 transition-colors flex items-center justify-between disabled:opacity-40"
+                >
+                  <span>{t.full_name}</span>
+                  {t.id === profileId && (
+                    <span className="text-[9px] uppercase tracking-widest px-1 py-0.5 rounded" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.1)" }}>
+                      me
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="px-3 py-2 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+            <input
+              type="text"
+              value={domNote}
+              onChange={(e) => setDomNote(e.target.value)}
+              placeholder="Note for technician (optional)"
+              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-[12px] text-white placeholder-white/20 focus:outline-none focus:border-[#d4a017]/50"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Discrepancy Detail ───────────────────────────────────────────────────────
-function DiscrepancyDetail({ d, onBack }: { d: DiscrepancyRow; onBack: () => void }) {
+function DiscrepancyDetail({ d, tailNumber, onBack, onStartInterview, onReviewInterview }: { d: DiscrepancyRow; tailNumber: string; onBack: () => void; onStartInterview?: (assignmentId: string, discrepancyId: string) => void; onReviewInterview?: (assignmentId: string, discrepancyId: string) => void }) {
+  const { profile } = useAuth()
+  const isSuperAdmin = profile?.role === "Super Admin"
   const date = d.found_at ? new Date(d.found_at) : null
   const signoff = d.signoff_date ? new Date(d.signoff_date) : null
   const fmt = (dt: Date) => dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " " + dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })
 
+  const [assignments, setAssignments] = useState<Array<{ id: string; status: string; assigned_to: string; profiles: { full_name: string } | null }>>([])
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  // Load existing assignments for this discrepancy
+  useEffect(() => {
+    supabase
+      .from("interview_assignments")
+      .select("id, status, assigned_to, profiles:assigned_to(full_name)")
+      .eq("discrepancy_id", d.id)
+      .then(({ data }) => {
+        if (data) setAssignments(data as typeof assignments)
+      })
+  }, [d.id])
+
+  function refreshAssignments() {
+    supabase
+      .from("interview_assignments")
+      .select("id, status, assigned_to, profiles:assigned_to(full_name)")
+      .eq("discrepancy_id", d.id)
+      .then(({ data }) => {
+        if (data) setAssignments(data as typeof assignments)
+      })
+  }
+
   return (
     <div className="flex flex-col gap-5">
       {/* Back */}
-      <button onClick={onBack} className="flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity self-start" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
+      <button onClick={onBack} className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity self-start" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
         <ArrowLeft className="w-4 h-4" /> Back to list
-        <kbd className="text-[9px] px-1 py-0.5 rounded ml-1" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(212,160,23,0.5)", border: "1px solid rgba(255,255,255,0.08)", lineHeight: 1, fontFamily: "var(--font-heading)" }}>esc</kbd>
+        <kbd className="text-[10px] px-1 py-0.5 rounded ml-1" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(212,160,23,0.5)", border: "1px solid rgba(255,255,255,0.08)", lineHeight: 1, fontFamily: "var(--font-heading)" }}>esc</kbd>
       </button>
 
       {/* Header */}
-      <div>
-        <span
-          className="text-[11px] px-2 py-0.5 rounded font-medium"
-          style={{ background: "rgba(212,160,23,0.1)", color: "var(--skyshare-gold)", fontFamily: "'Courier Prime','Courier New',monospace" }}
-        >
-          {d.jetinsight_discrepancy_id}
-        </span>
-        <h2
-          className="mt-2"
-          style={{ fontFamily: "var(--font-display)", fontSize: "1.4rem", letterSpacing: "0.06em", color: "hsl(var(--foreground))", lineHeight: 1.2 }}
-        >
-          {d.title}
-        </h2>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <span
+            className="text-[12px] px-2 py-0.5 rounded font-medium"
+            style={{ background: "rgba(212,160,23,0.1)", color: "var(--skyshare-gold)", fontFamily: "'Courier Prime','Courier New',monospace" }}
+          >
+            {d.jetinsight_discrepancy_id}
+          </span>
+          <h2
+            className="mt-2"
+            style={{ fontFamily: "var(--font-display)", fontSize: "1.55rem", letterSpacing: "0.06em", color: "hsl(var(--foreground))", lineHeight: 1.2 }}
+          >
+            {d.title}
+          </h2>
+        </div>
+        {/* Interview This Event — dropdown to pick assignee (Super Admin only) */}
+        {isSuperAdmin && onStartInterview && (
+          <InterviewThisEventButton
+            discrepancyId={d.id}
+            discrepancyTitle={d.title}
+            tailNumber={tailNumber}
+            profileId={profile?.id}
+            assignerName={profile?.full_name || "SkyShare MX"}
+            assignments={assignments}
+            onAssigned={refreshAssignments}
+            onStartInterview={onStartInterview}
+          />
+        )}
       </div>
 
       {/* Pilot Report */}
       {d.pilot_report && (
         <div>
-          <h3 className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
             Pilot Report
           </h3>
-          <p className="text-sm" style={{ color: "hsl(var(--foreground))", lineHeight: 1.6 }}>{d.pilot_report}</p>
+          <p className="text-base" style={{ color: "hsl(var(--foreground))", lineHeight: 1.6 }}>{d.pilot_report}</p>
         </div>
       )}
 
       {/* Corrective Action */}
       {d.corrective_action && (
         <div>
-          <h3 className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
             Corrective Action
           </h3>
-          <p className="text-sm" style={{ color: "hsl(var(--foreground))", lineHeight: 1.6 }}>{d.corrective_action}</p>
+          <p className="text-base" style={{ color: "hsl(var(--foreground))", lineHeight: 1.6 }}>{d.corrective_action}</p>
         </div>
       )}
 
       {/* AMM References */}
       {d.amm_references && d.amm_references.length > 0 && (
         <div>
-          <h3 className="text-[10px] font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-1" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
             References
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {d.amm_references.map((ref, i) => (
               <span
                 key={i}
-                className="text-[10px] px-2 py-0.5 rounded"
+                className="text-[11px] px-2 py-0.5 rounded"
                 style={{ background: "rgba(255,255,255,0.05)", color: "hsl(var(--muted-foreground))", fontFamily: "'Courier Prime','Courier New',monospace" }}
               >
                 {ref}
@@ -266,10 +517,133 @@ function DiscrepancyDetail({ d, onBack }: { d: DiscrepancyRow; onBack: () => voi
 
       {/* Import notes */}
       {d.import_notes && (
-        <p className="text-[11px] italic" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>
+        <p className="text-[12px] italic" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>
           Import note: {d.import_notes}
         </p>
       )}
+
+      {/* Interview section */}
+      <div
+        className="rounded-lg px-4 py-3"
+        style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <div className="mb-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+            Mechanic Interviews
+          </h3>
+        </div>
+
+        {assignments.length === 0 ? (
+          <p className="text-sm text-white/30">No interviews assigned yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {assignments.map((a) => {
+              const isMyAssignment = profile && a.assigned_to === profile.id
+              const canStart = (isMyAssignment || isSuperAdmin) && (a.status === "assigned" || a.status === "in_progress")
+              return (
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between px-3 py-2 rounded"
+                  style={{ background: "rgba(255,255,255,0.03)" }}
+                >
+                  <span className="text-sm text-white/70">
+                    {a.profiles?.full_name || "Unknown"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded font-semibold"
+                      style={{
+                        color:
+                          a.status === "completed" || a.status === "reviewed"
+                            ? "rgba(100,220,100,0.8)"
+                            : a.status === "in_progress"
+                              ? "rgba(100,180,255,0.8)"
+                              : "var(--skyshare-gold)",
+                        background:
+                          a.status === "completed" || a.status === "reviewed"
+                            ? "rgba(100,220,100,0.08)"
+                            : a.status === "in_progress"
+                              ? "rgba(100,180,255,0.08)"
+                              : "rgba(212,160,23,0.08)",
+                      }}
+                    >
+                      {a.status}
+                    </span>
+                    {canStart && onStartInterview && (
+                      <button
+                        onClick={() => onStartInterview(a.id, d.id)}
+                        className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold transition-all hover:brightness-125"
+                        style={{
+                          color: "var(--skyshare-gold)",
+                          background: "rgba(212,160,23,0.12)",
+                          border: "1px solid rgba(212,160,23,0.25)",
+                        }}
+                      >
+                        {a.status === "in_progress" ? "Resume" : "Start"}
+                      </button>
+                    )}
+                    {isSuperAdmin && a.status === "completed" && onReviewInterview && (
+                      <button
+                        onClick={() => onReviewInterview(a.id, d.id)}
+                        className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold transition-all hover:brightness-125"
+                        style={{
+                          color: "rgba(100,180,255,0.9)",
+                          background: "rgba(100,180,255,0.1)",
+                          border: "1px solid rgba(100,180,255,0.2)",
+                        }}
+                      >
+                        Review
+                      </button>
+                    )}
+                    {isSuperAdmin && (a.status === "assigned" || a.status === "in_progress") && (
+                      confirmDeleteId === a.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={async () => {
+                              const { error } = await supabase.from("interview_assignments").delete().eq("id", a.id)
+                              if (!error) refreshAssignments()
+                              setConfirmDeleteId(null)
+                            }}
+                            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold transition-all hover:brightness-125"
+                            style={{
+                              color: "rgba(255,100,100,0.9)",
+                              background: "rgba(255,100,100,0.12)",
+                              border: "1px solid rgba(255,100,100,0.3)",
+                            }}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold text-white/40 hover:text-white/70 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDeleteId(a.id)}
+                          className="flex items-center gap-1 text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold transition-all hover:brightness-125"
+                          style={{
+                            color: "rgba(255,100,100,0.7)",
+                            background: "rgba(255,100,100,0.08)",
+                            border: "1px solid rgba(255,100,100,0.15)",
+                          }}
+                          title="Remove assignment"
+                        >
+                          <Trash2 size={11} />
+                          Delete
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
@@ -277,10 +651,10 @@ function DiscrepancyDetail({ d, onBack }: { d: DiscrepancyRow; onBack: () => voi
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>
-      <div className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5, fontFamily: "var(--font-heading)" }}>
+      <div className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5, fontFamily: "var(--font-heading)" }}>
         {label}
       </div>
-      <div className="text-xs mt-0.5" style={{ color: value ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>
+      <div className="text-sm mt-0.5" style={{ color: value ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>
         {value || "—"}
       </div>
     </div>
@@ -289,10 +663,10 @@ function DetailField({ label, value }: { label: string; value: string | null | u
 
 // ─── Year Section ─────────────────────────────────────────────────────────────
 function YearSection({
-  year, records, expanded, onToggle, compact, hoursSinceLastMap, onSelect, searchQuery = "",
+  year, records, expanded, onToggle, compact, hoursSinceLastMap, onSelect, searchQuery = "", interviewStatusMap,
 }: {
   year: string; records: DiscrepancyRow[]; expanded: boolean; onToggle: () => void
-  compact: boolean; hoursSinceLastMap: Map<string, number | null>; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string
+  compact: boolean; hoursSinceLastMap: Map<string, number | null>; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatusMap: Map<string, InterviewStatus>
 }) {
   return (
     <div className="flex flex-col">
@@ -312,7 +686,7 @@ function YearSection({
         <span
           style={{
             fontFamily: "var(--font-display)",
-            fontSize: "1.2rem",
+            fontSize: "1.35rem",
             letterSpacing: "0.07em",
             color: "hsl(var(--foreground))",
             lineHeight: 1,
@@ -321,7 +695,7 @@ function YearSection({
           {year}
         </span>
         <span
-          className="text-[10px] font-medium px-2.5 py-1 rounded"
+          className="text-[11px] font-medium px-2.5 py-1 rounded"
           style={{
             background: "rgba(212,160,23,0.12)",
             color: "var(--skyshare-gold)",
@@ -346,8 +720,8 @@ function YearSection({
         >
           {records.map(d =>
             compact
-              ? <CompactRow key={d.id} d={d} onSelect={onSelect} searchQuery={searchQuery} />
-              : <DiscrepancyCard key={d.id} d={d} hoursSinceLast={hoursSinceLastMap.get(d.id) ?? null} onSelect={onSelect} searchQuery={searchQuery} />
+              ? <CompactRow key={d.id} d={d} onSelect={onSelect} searchQuery={searchQuery} interviewStatus={interviewStatusMap.get(d.id) || "none"} />
+              : <DiscrepancyCard key={d.id} d={d} hoursSinceLast={hoursSinceLastMap.get(d.id) ?? null} onSelect={onSelect} searchQuery={searchQuery} interviewStatus={interviewStatusMap.get(d.id) || "none"} />
           )}
         </div>
       )}
@@ -356,7 +730,7 @@ function YearSection({
 }
 
 // ─── Discrepancy List View ────────────────────────────────────────────────────
-function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onBack: () => void }) {
+function DiscrepancyListView({ aircraft, onBack, onStartInterview, onReviewInterview }: { aircraft: AircraftBase; onBack: () => void; onStartInterview?: (assignmentId: string, discrepancyId: string) => void; onReviewInterview?: (assignmentId: string, discrepancyId: string) => void }) {
   const { data: discrepancies, isLoading } = useAircraftDiscrepancies(aircraft.tailNumber)
   const [selectedRecord, setSelectedRecord] = useState<DiscrepancyRow | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -364,6 +738,39 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
   const [compact, setCompact] = useState(false)
   const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
   const [initialized, setInitialized] = useState(false)
+  const [interviewStatusMap, setInterviewStatusMap] = useState<Map<string, InterviewStatus>>(new Map())
+
+  // ── Fetch interview statuses for all discrepancies ──
+  useEffect(() => {
+    if (!discrepancies || discrepancies.length === 0) return
+    const ids = discrepancies.map(d => d.id)
+
+    // Fetch both assignment statuses and enrichment statuses
+    Promise.all([
+      supabase.from("interview_assignments").select("discrepancy_id, status").in("discrepancy_id", ids),
+      supabase.from("discrepancy_enrichments").select("discrepancy_id, status").in("discrepancy_id", ids),
+    ]).then(([assignRes, enrichRes]) => {
+      const priority: Record<string, number> = { assigned: 1, in_progress: 2, completed: 3, reviewed: 4, approved: 5, rejected: 5 }
+      const map = new Map<string, InterviewStatus>()
+
+      // Process assignment statuses
+      for (const row of (assignRes.data || [])) {
+        const current = map.get(row.discrepancy_id)
+        const currentPri = current ? (priority[current] || 0) : 0
+        const newPri = priority[row.status] || 0
+        if (newPri > currentPri) map.set(row.discrepancy_id, row.status as InterviewStatus)
+      }
+
+      // Enrichment statuses can override (approved/rejected are final states)
+      for (const row of (enrichRes.data || [])) {
+        if (row.status === "approved" || row.status === "rejected") {
+          map.set(row.discrepancy_id, row.status as InterviewStatus)
+        }
+      }
+
+      setInterviewStatusMap(map)
+    })
+  }, [discrepancies])
 
   // ── Compute stats from full dataset ──
   const stats = useMemo(() => {
@@ -534,24 +941,24 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
   }, [handleEsc])
 
   if (selectedRecord) {
-    return <DiscrepancyDetail d={selectedRecord} onBack={() => setSelectedRecord(null)} />
+    return <DiscrepancyDetail d={selectedRecord} tailNumber={aircraft.tailNumber} onBack={() => setSelectedRecord(null)} onStartInterview={onStartInterview} onReviewInterview={onReviewInterview} />
   }
 
   return (
     <div className="flex flex-col gap-5">
       {/* Back + header */}
-      <button onClick={onBack} className="flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity self-start" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
+      <button onClick={onBack} className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity self-start" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
         <ArrowLeft className="w-4 h-4" /> Back to fleet
-        <kbd className="text-[9px] px-1 py-0.5 rounded ml-1" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(212,160,23,0.5)", border: "1px solid rgba(255,255,255,0.08)", lineHeight: 1, fontFamily: "var(--font-heading)" }}>esc</kbd>
+        <kbd className="text-[10px] px-1 py-0.5 rounded ml-1" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(212,160,23,0.5)", border: "1px solid rgba(255,255,255,0.08)", lineHeight: 1, fontFamily: "var(--font-heading)" }}>esc</kbd>
       </button>
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div className="flex items-baseline gap-3">
           <h2
-            style={{ fontFamily: "var(--font-display)", fontSize: "1.5rem", letterSpacing: "0.08em", color: "var(--skyshare-gold)", lineHeight: 1 }}
+            style={{ fontFamily: "var(--font-display)", fontSize: "1.65rem", letterSpacing: "0.08em", color: "var(--skyshare-gold)", lineHeight: 1 }}
           >
             {aircraft.tailNumber}
           </h2>
-          <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+          <span className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>
             {aircraft.model} · S/N {aircraft.serialNumber}
           </span>
         </div>
@@ -564,7 +971,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
                 <div
                   style={{
                     fontFamily: "var(--font-display)",
-                    fontSize: "1.4rem",
+                    fontSize: "1.55rem",
                     letterSpacing: "0.04em",
                     color: stats.suspectedRepeatPct > 20 ? "rgba(255,165,0,0.85)" : stats.suspectedRepeatPct > 10 ? "var(--skyshare-gold)" : "rgba(100,220,100,0.8)",
                     lineHeight: 1,
@@ -573,11 +980,11 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
                   {stats.suspectedRepeatPct.toFixed(0)}%
                 </div>
                 <div className="flex items-center justify-end gap-1.5 mt-1">
-                  <span className="text-[9px] uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
+                  <span className="text-[10px] uppercase tracking-widest" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
                     Suspected Repeats
                   </span>
                   <span
-                    className="text-[8px] font-semibold uppercase px-1 py-0.5 rounded"
+                    className="text-[9px] font-semibold uppercase px-1 py-0.5 rounded"
                     style={{
                       background: "rgba(138,43,226,0.15)",
                       color: "rgba(178,102,255,0.9)",
@@ -595,7 +1002,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
                 <div
                   style={{
                     fontFamily: "var(--font-display)",
-                    fontSize: "1.4rem",
+                    fontSize: "1.55rem",
                     letterSpacing: "0.04em",
                     color: stats.avgTurnaroundDays <= 2 ? "rgba(100,220,100,0.8)" : stats.avgTurnaroundDays <= 7 ? "var(--skyshare-gold)" : "rgba(255,165,0,0.85)",
                     lineHeight: 1,
@@ -603,7 +1010,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
                 >
                   {stats.avgTurnaroundDays.toFixed(1)}d
                 </div>
-                <div className="text-[9px] uppercase tracking-widest mt-1" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
+                <div className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
                   Avg Turnaround
                 </div>
               </div>
@@ -612,7 +1019,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
               <div
                 style={{
                   fontFamily: "var(--font-display)",
-                  fontSize: "1.4rem",
+                  fontSize: "1.55rem",
                   letterSpacing: "0.04em",
                   color: stats.hoursPerDiscrep >= 100 ? "rgba(100,220,100,0.8)" : stats.hoursPerDiscrep >= 30 ? "var(--skyshare-gold)" : "rgba(255,165,0,0.85)",
                   lineHeight: 1,
@@ -620,7 +1027,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
               >
                 {stats.hoursPerDiscrep.toFixed(1)}h
               </div>
-              <div className="text-[9px] uppercase tracking-widest mt-1" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
+              <div className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
                 Hrs / Discrep
               </div>
             </div>
@@ -628,7 +1035,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
               <div
                 style={{
                   fontFamily: "var(--font-display)",
-                  fontSize: "1.4rem",
+                  fontSize: "1.55rem",
                   letterSpacing: "0.04em",
                   color: "hsl(var(--foreground))",
                   lineHeight: 1,
@@ -637,7 +1044,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
               >
                 {stats.totalHours.toLocaleString()}
               </div>
-              <div className="text-[9px] uppercase tracking-widest mt-1" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
+              <div className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
                 Operated Hours
               </div>
             </div>
@@ -665,7 +1072,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
                   }
                 }}
                 placeholder="Search discrepancies..."
-                className="bg-transparent border-none outline-none text-sm flex-1"
+                className="bg-transparent border-none outline-none text-base flex-1"
                 style={{ color: "hsl(var(--foreground))", fontFamily: "var(--font-heading)", letterSpacing: "0.02em" }}
               />
               {searchQuery && (
@@ -716,7 +1123,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
                 <button
                   key={s}
                   onClick={() => setStatusFilter(s)}
-                  className="text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors"
+                  className="text-[12px] px-2.5 py-1 rounded-full font-medium transition-colors"
                   style={{
                     background: active ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.03)",
                     color: active ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
@@ -745,7 +1152,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
       {/* Year-grouped list */}
       {yearGroups.length > 0 && (
         <div className="flex flex-col gap-1">
-          <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+          <p className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>
             {filtered.length === discrepancies!.length
               ? `${filtered.length} discrepancies · newest first`
               : `${filtered.length} of ${discrepancies!.length} discrepancies`}
@@ -761,6 +1168,7 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
               hoursSinceLastMap={hoursSinceLastMap}
               onSelect={setSelectedRecord}
               searchQuery={searchQuery}
+              interviewStatusMap={interviewStatusMap}
             />
           ))}
         </div>
@@ -768,14 +1176,14 @@ function DiscrepancyListView({ aircraft, onBack }: { aircraft: AircraftBase; onB
 
       {/* No results after filtering */}
       {discrepancies && discrepancies.length > 0 && filtered.length === 0 && (
-        <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+        <p className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>
           No discrepancies match your search.
         </p>
       )}
 
       {/* Empty — no data at all */}
       {discrepancies && discrepancies.length === 0 && (
-        <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+        <p className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>
           No discrepancy records imported for this aircraft yet.
         </p>
       )}
@@ -801,7 +1209,7 @@ function AircraftRow({ ac, count, onOpen }: { ac: AircraftBase; count: number; o
         <span
           style={{
             fontFamily: "var(--font-heading)",
-            fontSize: "0.9rem",
+            fontSize: "1rem",
             color: "var(--skyshare-gold)",
             letterSpacing: "0.1em",
             fontWeight: 600,
@@ -811,7 +1219,7 @@ function AircraftRow({ ac, count, onOpen }: { ac: AircraftBase; count: number; o
           {ac.tailNumber}
         </span>
         <span
-          className="text-xs truncate"
+          className="text-sm truncate"
           style={{ color: "hsl(var(--muted-foreground))", opacity: 0.7 }}
         >
           {ac.model}
@@ -820,13 +1228,13 @@ function AircraftRow({ ac, count, onOpen }: { ac: AircraftBase; count: number; o
 
       <div className="flex items-center gap-3 flex-shrink-0">
         <span
-          className="text-xs"
+          className="text-sm"
           style={{ color: "hsl(var(--muted-foreground))", opacity: 0.45 }}
         >
           {ac.year}
         </span>
         <span
-          className="text-[10px] px-2 py-0.5 rounded font-medium uppercase tracking-widest"
+          className="text-[11px] px-2 py-0.5 rounded font-medium uppercase tracking-widest"
           style={{
             background: count > 0 ? "rgba(212,160,23,0.12)" : "rgba(255,255,255,0.04)",
             color: count > 0 ? "var(--skyshare-gold)" : "rgba(255,255,255,0.2)",
@@ -856,13 +1264,13 @@ function FamilyBlock({ label, aircraft, counts, onOpen }: { label: string; aircr
           }}
         />
         <span
-          className="text-[11px] font-semibold uppercase tracking-widest"
+          className="text-[12px] font-semibold uppercase tracking-widest"
           style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.7 }}
         >
           {label}
         </span>
         <span
-          className="text-[10px]"
+          className="text-[11px]"
           style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}
         >
           · {aircraft.length}
@@ -898,7 +1306,7 @@ function ManufacturerSection({ group, counts, onOpen }: { group: ManufacturerGro
         <h2
           style={{
             fontFamily: "var(--font-display)",
-            fontSize: "1.25rem",
+            fontSize: "1.4rem",
             letterSpacing: "0.07em",
             color: "hsl(var(--foreground))",
             lineHeight: 1,
@@ -908,7 +1316,7 @@ function ManufacturerSection({ group, counts, onOpen }: { group: ManufacturerGro
           {group.manufacturer}
         </h2>
         <span
-          className="text-xs font-medium px-2 py-0.5 rounded"
+          className="text-sm font-medium px-2 py-0.5 rounded"
           style={{
             background: "rgba(212,160,23,0.1)",
             color: "var(--skyshare-gold)",
@@ -957,15 +1365,1568 @@ function LoadingSkeleton() {
   )
 }
 
+// ─── DW1GHT Intel Chat Panel ─────────────────────────────────────────────────
+type IntelMessage = { role: "user" | "assistant"; content: string; fromData?: boolean; resultCount?: number }
+
+function Dw1ghtIntelPanel({ open, onClose, mode, onModeChange }: { open: boolean; onClose: () => void; mode: "schrute" | "corporate" | "troubleshooting"; onModeChange: (m: "schrute" | "corporate" | "troubleshooting") => void }) {
+  const [input, setInput] = useState("")
+  const [messages, setMessages] = useState<IntelMessage[]>([])
+  const [loading, setLoading] = useState(false)
+  const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
+  const setMode = onModeChange
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const sessionCost = (sessionTokens.input * 0.0000008) + (sessionTokens.output * 0.000004)
+  const costDisplay = sessionCost < 0.0001 ? "<$0.0001" : `$${sessionCost.toFixed(4)}`
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, loading])
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
+
+  async function send() {
+    const text = input.trim()
+    if (!text || loading) return
+
+    const newMessages: IntelMessage[] = [...messages, { role: "user", content: text }]
+    setMessages(newMessages)
+    setInput("")
+    setLoading(true)
+
+    try {
+      const res = await fetch("/.netlify/functions/dw1ght-intel-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          mode,
+          history: newMessages.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
+        }),
+      })
+      const data = await res.json()
+      setMessages([...newMessages, {
+        role: "assistant",
+        content: data.reply ?? "...",
+        fromData: data.sqlGenerated === true,
+        resultCount: data.resultCount,
+      }])
+      if (data.usage) {
+        setSessionTokens(prev => ({
+          input: prev.input + (data.usage.input_tokens ?? 0),
+          output: prev.output + (data.usage.output_tokens ?? 0),
+        }))
+      }
+    } catch {
+      setMessages([
+        ...newMessages,
+        { role: "assistant", content: "Intelligence retrieval failed. I am filing an incident report with Jonathan. This is unacceptable." },
+      ])
+    } finally {
+      setLoading(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  if (!open) return null
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+    <div
+      className="flex flex-col shadow-2xl rounded-xl overflow-hidden"
+      style={{
+        width: "80%",
+        height: "70%",
+        minHeight: "60vh",
+        maxHeight: "85vh",
+        background: "hsl(var(--card))",
+        border: "1px solid rgba(212,160,23,0.2)",
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-5 py-3 flex-shrink-0"
+        style={{
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(0,0,0,0.2)",
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(212,160,23,0.12)", border: "1.5px solid rgba(212,160,23,0.3)" }}
+          >
+            <Award className="w-4 h-4" style={{ color: "var(--skyshare-gold)" }} />
+          </div>
+          <span
+            className="text-sm font-bold tracking-widest uppercase"
+            style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)" }}
+          >
+            DW1GHT Intelligence
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {sessionTokens.input + sessionTokens.output > 0 && (
+            <span
+              className="text-[11px] tabular-nums"
+              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", opacity: 0.6 }}
+            >
+              {costDisplay}
+            </span>
+          )}
+          {messages.length > 0 && (
+            <button
+              onClick={() => { setMessages([]); setSessionTokens({ input: 0, output: 0 }) }}
+              className="text-[10px] tracking-widest uppercase hover:opacity-80 transition-opacity"
+              style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="hover:opacity-70 transition-opacity"
+            style={{ color: "hsl(var(--muted-foreground))" }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+            <span className="text-2xl select-none">🌱</span>
+            <p
+              className="text-base leading-relaxed"
+              style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-display)", fontStyle: "italic", maxWidth: "420px" }}
+            >
+              "I have analyzed every discrepancy in this fleet. Personally. Ask me anything."
+            </p>
+            <p
+              className="text-[10px] tracking-widest uppercase"
+              style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.4 }}
+            >
+              — DW1GHT, Intelligence Division
+            </p>
+            <div className="flex flex-wrap gap-1.5 mt-3 justify-center">
+              {[
+                "How many discrepancies this year?",
+                "Top 3 repeat issues on N863CB",
+                "Which tech has the most signoffs?",
+              ].map(q => (
+                <button
+                  key={q}
+                  onClick={() => { setInput(q); inputRef.current?.focus() }}
+                  className="text-[11px] px-2 py-1 rounded-md transition-colors hover:brightness-125"
+                  style={{
+                    background: "rgba(212,160,23,0.08)",
+                    color: "var(--skyshare-gold)",
+                    border: "1px solid rgba(212,160,23,0.15)",
+                    fontFamily: "var(--font-heading)",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages.map((m, i) => (
+          <div key={i} className={`flex gap-2.5 ${m.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
+            <div className="flex-shrink-0 mt-1">
+              {m.role === "assistant" ? (
+                <div
+                  className="w-5 h-5 rounded-full flex items-center justify-center"
+                  style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}
+                >
+                  <Award className="w-2.5 h-2.5" style={{ color: "var(--skyshare-gold)" }} />
+                </div>
+              ) : (
+                <div className="w-5 h-5 rounded-full flex items-center justify-center bg-muted border border-border">
+                  <span className="text-[8px] text-muted-foreground font-medium">you</span>
+                </div>
+              )}
+            </div>
+            <div className={`max-w-[70%] flex flex-col gap-0.5 ${m.role === "user" ? "items-end" : "items-start"}`}>
+              {m.role === "assistant" && (
+                <div className="flex items-center gap-1.5 px-0.5">
+                  <span
+                    className="text-[9px] font-bold tracking-widest uppercase"
+                    style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+                  >
+                    DW1GHT
+                  </span>
+                  {m.fromData && (
+                    <span
+                      className="flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded-full"
+                      style={{
+                        background: "rgba(59,130,246,0.12)",
+                        color: "rgba(100,170,255,0.9)",
+                        fontFamily: "var(--font-heading)",
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      <Database className="w-2 h-2" />
+                      {m.resultCount != null ? `${m.resultCount} rec` : "queried"}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div
+                className="rounded-lg px-3 py-2 text-[14px] leading-relaxed"
+                style={{
+                  ...(m.role === "user"
+                    ? {
+                        background: "rgba(212,160,23,0.12)",
+                        border: "1px solid rgba(212,160,23,0.25)",
+                        borderBottomRightRadius: "4px",
+                        color: "hsl(var(--foreground))",
+                      }
+                    : {
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.06)",
+                        borderBottomLeftRadius: "4px",
+                        color: "hsl(var(--foreground))",
+                      }),
+                  fontFamily: "'DM Sans', system-ui, sans-serif",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {m.content}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {loading && (
+          <div className="flex gap-2.5">
+            <div
+              className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-1"
+              style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}
+            >
+              <Award className="w-2.5 h-2.5" style={{ color: "var(--skyshare-gold)" }} />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span
+                className="text-[9px] font-bold tracking-widest uppercase px-0.5"
+                style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+              >
+                DW1GHT
+              </span>
+              <div
+                className="rounded-lg px-3 py-2"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderBottomLeftRadius: "4px" }}
+              >
+                <div className="flex gap-1.5 items-center h-4">
+                  <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "rgba(212,160,23,0.4)", animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "rgba(212,160,23,0.4)", animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "rgba(212,160,23,0.4)", animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div className="px-4 py-3 flex gap-2 items-center flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.15)" }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }}
+          placeholder="Ask DW1GHT about your fleet data..."
+          className="flex-1 bg-transparent border rounded-lg px-3 py-2.5 text-base focus:outline-none transition-colors"
+          style={{
+            borderColor: "rgba(255,255,255,0.08)",
+            color: "hsl(var(--foreground))",
+            fontFamily: "'DM Sans', system-ui, sans-serif",
+          }}
+        />
+        <button
+          onClick={send}
+          disabled={!input.trim() || loading}
+          className="flex items-center justify-center w-9 h-9 rounded-lg transition-all disabled:opacity-25"
+          style={{
+            background: input.trim() && !loading ? "rgba(212,160,23,0.12)" : "transparent",
+            border: "1px solid rgba(255,255,255,0.08)",
+            color: "var(--skyshare-gold)",
+          }}
+        >
+          <Send size={14} />
+        </button>
+      </div>
+
+      {/* Mode indicator */}
+      <div
+        className="flex items-center justify-center px-4 py-1.5 flex-shrink-0"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.04)", background: "rgba(0,0,0,0.1)" }}
+      >
+        <span
+          className="text-[9px] font-bold tracking-[0.15em] uppercase"
+          style={{
+            fontFamily: "var(--font-heading)",
+            color: mode === "schrute" ? "var(--skyshare-gold)" : mode === "corporate" ? "rgba(100,170,255,0.7)" : "rgba(100,220,100,0.7)",
+            opacity: 0.6,
+          }}
+        >
+          {mode === "schrute" ? "Full Schrute Mode" : mode === "corporate" ? "Corporate Mode" : "Troubleshooting Mode"}
+        </span>
+      </div>
+    </div>
+    </div>
+  )
+}
+
+// ─── DOM Review View ─────────────────────────────────────────────────────────
+type SuggestedCorrection = {
+  field: string
+  original: string
+  suggested: string
+  reason: string
+}
+
+function DomReviewView({
+  assignmentId,
+  discrepancyId,
+  onBack,
+}: {
+  assignmentId: string
+  discrepancyId: string
+  onBack: () => void
+}) {
+  const { profile } = useAuth()
+  const [enrichment, setEnrichment] = useState<{
+    id: string
+    narrative_summary: string | null
+    golden_nuggets: string | null
+    suggested_corrections: SuggestedCorrection[]
+    raw_transcript: Array<{ role: string; content: string; timestamp?: string }>
+    structured_data: Record<string, unknown> | null
+    interviewee_name: string | null
+    session_started_at: string | null
+    session_completed_at: string | null
+    status: string
+  } | null>(null)
+  const [discrepancy, setDiscrepancy] = useState<{ title: string; registration_at_event: string | null; jetinsight_discrepancy_id: string | null } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [correctionStates, setCorrectionStates] = useState<Map<number, "pending" | "accepted" | "rejected" | "editing">>(new Map())
+  const [editValues, setEditValues] = useState<Map<number, string>>(new Map())
+  const [reviewNotes, setReviewNotes] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [showTranscript, setShowTranscript] = useState(false)
+  const [showLearnings, setShowLearnings] = useState(false)
+  const [learnings, setLearnings] = useState<Array<{ id: string; lesson: string; category: string; source_type: string; active: boolean; created_at: string }>>([])
+  const [learningsLoaded, setLearningsLoaded] = useState(false)
+
+  useEffect(() => {
+    async function load() {
+      // Get enrichment for this assignment's discrepancy
+      const { data: enrichments } = await supabase
+        .from("discrepancy_enrichments")
+        .select("id, narrative_summary, golden_nuggets, suggested_corrections, raw_transcript, structured_data, interviewee_name, session_started_at, session_completed_at, status")
+        .eq("discrepancy_id", discrepancyId)
+        .in("status", ["completed", "reviewed", "approved", "rejected"])
+        .order("session_completed_at", { ascending: false })
+        .limit(1)
+
+      if (enrichments && enrichments.length > 0) {
+        const e = enrichments[0]
+        setEnrichment({
+          ...e,
+          suggested_corrections: Array.isArray(e.suggested_corrections) ? e.suggested_corrections as SuggestedCorrection[] : [],
+          raw_transcript: Array.isArray(e.raw_transcript) ? e.raw_transcript as Array<{ role: string; content: string; timestamp?: string }> : [],
+          structured_data: e.structured_data as Record<string, unknown> | null,
+        })
+      }
+
+      const { data: disc } = await supabase
+        .from("discrepancies")
+        .select("title, registration_at_event, jetinsight_discrepancy_id")
+        .eq("id", discrepancyId)
+        .single()
+      if (disc) setDiscrepancy(disc)
+
+      setLoading(false)
+    }
+    load()
+  }, [discrepancyId])
+
+  function setCorrectionState(idx: number, state: "pending" | "accepted" | "rejected" | "editing") {
+    setCorrectionStates(prev => new Map(prev).set(idx, state))
+  }
+
+  async function saveReview(decision: "approved" | "rejected") {
+    if (!enrichment || !profile) return
+    setSaving(true)
+
+    // Apply accepted corrections to the discrepancy
+    const updates: Record<string, unknown> = {}
+    enrichment.suggested_corrections.forEach((c, i) => {
+      const state = correctionStates.get(i)
+      if (state === "accepted") {
+        const editedValue = editValues.get(i)
+        updates[c.field] = editedValue !== undefined ? editedValue : c.suggested
+      }
+    })
+
+    // Update discrepancy with accepted corrections
+    if (Object.keys(updates).length > 0) {
+      await supabase
+        .from("discrepancies")
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq("id", discrepancyId)
+    }
+
+    // Update enrichment with review info
+    await supabase
+      .from("discrepancy_enrichments")
+      .update({
+        status: decision,
+        dom_review_notes: reviewNotes.trim() || null,
+        reviewed_by: profile.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", enrichment.id)
+
+    // Update assignment status
+    await supabase
+      .from("interview_assignments")
+      .update({ status: decision, updated_at: new Date().toISOString() })
+      .eq("id", assignmentId)
+
+    // Generate learnings from DOM review (fire-and-forget)
+    const rejectedCorrections = enrichment.suggested_corrections.filter((_, i) => correctionStates.get(i) === "rejected")
+    const acceptedCorrections = enrichment.suggested_corrections.filter((_, i) => correctionStates.get(i) === "accepted")
+    fetch("/.netlify/functions/dw1ght-generate-learnings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enrichment_id: enrichment.id,
+        decision,
+        review_notes: reviewNotes.trim() || null,
+        rejected_corrections: rejectedCorrections,
+        accepted_corrections: acceptedCorrections,
+      }),
+    }).catch(() => {})
+
+    setSaving(false)
+    setSaved(true)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-5">
+        <button onClick={onBack} className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity self-start" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <div className="h-40 rounded-lg animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }} />
+      </div>
+    )
+  }
+
+  if (!enrichment) {
+    return (
+      <div className="flex flex-col gap-5">
+        <button onClick={onBack} className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity self-start" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <p className="text-sm text-white/40">No completed interview found for this assignment.</p>
+      </div>
+    )
+  }
+
+  const structuredData = enrichment.structured_data as Record<string, unknown> | null
+
+  return (
+    <div className="flex flex-col gap-5 max-w-4xl">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity" style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}>
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+          <div>
+            <span className="text-sm font-bold tracking-widest text-[#d4a017] uppercase" style={{ fontFamily: "var(--font-heading)" }}>
+              DOM Review
+            </span>
+            {discrepancy && (
+              <p className="text-[12px] text-white/40 mt-0.5">
+                {discrepancy.registration_at_event && <span className="text-white/50">{discrepancy.registration_at_event} — </span>}
+                {discrepancy.title}
+              </p>
+            )}
+          </div>
+        </div>
+        {enrichment.status !== "approved" && enrichment.status !== "rejected" && (
+          <span
+            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold"
+            style={{ color: "rgba(255,165,0,0.8)", background: "rgba(255,165,0,0.08)" }}
+          >
+            Pending Review
+          </span>
+        )}
+        {(enrichment.status === "approved" || enrichment.status === "rejected") && (
+          <span
+            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold"
+            style={{
+              color: enrichment.status === "approved" ? "rgba(100,220,100,0.8)" : "rgba(255,100,100,0.8)",
+              background: enrichment.status === "approved" ? "rgba(100,220,100,0.08)" : "rgba(255,100,100,0.08)",
+            }}
+          >
+            {enrichment.status}
+          </span>
+        )}
+      </div>
+
+      {/* Interview metadata */}
+      <div
+        className="rounded-lg px-4 py-3 flex items-center gap-6 flex-wrap"
+        style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold" style={{ fontFamily: "var(--font-heading)" }}>Interviewee</div>
+          <div className="text-sm text-white/70 mt-0.5">{enrichment.interviewee_name || "Unknown"}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold" style={{ fontFamily: "var(--font-heading)" }}>Exchanges</div>
+          <div className="text-sm text-white/70 mt-0.5">{enrichment.raw_transcript.length}</div>
+        </div>
+        {enrichment.session_completed_at && (
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold" style={{ fontFamily: "var(--font-heading)" }}>Completed</div>
+            <div className="text-sm text-white/70 mt-0.5">{new Date(enrichment.session_completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+          </div>
+        )}
+        {discrepancy?.jetinsight_discrepancy_id && (
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold" style={{ fontFamily: "var(--font-heading)" }}>Discrepancy ID</div>
+            <div className="text-sm text-white/70 mt-0.5" style={{ fontFamily: "'Courier Prime','Courier New',monospace" }}>{discrepancy.jetinsight_discrepancy_id}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Narrative Summary */}
+      {enrichment.narrative_summary && (
+        <div
+          className="rounded-lg px-4 py-3"
+          style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+            Narrative Summary
+          </h3>
+          <p className="text-base text-white/80 leading-relaxed whitespace-pre-wrap" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+            {enrichment.narrative_summary}
+          </p>
+        </div>
+      )}
+
+      {/* Golden Nuggets */}
+      {enrichment.golden_nuggets && (
+        <div
+          className="rounded-lg px-4 py-3"
+          style={{ background: "rgba(212,160,23,0.04)", border: "1px solid rgba(212,160,23,0.15)" }}
+        >
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+            Golden Nuggets
+          </h3>
+          <p className="text-base text-white/80 leading-relaxed" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+            {enrichment.golden_nuggets}
+          </p>
+        </div>
+      )}
+
+      {/* Structured Data */}
+      {structuredData && Object.keys(structuredData).length > 0 && (() => {
+        const sd = structuredData
+        const steps = Array.isArray(sd.diagnostic_steps) ? sd.diagnostic_steps as string[] : []
+        const parts = Array.isArray(sd.parts_used) ? sd.parts_used as string[] : []
+        const tools = Array.isArray(sd.tools_used) ? sd.tools_used as string[] : []
+        const timeSpent = typeof sd.time_spent_description === "string" ? sd.time_spent_description : null
+        const rootCause = typeof sd.root_cause_assessment === "string" ? sd.root_cause_assessment : null
+        const pastEvents = typeof sd.similar_past_events === "string" ? sd.similar_past_events : null
+        const difficulty = typeof sd.difficulty_rating === "string" ? sd.difficulty_rating : null
+        const isRepeat = sd.is_repeat_discrepancy === true
+        const repeatNotes = typeof sd.repeat_notes === "string" ? sd.repeat_notes : null
+        const difficultyColor = difficulty === "critical" ? "rgba(255,100,100,0.8)" : difficulty === "complex" ? "rgba(255,165,0,0.8)" : difficulty === "moderate" ? "rgba(100,180,255,0.8)" : "rgba(100,220,100,0.8)"
+
+        return (
+          <div
+            className="rounded-lg px-4 py-3 flex flex-col gap-4"
+            style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
+          >
+            <h3 className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+              Interview Findings
+            </h3>
+
+            {/* Top row: difficulty + time + repeat flag */}
+            <div className="flex items-center gap-4 flex-wrap">
+              {difficulty && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-widest text-white/30 font-semibold">Difficulty</span>
+                  <span
+                    className="text-[11px] uppercase tracking-widest font-bold px-2 py-0.5 rounded"
+                    style={{ color: difficultyColor, background: difficultyColor.replace(/[\d.]+\)$/, "0.1)") }}
+                  >
+                    {difficulty}
+                  </span>
+                </div>
+              )}
+              {timeSpent && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-widest text-white/30 font-semibold">Time</span>
+                  <span className="text-sm text-white/70">{timeSpent}</span>
+                </div>
+              )}
+              {isRepeat && (
+                <span
+                  className="text-[11px] uppercase tracking-widest font-bold px-2 py-0.5 rounded"
+                  style={{ color: "rgba(255,100,100,0.9)", background: "rgba(255,100,100,0.1)", border: "1px solid rgba(255,100,100,0.2)" }}
+                >
+                  Repeat Discrepancy
+                </span>
+              )}
+            </div>
+
+            {/* Diagnostic steps */}
+            {steps.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold mb-1.5" style={{ fontFamily: "var(--font-heading)" }}>
+                  Diagnostic Steps
+                </div>
+                <ol className="list-decimal list-inside flex flex-col gap-1">
+                  {steps.map((step, i) => (
+                    <li key={i} className="text-sm text-white/70 leading-relaxed">{step}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Parts & Tools side by side */}
+            {(parts.length > 0 || tools.length > 0) && (
+              <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                {parts.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold mb-1.5" style={{ fontFamily: "var(--font-heading)" }}>
+                      Parts Used
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {parts.map((p, i) => (
+                        <span key={i} className="text-sm px-2 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)" }}>{p}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {tools.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold mb-1.5" style={{ fontFamily: "var(--font-heading)" }}>
+                      Tools Used
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {tools.map((t, i) => (
+                        <span key={i} className="text-sm px-2 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)" }}>{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Root cause */}
+            {rootCause && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+                  Root Cause Assessment
+                </div>
+                <p className="text-sm text-white/70 leading-relaxed">{rootCause}</p>
+              </div>
+            )}
+
+            {/* Similar past events */}
+            {pastEvents && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+                  Similar Past Events
+                </div>
+                <p className="text-sm text-white/70 leading-relaxed">{pastEvents}</p>
+              </div>
+            )}
+
+            {/* Repeat notes */}
+            {repeatNotes && (
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-white/30 font-semibold mb-1" style={{ fontFamily: "var(--font-heading)" }}>
+                  Repeat Discrepancy Notes
+                </div>
+                <p className="text-sm text-white/70 leading-relaxed">{repeatNotes}</p>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
+      {/* Suggested Corrections */}
+      {enrichment.suggested_corrections.length > 0 && !saved && (
+        <div
+          className="rounded-lg px-4 py-3"
+          style={{ background: "rgba(100,180,255,0.03)", border: "1px solid rgba(100,180,255,0.12)" }}
+        >
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-3" style={{ color: "rgba(100,180,255,0.9)", fontFamily: "var(--font-heading)" }}>
+            Suggested Corrections ({enrichment.suggested_corrections.length})
+          </h3>
+          <div className="flex flex-col gap-3">
+            {enrichment.suggested_corrections.map((c, i) => {
+              const state = correctionStates.get(i) || "pending"
+              return (
+                <div
+                  key={i}
+                  className="rounded-lg px-3 py-3"
+                  style={{
+                    background: state === "accepted" ? "rgba(100,220,100,0.04)" : state === "rejected" ? "rgba(255,100,100,0.04)" : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${state === "accepted" ? "rgba(100,220,100,0.15)" : state === "rejected" ? "rgba(255,100,100,0.15)" : "rgba(255,255,255,0.06)"}`,
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <span className="text-[10px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(100,180,255,0.1)", color: "rgba(100,180,255,0.9)" }}>
+                        {c.field.replace(/_/g, " ")}
+                      </span>
+                      <div className="mt-2 flex flex-col gap-1">
+                        <div className="flex items-start gap-2">
+                          <span className="text-[10px] uppercase tracking-widest text-white/30 w-16 flex-shrink-0 pt-0.5">Current</span>
+                          <span className="text-sm text-white/50">{c.original || "—"}</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="text-[10px] uppercase tracking-widest text-white/30 w-16 flex-shrink-0 pt-0.5">Suggested</span>
+                          {state === "editing" ? (
+                            <input
+                              type="text"
+                              value={editValues.get(i) ?? c.suggested}
+                              onChange={(e) => setEditValues(prev => new Map(prev).set(i, e.target.value))}
+                              className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-[#d4a017]/50"
+                            />
+                          ) : (
+                            <span className="text-sm text-white/80 font-medium">{editValues.get(i) ?? c.suggested}</span>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[12px] text-white/40 mt-1.5 italic">{c.reason}</p>
+                    </div>
+                    <div className="flex gap-1.5 flex-shrink-0">
+                      {state === "editing" ? (
+                        <button
+                          onClick={() => setCorrectionState(i, "accepted")}
+                          className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold"
+                          style={{ color: "rgba(100,220,100,0.8)", background: "rgba(100,220,100,0.1)", border: "1px solid rgba(100,220,100,0.2)" }}
+                        >
+                          Save
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => setCorrectionState(i, "accepted")}
+                            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold transition-all"
+                            style={{
+                              color: state === "accepted" ? "rgba(100,220,100,0.9)" : "rgba(100,220,100,0.6)",
+                              background: state === "accepted" ? "rgba(100,220,100,0.12)" : "rgba(100,220,100,0.05)",
+                              border: `1px solid ${state === "accepted" ? "rgba(100,220,100,0.3)" : "rgba(100,220,100,0.1)"}`,
+                            }}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() => setCorrectionState(i, "editing")}
+                            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold"
+                            style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.05)", border: "1px solid rgba(212,160,23,0.1)" }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => setCorrectionState(i, "rejected")}
+                            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded font-semibold transition-all"
+                            style={{
+                              color: state === "rejected" ? "rgba(255,100,100,0.9)" : "rgba(255,100,100,0.6)",
+                              background: state === "rejected" ? "rgba(255,100,100,0.12)" : "rgba(255,100,100,0.05)",
+                              border: `1px solid ${state === "rejected" ? "rgba(255,100,100,0.3)" : "rgba(255,100,100,0.1)"}`,
+                            }}
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Transcript toggle */}
+      <div>
+        <button
+          onClick={() => setShowTranscript(!showTranscript)}
+          className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest"
+          style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}
+        >
+          {showTranscript ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          Full Transcript ({enrichment.raw_transcript.length} messages)
+        </button>
+        {showTranscript && (
+          <div className="mt-2 flex flex-col gap-2 ml-5">
+            {enrichment.raw_transcript.map((msg, i) => (
+              <div
+                key={i}
+                className="rounded-lg px-3 py-2"
+                style={{
+                  background: msg.role === "user" ? "rgba(212,160,23,0.06)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${msg.role === "user" ? "rgba(212,160,23,0.12)" : "rgba(255,255,255,0.05)"}`,
+                }}
+              >
+                <span className="text-[9px] font-bold tracking-widest uppercase" style={{ color: msg.role === "assistant" ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))" }}>
+                  {msg.role === "assistant" ? "DW1GHT" : "Technician"}
+                </span>
+                <p className="text-sm text-white/70 mt-0.5 leading-relaxed">{msg.content}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Review actions */}
+      {!saved && enrichment.status === "completed" && (
+        <div
+          className="rounded-lg px-4 py-4"
+          style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+            DOM Review Notes
+          </h3>
+          <textarea
+            value={reviewNotes}
+            onChange={(e) => setReviewNotes(e.target.value)}
+            placeholder="Optional notes about this interview..."
+            rows={3}
+            className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-base text-white placeholder-white/20 focus:outline-none focus:border-[#d4a017]/50 resize-none mb-3"
+          />
+          <div className="flex gap-3">
+            <button
+              onClick={() => saveReview("approved")}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-md text-base font-semibold transition-all hover:brightness-110"
+              style={{ background: "rgba(100,220,100,0.12)", color: "rgba(100,220,100,0.9)", border: "1px solid rgba(100,220,100,0.25)" }}
+            >
+              <CheckCircle className="w-3.5 h-3.5" />
+              {saving ? "Saving..." : "Approve Interview"}
+            </button>
+            <button
+              onClick={() => saveReview("rejected")}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-md text-base font-semibold transition-all hover:brightness-110"
+              style={{ background: "rgba(255,100,100,0.08)", color: "rgba(255,100,100,0.8)", border: "1px solid rgba(255,100,100,0.2)" }}
+            >
+              {saving ? "Saving..." : "Reject"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Saved confirmation */}
+      {saved && (
+        <div
+          className="rounded-lg px-4 py-3 text-center"
+          style={{ background: "rgba(100,220,100,0.06)", border: "1px solid rgba(100,220,100,0.15)" }}
+        >
+          <p className="text-base text-white/70">Review saved successfully.</p>
+          <button
+            onClick={onBack}
+            className="mt-2 text-sm px-4 py-2 rounded-md"
+            style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}
+          >
+            Return to Discrepancy Detail
+          </button>
+        </div>
+      )}
+
+      {/* DW1GHT Learnings */}
+      {enrichment && (
+        <div>
+          <button
+            onClick={async () => {
+              setShowLearnings(!showLearnings)
+              if (!learningsLoaded) {
+                const { data } = await supabase
+                  .from("dw1ght_learnings")
+                  .select("id, lesson, category, source_type, active, created_at")
+                  .order("created_at", { ascending: false })
+                  .limit(30)
+                if (data) setLearnings(data)
+                setLearningsLoaded(true)
+              }
+            }}
+            className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest"
+            style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+          >
+            {showLearnings ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            DW1GHT Learnings ({learningsLoaded ? learnings.filter(l => l.active).length + " active" : "..."})
+          </button>
+          {showLearnings && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              {learnings.length === 0 && learningsLoaded && (
+                <p className="text-sm text-white/30 ml-5">No learnings yet. Complete and review more interviews to generate learnings.</p>
+              )}
+              {learnings.map((l) => (
+                <div
+                  key={l.id}
+                  className="flex items-start gap-2 rounded-lg px-3 py-2 ml-5"
+                  style={{
+                    background: l.active ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.01)",
+                    border: `1px solid ${l.active ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)"}`,
+                    opacity: l.active ? 1 : 0.4,
+                  }}
+                >
+                  <button
+                    onClick={async () => {
+                      await supabase.from("dw1ght_learnings").update({ active: !l.active }).eq("id", l.id)
+                      setLearnings(prev => prev.map(x => x.id === l.id ? { ...x, active: !x.active } : x))
+                    }}
+                    className="flex-shrink-0 mt-0.5 w-4 h-4 rounded border flex items-center justify-center transition-colors"
+                    style={{
+                      borderColor: l.active ? "rgba(100,220,100,0.4)" : "rgba(255,255,255,0.15)",
+                      background: l.active ? "rgba(100,220,100,0.12)" : "transparent",
+                    }}
+                    title={l.active ? "Active — click to deactivate" : "Inactive — click to activate"}
+                  >
+                    {l.active && <CheckCircle className="w-2.5 h-2.5" style={{ color: "rgba(100,220,100,0.8)" }} />}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white/70 leading-relaxed">{l.lesson}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span
+                        className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
+                        style={{
+                          background: l.source_type === "self_critique" ? "rgba(100,180,255,0.1)" : l.source_type === "dom_review" ? "rgba(212,160,23,0.1)" : "rgba(100,220,100,0.1)",
+                          color: l.source_type === "self_critique" ? "rgba(100,180,255,0.7)" : l.source_type === "dom_review" ? "var(--skyshare-gold)" : "rgba(100,220,100,0.7)",
+                        }}
+                      >
+                        {l.source_type === "self_critique" ? "Self-Critique" : l.source_type === "dom_review" ? "DOM Review" : "Rating"}
+                      </span>
+                      <span
+                        className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
+                        style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}
+                      >
+                        {l.category.replace(/_/g, " ")}
+                      </span>
+                      <span className="text-[9px] text-white/20">
+                        {new Date(l.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Interview Chat View ─────────────────────────────────────────────────────
+function InterviewChatView({
+  assignmentId,
+  discrepancyId,
+  onBack,
+}: {
+  assignmentId: string
+  discrepancyId: string
+  onBack: () => void
+}) {
+  const { profile } = useAuth()
+  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([])
+  const [input, setInput] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [enrichmentId, setEnrichmentId] = useState<string | null>(null)
+  const [phase, setPhase] = useState<"opening" | "deep_dive" | "closing">("opening")
+  const [started, setStarted] = useState(false)
+  const [completed, setCompleted] = useState(false)
+  const [completing, setCompleting] = useState(false)
+  const [rating, setRating] = useState(0)
+  const [ratingHover, setRatingHover] = useState(0)
+  const [ratingComment, setRatingComment] = useState("")
+  const [ratingSubmitted, setRatingSubmitted] = useState(false)
+  const [discrepancyTitle, setDiscrepancyTitle] = useState("")
+  const [discrepancyTail, setDiscrepancyTail] = useState("")
+  const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Load discrepancy info
+  useEffect(() => {
+    supabase
+      .from("discrepancies")
+      .select("title, registration_at_event")
+      .eq("id", discrepancyId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setDiscrepancyTitle(data.title)
+          setDiscrepancyTail(data.registration_at_event || "")
+        }
+      })
+  }, [discrepancyId])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, loading])
+
+  async function startInterview() {
+    if (started) return
+    setLoading(true)
+    try {
+      const res = await fetch("/.netlify/functions/dw1ght-interview-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", assignment_id: assignmentId, discrepancy_id: discrepancyId }),
+      })
+      const data = await res.json()
+      if (data.enrichment_id) {
+        setEnrichmentId(data.enrichment_id)
+        setStarted(true)
+        setMessages([{ role: "assistant", content: data.reply }])
+        setPhase(data.phase || "opening")
+        if (data.usage) setSessionTokens(prev => ({ input: prev.input + data.usage.input_tokens, output: prev.output + data.usage.output_tokens }))
+      }
+    } catch {
+      setMessages([{ role: "assistant", content: "Failed to start interview. Please try again." }])
+    } finally {
+      setLoading(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  async function send() {
+    const text = input.trim()
+    if (!text || loading || !enrichmentId) return
+    const newMsgs = [...messages, { role: "user" as const, content: text }]
+    setMessages(newMsgs)
+    setInput("")
+    setLoading(true)
+    try {
+      const res = await fetch("/.netlify/functions/dw1ght-interview-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "message",
+          enrichment_id: enrichmentId,
+          discrepancy_id: discrepancyId,
+          message: text,
+          history: newMsgs.map(m => ({ role: m.role, content: m.content })),
+        }),
+      })
+      const data = await res.json()
+      const reply = data.reply || "..."
+      setMessages([...newMsgs, { role: "assistant", content: reply }])
+      setPhase(data.phase || "deep_dive")
+      if (data.usage) setSessionTokens(prev => ({ input: prev.input + data.usage.input_tokens, output: prev.output + data.usage.output_tokens }))
+    } catch {
+      setMessages([...newMsgs, { role: "assistant", content: "Connection failure. Your transcript has been saved." }])
+    } finally {
+      setLoading(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  async function completeInterview() {
+    if (!enrichmentId || completing) return
+    setCompleting(true)
+    try {
+      const res = await fetch("/.netlify/functions/dw1ght-interview-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete", enrichment_id: enrichmentId, discrepancy_id: discrepancyId, assignment_id: assignmentId }),
+      })
+      const data = await res.json()
+      if (data.status === "completed") {
+        setCompleted(true)
+      }
+    } catch {
+      setMessages(prev => [...prev, { role: "assistant", content: "Failed to complete interview. Your transcript is saved — the DOM can still review it." }])
+    } finally {
+      setCompleting(false)
+    }
+  }
+
+  const sessionCost = (sessionTokens.input * 0.0000008) + (sessionTokens.output * 0.000004)
+  const costDisplay = sessionCost < 0.0001 ? "<$0.0001" : `$${sessionCost.toFixed(4)}`
+
+  return (
+    <div className="flex flex-col gap-5">
+      {/* Header bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity"
+            style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}
+          >
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold tracking-widest text-[#d4a017] uppercase" style={{ fontFamily: "var(--font-heading)" }}>
+                DW1GHT Interview
+              </span>
+              <span
+                className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded font-semibold"
+                style={{
+                  color: phase === "closing" ? "rgba(100,220,100,0.8)" : phase === "deep_dive" ? "rgba(100,180,255,0.8)" : "var(--skyshare-gold)",
+                  background: phase === "closing" ? "rgba(100,220,100,0.08)" : phase === "deep_dive" ? "rgba(100,180,255,0.08)" : "rgba(212,160,23,0.08)",
+                }}
+              >
+                {phase.replace("_", " ")}
+              </span>
+            </div>
+            {discrepancyTitle && (
+              <p className="text-[12px] text-white/40 mt-0.5">
+                {discrepancyTail && <span className="text-white/50">{discrepancyTail} — </span>}
+                {discrepancyTitle}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-white/20 font-mono">{costDisplay}</span>
+          {started && !completed && messages.length >= 6 && (
+            <button
+              onClick={completeInterview}
+              disabled={completing}
+              className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest px-3 py-1.5 rounded-md transition-all hover:brightness-125"
+              style={{ background: "rgba(100,220,100,0.1)", color: "rgba(100,220,100,0.8)", border: "1px solid rgba(100,220,100,0.2)" }}
+            >
+              <CheckCircle className="w-3 h-3" />
+              {completing ? "Finishing..." : "Complete Interview"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Chat panel */}
+      <div
+        className="flex flex-col rounded-xl overflow-hidden"
+        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", height: "calc(100vh - 14rem)" }}
+      >
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {!started && (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+              <img
+                src="/beat-knowledge.png"
+                alt="Beat Knowledge — The Emblametic Source"
+                className="w-40 h-auto opacity-80"
+                style={{ filter: "drop-shadow(0 4px 12px rgba(212,160,23,0.15))" }}
+              />
+              <div className="text-center">
+                <span className="text-sm font-bold tracking-widest text-[#d4a017] uppercase block mb-2" style={{ fontFamily: "var(--font-heading)" }}>
+                  DW1GHT — Interview Mode
+                </span>
+                <p className="text-white/30 text-sm leading-relaxed max-w-md">
+                  DW1GHT will guide you through a structured interview about this discrepancy.
+                  Your responses will be recorded and reviewed by the DOM.
+                </p>
+                {discrepancyTitle && (
+                  <p className="text-white/50 text-base mt-3 font-medium">
+                    {discrepancyTail && <span className="text-[#d4a017]">{discrepancyTail}</span>}
+                    {discrepancyTail && " — "}
+                    {discrepancyTitle}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={startInterview}
+                disabled={loading}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-base font-semibold transition-all hover:brightness-110"
+                style={{ background: "rgba(212,160,23,0.15)", color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.3)" }}
+              >
+                {loading ? "Starting..." : "Begin Interview"}
+              </button>
+            </div>
+          )}
+
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`flex gap-2.5 max-w-[75%] ${m.role === "user" ? "flex-row-reverse" : ""}`}>
+                {m.role === "assistant" ? (
+                  <div
+                    className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-1"
+                    style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}
+                  >
+                    <Award className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} />
+                  </div>
+                ) : (
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center bg-muted border border-border flex-shrink-0 mt-1">
+                    <span className="text-[9px] text-muted-foreground font-medium">you</span>
+                  </div>
+                )}
+                <div className={`flex flex-col gap-0.5 ${m.role === "user" ? "items-end" : "items-start"}`}>
+                  {m.role === "assistant" && (
+                    <span
+                      className="text-[9px] font-bold tracking-widest uppercase px-0.5"
+                      style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+                    >
+                      DW1GHT
+                    </span>
+                  )}
+                  <div
+                    className="rounded-lg px-3 py-2 text-[14px] leading-relaxed"
+                    style={{
+                      ...(m.role === "user"
+                        ? { background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.25)", borderBottomRightRadius: "4px", color: "hsl(var(--foreground))" }
+                        : { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderBottomLeftRadius: "4px", color: "hsl(var(--foreground))" }),
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {m.content}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {loading && started && (
+            <div className="flex gap-2.5">
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-1"
+                style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}
+              >
+                <Award className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span
+                  className="text-[9px] font-bold tracking-widest uppercase px-0.5"
+                  style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+                >
+                  DW1GHT
+                </span>
+                <div
+                  className="rounded-lg px-3 py-2"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderBottomLeftRadius: "4px" }}
+                >
+                  <div className="flex gap-1.5 items-center h-4">
+                    <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "rgba(212,160,23,0.4)", animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "rgba(212,160,23,0.4)", animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "rgba(212,160,23,0.4)", animationDelay: "300ms" }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Complete button at bottom */}
+        {started && !completed && messages.length >= 6 && (
+          <div className="px-4 py-2 flex justify-center flex-shrink-0" style={{ borderTop: "1px solid rgba(100,220,100,0.1)", background: "rgba(100,220,100,0.02)" }}>
+            <button
+              onClick={completeInterview}
+              disabled={completing}
+              className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest px-5 py-2 rounded-md transition-all hover:brightness-125"
+              style={{ background: "rgba(100,220,100,0.1)", color: "rgba(100,220,100,0.8)", border: "1px solid rgba(100,220,100,0.2)" }}
+            >
+              <CheckCircle className="w-4 h-4" />
+              {completing ? "Finishing..." : "Complete Interview"}
+            </button>
+          </div>
+        )}
+
+        {/* Input */}
+        {started && !completed && (
+          <div className="px-4 py-3 flex gap-2 items-center flex-shrink-0" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.15)" }}>
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }}
+              placeholder="Describe what happened..."
+              className="flex-1 bg-transparent border rounded-lg px-3 py-2 text-base focus:outline-none transition-colors"
+              style={{ borderColor: "rgba(255,255,255,0.08)", color: "hsl(var(--foreground))", fontFamily: "'DM Sans', system-ui, sans-serif" }}
+            />
+            <button
+              onClick={send}
+              disabled={!input.trim() || loading}
+              className="flex items-center justify-center w-8 h-8 rounded-lg transition-all disabled:opacity-25"
+              style={{ background: input.trim() && !loading ? "rgba(212,160,23,0.12)" : "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "var(--skyshare-gold)" }}
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Completed banner */}
+        {completed && (
+          <div
+            className="px-5 py-5 flex flex-col items-center gap-4"
+            style={{ borderTop: "2px solid rgba(100,220,100,0.3)", background: "rgba(100,220,100,0.04)" }}
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-5 h-5" style={{ color: "rgba(100,220,100,0.8)" }} />
+              <span className="text-base font-bold uppercase tracking-widest" style={{ color: "rgba(100,220,100,0.8)", fontFamily: "var(--font-heading)" }}>
+                Interview Complete
+              </span>
+            </div>
+            <p className="text-sm text-white/50 text-center">
+              Your session has been submitted for DOM review. Thank you for your time.
+            </p>
+
+            {/* Rating */}
+            {!ratingSubmitted ? (
+              <div className="flex flex-col items-center gap-3 w-full max-w-sm">
+                <p className="text-sm text-white/40 uppercase tracking-widest font-semibold" style={{ fontFamily: "var(--font-heading)" }}>
+                  How was this interview?
+                </p>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setRating(star)}
+                      onMouseEnter={() => setRatingHover(star)}
+                      onMouseLeave={() => setRatingHover(0)}
+                      className="text-2xl transition-transform hover:scale-110"
+                      style={{ color: star <= (ratingHover || rating) ? "var(--skyshare-gold)" : "rgba(255,255,255,0.12)" }}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={ratingComment}
+                  onChange={(e) => setRatingComment(e.target.value)}
+                  placeholder="Any feedback on the interview? (optional)"
+                  rows={2}
+                  className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#d4a017]/50 resize-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      if (enrichmentId && (rating > 0 || ratingComment.trim())) {
+                        await supabase.from("discrepancy_enrichments").update({
+                          interview_rating: rating || null,
+                          interview_feedback: ratingComment.trim() || null,
+                        }).eq("id", enrichmentId)
+                      }
+                      setRatingSubmitted(true)
+                    }}
+                    className="text-sm font-semibold px-4 py-1.5 rounded-md transition-all hover:brightness-125"
+                    style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.25)" }}
+                  >
+                    {rating > 0 || ratingComment.trim() ? "Submit" : "Skip"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                {rating > 0 && (
+                  <div className="flex gap-0.5">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <span key={star} className="text-lg" style={{ color: star <= rating ? "var(--skyshare-gold)" : "rgba(255,255,255,0.08)" }}>★</span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-sm text-white/30">Thanks for the feedback.</p>
+              </div>
+            )}
+
+            <button
+              onClick={onBack}
+              className="text-sm font-semibold px-5 py-2 rounded-md transition-all hover:brightness-125"
+              style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.25)" }}
+            >
+              Return to Discrepancy
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function DiscrepancyIntelligence() {
+  const { profile } = useAuth()
+  const isSuperAdmin = profile?.role === "Super Admin"
   const { data: fleet, isLoading, isError } = useFleet()
   const { data: counts } = useDiscrepancyCounts()
+  const { data: fleetStats } = useFleetStats()
   const [selectedAircraft, setSelectedAircraft] = useState<AircraftBase | null>(null)
+  const [dw1ghtOpen, setDw1ghtOpen] = useState(false)
+  const [dw1ghtMode, setDw1ghtMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
+  const [activeInterview, setActiveInterview] = useState<{ assignmentId: string; discrepancyId: string } | null>(null)
+  const [activeReview, setActiveReview] = useState<{ assignmentId: string; discrepancyId: string } | null>(null)
+  const [myAssignments, setMyAssignments] = useState<Array<{ id: string; discrepancy_id: string; status: string; dom_note: string | null; tail: string; title: string; created_at: string }>>([])
+  const [myAssignmentsRefresh, setMyAssignmentsRefresh] = useState(0)
+  type InterviewItem = {
+    assignment_id: string
+    discrepancy_id: string
+    tail: string
+    title: string
+    technician: string
+    completed_at: string
+    status: string
+  }
+  const [interviewPipeline, setInterviewPipeline] = useState<Record<string, InterviewItem[]>>({})
+  const [expandedPipelineStatus, setExpandedPipelineStatus] = useState<string | null>(null)
+  const [pipelineDeleteId, setPipelineDeleteId] = useState<string | null>(null)
+  const [pipelineRefresh, setPipelineRefresh] = useState(0)
+
+  async function deletePipelineItem(assignmentId: string, discrepancyId: string) {
+    // Delete enrichment(s) for this discrepancy
+    await supabase.from("discrepancy_enrichments").delete().eq("discrepancy_id", discrepancyId)
+    // Delete the assignment
+    await supabase.from("interview_assignments").delete().eq("id", assignmentId)
+    setPipelineDeleteId(null)
+    setPipelineRefresh(prev => prev + 1)
+  }
+
+  // Fetch my interview assignments (all users)
+  useEffect(() => {
+    if (!profile?.id) return
+    async function fetchMyAssignments() {
+      const { data: assignments } = await supabase
+        .from("interview_assignments")
+        .select("id, discrepancy_id, status, dom_note, created_at")
+        .eq("assigned_to", profile!.id)
+        .in("status", ["assigned", "in_progress"])
+        .order("created_at", { ascending: false })
+
+      if (!assignments || assignments.length === 0) { setMyAssignments([]); return }
+
+      const discIds = [...new Set(assignments.map(a => a.discrepancy_id))]
+      const { data: discs } = await supabase
+        .from("discrepancies")
+        .select("id, title, registration_at_event")
+        .in("id", discIds)
+
+      const discMap = new Map((discs || []).map(d => [d.id, d]))
+      setMyAssignments(assignments.map(a => {
+        const disc = discMap.get(a.discrepancy_id)
+        return {
+          id: a.id,
+          discrepancy_id: a.discrepancy_id,
+          status: a.status,
+          dom_note: a.dom_note,
+          tail: disc?.registration_at_event || "—",
+          title: disc?.title || "Unknown",
+          created_at: a.created_at,
+        }
+      }))
+    }
+    fetchMyAssignments()
+  }, [profile?.id, activeInterview, myAssignmentsRefresh])
+
+  // Fetch all interview assignments (Super Admin only)
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    async function fetchPipeline() {
+      const { data: assignments } = await supabase
+        .from("interview_assignments")
+        .select("id, discrepancy_id, completed_at, status, updated_at, profiles:assigned_to(full_name)")
+        .order("updated_at", { ascending: false })
+
+      if (!assignments || assignments.length === 0) { setInterviewPipeline({}); return }
+
+      const discIds = [...new Set(assignments.map(a => a.discrepancy_id))]
+      const { data: discs } = await supabase
+        .from("discrepancies")
+        .select("id, title, registration_at_event")
+        .in("id", discIds)
+
+      const discMap = new Map((discs || []).map(d => [d.id, d]))
+
+      const grouped: Record<string, InterviewItem[]> = {}
+      for (const a of assignments) {
+        const disc = discMap.get(a.discrepancy_id)
+        const item: InterviewItem = {
+          assignment_id: a.id,
+          discrepancy_id: a.discrepancy_id,
+          tail: disc?.registration_at_event || "—",
+          title: disc?.title || "Unknown",
+          technician: (a.profiles as { full_name: string } | null)?.full_name || "Unknown",
+          completed_at: a.completed_at || "",
+          status: a.status,
+        }
+        if (!grouped[a.status]) grouped[a.status] = []
+        grouped[a.status].push(item)
+      }
+      setInterviewPipeline(grouped)
+    }
+    fetchPipeline()
+  }, [isSuperAdmin, activeReview, activeInterview, pipelineRefresh])
 
   const countMap = counts ?? new Map<string, number>()
-  const totalRecords = Array.from(countMap.values()).reduce((s, n) => s + n, 0)
-  const aircraftWithRecords = countMap.size
+  const totalRecords = fleetStats?.totalRecords ?? Array.from(countMap.values()).reduce((s, n) => s + n, 0)
+  const aircraftWithRecords = fleetStats?.aircraftCount ?? countMap.size
+
+  // ── Interview chat view ──
+  if (activeInterview) {
+    return (
+      <div className="flex flex-col gap-8 p-6">
+        <div>
+          <p
+            className="text-sm font-semibold uppercase tracking-widest mb-1"
+            style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+          >
+            Discrepancy Intelligence
+          </p>
+        </div>
+        <InterviewChatView
+          assignmentId={activeInterview.assignmentId}
+          discrepancyId={activeInterview.discrepancyId}
+          onBack={() => setActiveInterview(null)}
+        />
+      </div>
+    )
+  }
+
+  // ── DOM review view ──
+  if (activeReview) {
+    return (
+      <div className="flex flex-col gap-8 p-6">
+        <div>
+          <p
+            className="text-sm font-semibold uppercase tracking-widest mb-1"
+            style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+          >
+            Discrepancy Intelligence
+          </p>
+        </div>
+        <DomReviewView
+          assignmentId={activeReview.assignmentId}
+          discrepancyId={activeReview.discrepancyId}
+          onBack={() => setActiveReview(null)}
+        />
+      </div>
+    )
+  }
 
   // ── Discrepancy list view ──
   if (selectedAircraft) {
@@ -973,13 +2934,18 @@ export default function DiscrepancyIntelligence() {
       <div className="flex flex-col gap-8 p-6">
         <div>
           <p
-            className="text-xs font-semibold uppercase tracking-widest mb-1"
+            className="text-sm font-semibold uppercase tracking-widest mb-1"
             style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
           >
             Discrepancy Intelligence
           </p>
         </div>
-        <DiscrepancyListView aircraft={selectedAircraft} onBack={() => setSelectedAircraft(null)} />
+        <DiscrepancyListView
+          aircraft={selectedAircraft}
+          onBack={() => setSelectedAircraft(null)}
+          onStartInterview={(assignmentId, discrepancyId) => setActiveInterview({ assignmentId, discrepancyId })}
+          onReviewInterview={(assignmentId, discrepancyId) => setActiveReview({ assignmentId, discrepancyId })}
+        />
       </div>
     )
   }
@@ -992,7 +2958,7 @@ export default function DiscrepancyIntelligence() {
       <div className="hero-area flex items-end justify-between">
         <div>
           <p
-            className="text-xs font-semibold uppercase tracking-widest mb-1"
+            className="text-sm font-semibold uppercase tracking-widest mb-1"
             style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
           >
             Maintenance Intelligence
@@ -1000,7 +2966,7 @@ export default function DiscrepancyIntelligence() {
           <h1
             style={{
               fontFamily: "var(--font-display)",
-              fontSize: "2rem",
+              fontSize: "2.25rem",
               letterSpacing: "0.08em",
               color: "hsl(var(--foreground))",
               lineHeight: 1,
@@ -1015,7 +2981,7 @@ export default function DiscrepancyIntelligence() {
               <div
                 style={{
                   fontFamily: "var(--font-display)",
-                  fontSize: "2rem",
+                  fontSize: "2.25rem",
                   letterSpacing: "0.06em",
                   color: "var(--skyshare-gold)",
                   lineHeight: 1,
@@ -1024,7 +2990,7 @@ export default function DiscrepancyIntelligence() {
                 {totalRecords}
               </div>
               <div
-                className="text-xs uppercase tracking-widest"
+                className="text-sm uppercase tracking-widest"
                 style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}
               >
                 Records
@@ -1036,7 +3002,7 @@ export default function DiscrepancyIntelligence() {
               <div
                 style={{
                   fontFamily: "var(--font-display)",
-                  fontSize: "2rem",
+                  fontSize: "2.25rem",
                   letterSpacing: "0.06em",
                   color: "hsl(var(--foreground))",
                   lineHeight: 1,
@@ -1046,7 +3012,7 @@ export default function DiscrepancyIntelligence() {
                 {aircraftWithRecords}
               </div>
               <div
-                className="text-xs uppercase tracking-widest"
+                className="text-sm uppercase tracking-widest"
                 style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}
               >
                 Aircraft
@@ -1056,37 +3022,302 @@ export default function DiscrepancyIntelligence() {
         </div>
       </div>
 
-      {/* Import notice */}
-      <div
-        className="flex items-start gap-3 rounded-lg px-4 py-3"
-        style={{
-          background: "rgba(212,160,23,0.06)",
-          border: "1px solid rgba(212,160,23,0.15)",
-        }}
-      >
-        <AlertCircle
-          className="w-4 h-4 flex-shrink-0 mt-0.5"
-          style={{ color: "rgba(212,160,23,0.7)" }}
-        />
-        <div className="flex flex-col gap-0.5">
-          <p
-            className="text-xs font-semibold uppercase tracking-widest"
-            style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
-          >
-            {totalRecords > 0 ? "Import In Progress" : "Import Pending"}
-          </p>
-          <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
-            {totalRecords > 0
-              ? `${totalRecords} records imported across ${aircraftWithRecords} aircraft. Additional aircraft and historical records are pending.`
-              : "Historical discrepancy records have not been imported yet. The fleet roster below reflects all aircraft."}
-          </p>
+      {/* My Interview Assignments */}
+      {myAssignments.length > 0 && (
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ background: "rgba(212,160,23,0.04)", border: "1px solid rgba(212,160,23,0.15)" }}
+        >
+          <div className="px-4 py-2 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(212,160,23,0.1)" }}>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-3.5 h-3.5" style={{ color: "var(--skyshare-gold)" }} />
+              <span
+                className="text-[10px] font-bold tracking-widest uppercase"
+                style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+              >
+                Your Interview Assignments
+              </span>
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                style={{ background: "rgba(212,160,23,0.15)", color: "var(--skyshare-gold)" }}
+              >
+                {myAssignments.length}
+              </span>
+            </div>
+          </div>
+          <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
+            {myAssignments.map((a) => (
+              <div
+                key={a.id}
+                className="px-4 py-3 flex items-center justify-between gap-4"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-sm font-semibold" style={{ color: "var(--skyshare-gold)" }}>{a.tail}</span>
+                    <span className="text-sm text-white/70 truncate">{a.title}</span>
+                  </div>
+                  {a.dom_note && (
+                    <p className="text-[11px] text-white/40 italic truncate">
+                      DOM note: "{a.dom_note}"
+                    </p>
+                  )}
+                  <span className="text-[10px] text-white/25">
+                    Assigned {new Date(a.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setActiveInterview({ assignmentId: a.id, discrepancyId: a.discrepancy_id })}
+                  className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest px-4 py-2 rounded-md transition-all hover:brightness-125 flex-shrink-0"
+                  style={{
+                    background: a.status === "in_progress" ? "rgba(100,180,255,0.12)" : "rgba(212,160,23,0.12)",
+                    color: a.status === "in_progress" ? "rgba(100,180,255,0.9)" : "var(--skyshare-gold)",
+                    border: `1px solid ${a.status === "in_progress" ? "rgba(100,180,255,0.25)" : "rgba(212,160,23,0.3)"}`,
+                  }}
+                >
+                  <MessageSquare size={13} />
+                  {a.status === "in_progress" ? "Resume" : "Start Interview"}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Ask DW1GHT Bar */}
+      <div
+        className="flex items-center justify-between rounded-xl px-4 py-2"
+        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setDw1ghtOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all hover:brightness-125"
+            style={{
+              background: "rgba(212,160,23,0.1)",
+              border: "1px solid rgba(212,160,23,0.25)",
+              color: "var(--skyshare-gold)",
+            }}
+          >
+            <Award className="w-3.5 h-3.5" />
+            <span
+              className="text-[10px] font-bold tracking-widest uppercase"
+              style={{ fontFamily: "var(--font-heading)" }}
+            >
+              Ask DW1GHT
+            </span>
+          </button>
+          <div
+            className="flex items-center rounded-md overflow-hidden"
+            style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+          >
+            <button
+              onClick={() => setDw1ghtMode("schrute")}
+              className="px-2.5 py-1.5 text-[10px] font-bold tracking-widest uppercase transition-colors"
+              style={{
+                fontFamily: "var(--font-heading)",
+                background: dw1ghtMode === "schrute" ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.02)",
+                color: dw1ghtMode === "schrute" ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+              }}
+            >
+              <span className="text-sm leading-none">🌱</span>
+            </button>
+            <button
+              onClick={() => setDw1ghtMode("corporate")}
+              className="px-2.5 py-1.5 text-[10px] font-bold tracking-widest uppercase transition-colors"
+              style={{
+                fontFamily: "var(--font-heading)",
+                background: dw1ghtMode === "corporate" ? "rgba(59,130,246,0.15)" : "rgba(255,255,255,0.02)",
+                color: dw1ghtMode === "corporate" ? "rgba(100,170,255,0.9)" : "hsl(var(--muted-foreground))",
+                borderLeft: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <span className="text-sm leading-none">👔</span>
+            </button>
+            <button
+              onClick={() => setDw1ghtMode("troubleshooting")}
+              className="flex items-center gap-0.5 px-2.5 py-1.5 transition-colors"
+              style={{
+                background: dw1ghtMode === "troubleshooting" ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.02)",
+                color: dw1ghtMode === "troubleshooting" ? "rgba(100,220,100,0.9)" : "hsl(var(--muted-foreground))",
+                borderLeft: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <span className="text-sm leading-none">🧠</span>
+              <Wrench className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+        <span
+          className="text-[9px] font-bold tracking-widest uppercase"
+          style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}
+        >
+          {dw1ghtMode === "schrute" ? "Full Schrute" : dw1ghtMode === "corporate" ? "Corporate" : "Troubleshooting"}
+        </span>
       </div>
+
+      {/* Fleet Analytics */}
+      {fleetStats && fleetStats.totalRecords > 0 ? (
+        <FleetStatsPanel stats={fleetStats} />
+      ) : (
+        <div
+          className="flex items-start gap-3 rounded-lg px-4 py-3"
+          style={{
+            background: "rgba(212,160,23,0.06)",
+            border: "1px solid rgba(212,160,23,0.15)",
+          }}
+        >
+          <AlertCircle
+            className="w-4 h-4 flex-shrink-0 mt-0.5"
+            style={{ color: "rgba(212,160,23,0.7)" }}
+          />
+          <div className="flex flex-col gap-0.5">
+            <p
+              className="text-sm font-semibold uppercase tracking-widest"
+              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+            >
+              Import Pending
+            </p>
+            <p className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>
+              Historical discrepancy records have not been imported yet. The fleet roster below reflects all aircraft.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Interview Pipeline — Super Admin only */}
+      {isSuperAdmin && Object.keys(interviewPipeline).length > 0 && (() => {
+        const statusOrder = [
+          { key: "completed", label: "Needs Review", color: "rgba(255,165,0,0.8)", bg: "rgba(255,165,0,0.1)", actionLabel: "Review", actionable: true },
+          { key: "in_progress", label: "In Progress", color: "rgba(100,180,255,0.8)", bg: "rgba(100,180,255,0.08)", actionLabel: null, actionable: false },
+          { key: "assigned", label: "Assigned", color: "var(--skyshare-gold)", bg: "rgba(212,160,23,0.08)", actionLabel: null, actionable: false },
+          { key: "reviewed", label: "Reviewed", color: "rgba(178,130,255,0.85)", bg: "rgba(138,43,226,0.08)", actionLabel: "View", actionable: true },
+          { key: "approved", label: "Archived", color: "rgba(100,220,100,0.8)", bg: "rgba(100,220,100,0.06)", actionLabel: "View", actionable: true },
+          { key: "rejected", label: "Rejected", color: "rgba(255,100,100,0.7)", bg: "rgba(255,100,100,0.06)", actionLabel: "View", actionable: true },
+        ]
+        const totalInterviews = Object.values(interviewPipeline).reduce((s, arr) => s + arr.length, 0)
+
+        return (
+          <div
+            className="rounded-lg overflow-hidden"
+            style={{ border: "1px solid rgba(212,160,23,0.15)", background: "rgba(255,255,255,0.015)" }}
+          >
+            {/* Header with counts */}
+            <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(212,160,23,0.03)" }}>
+              <MessageSquare className="w-3.5 h-3.5" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+              <span className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+                Interview Pipeline
+              </span>
+              <span className="text-[9px] text-white/30 ml-auto">{totalInterviews} total</span>
+            </div>
+
+            {/* Status pills row */}
+            <div className="px-4 py-2.5 flex flex-wrap gap-1.5">
+              {statusOrder.map(({ key, label, color, bg }) => {
+                const count = interviewPipeline[key]?.length || 0
+                if (count === 0) return null
+                const isExpanded = expandedPipelineStatus === key
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setExpandedPipelineStatus(isExpanded ? null : key)}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[9px] font-semibold uppercase tracking-widest transition-all hover:brightness-125"
+                    style={{
+                      color,
+                      background: isExpanded ? bg.replace(/[\d.]+\)$/, "0.2)") : bg,
+                      border: `1px solid ${isExpanded ? color : "transparent"}`,
+                    }}
+                  >
+                    {label}
+                    <span
+                      className="text-[9px] font-bold px-1 py-0.5 rounded-full"
+                      style={{ background: color.replace(/[\d.]+\)$/, "0.15)"), color }}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Expanded list */}
+            {expandedPipelineStatus && interviewPipeline[expandedPipelineStatus] && (() => {
+              const items = interviewPipeline[expandedPipelineStatus]
+              const statusConfig = statusOrder.find(s => s.key === expandedPipelineStatus)
+              return (
+                <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                  {items.map((r) => (
+                    <div
+                      key={r.assignment_id}
+                      className="w-full px-3 py-1.5 flex items-center justify-between"
+                    >
+                      <div
+                        className={`flex-1 min-w-0 ${statusConfig?.actionable ? "cursor-pointer hover:opacity-80" : ""}`}
+                        onClick={() => {
+                          if (statusConfig?.actionable) {
+                            setActiveReview({ assignmentId: r.assignment_id, discrepancyId: r.discrepancy_id })
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-medium" style={{ color: statusConfig?.color }}>{r.tail}</span>
+                          <span className="text-[9px] text-white/70 truncate">{r.title}</span>
+                        </div>
+                        <span className="text-[9px] text-white/40">{r.technician}</span>
+                        {r.completed_at && (
+                          <span className="text-[9px] text-white/25 ml-1.5">
+                            {new Date(r.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {statusConfig?.actionLabel && (
+                          <button
+                            onClick={() => setActiveReview({ assignmentId: r.assignment_id, discrepancyId: r.discrepancy_id })}
+                            className="text-[8px] uppercase tracking-widest font-semibold px-2 py-0.5 rounded transition-all hover:brightness-125"
+                            style={{ color: statusConfig.color, background: statusConfig.bg, border: `1px solid ${statusConfig.color.replace(/[\d.]+\)$/, "0.25)")}` }}
+                          >
+                            {statusConfig.actionLabel}
+                          </button>
+                        )}
+                        {pipelineDeleteId === r.assignment_id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => deletePipelineItem(r.assignment_id, r.discrepancy_id)}
+                              className="text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded font-semibold transition-all hover:brightness-125"
+                              style={{ color: "rgba(255,100,100,0.9)", background: "rgba(255,100,100,0.12)", border: "1px solid rgba(255,100,100,0.3)" }}
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setPipelineDeleteId(null)}
+                              className="text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded font-semibold text-white/40 hover:text-white/70 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setPipelineDeleteId(r.assignment_id)}
+                            className="flex items-center gap-1 text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded font-semibold transition-all hover:brightness-125"
+                            style={{ color: "rgba(255,100,100,0.5)", background: "rgba(255,100,100,0.05)", border: "1px solid rgba(255,100,100,0.1)" }}
+                          >
+                            <Trash2 size={9} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
+        )
+      })()}
 
       {/* Fleet */}
       {isLoading && <LoadingSkeleton />}
       {isError && (
-        <p className="text-xs" style={{ color: "hsl(var(--muted-foreground))" }}>
+        <p className="text-sm" style={{ color: "hsl(var(--muted-foreground))" }}>
           Failed to load fleet data.
         </p>
       )}
@@ -1097,6 +3328,9 @@ export default function DiscrepancyIntelligence() {
           ))}
         </div>
       )}
+
+      {/* DW1GHT Intel Panel */}
+      <Dw1ghtIntelPanel open={dw1ghtOpen} onClose={() => setDw1ghtOpen(false)} mode={dw1ghtMode} onModeChange={setDw1ghtMode} />
 
     </div>
   )
