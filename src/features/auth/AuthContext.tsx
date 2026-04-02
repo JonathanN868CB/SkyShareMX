@@ -17,6 +17,7 @@ interface AuthContextValue {
   loading: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
+  refreshProfile: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -72,8 +73,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       supabase
         .from("profiles")
         .update({ last_seen_at: new Date().toISOString() })
-        .eq("user_id", userId)
-        .then(() => {})
+        .eq("id", profileData.id)
+        .then(({ error }) => {
+          if (error) console.error("[last_seen_at] update failed:", error.message)
+        })
     }
 
     if (profileData) {
@@ -100,9 +103,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
   }
 
+  async function refreshProfile() {
+    const userId = session?.user?.id
+    if (userId) await fetchProfile(userId)
+  }
+
   return (
     <AuthContext.Provider
-      value={{ session, user: session?.user ?? null, profile, permissions, loading, signInWithGoogle, signOut }}
+      value={{ session, user: session?.user ?? null, profile, permissions, loading, signInWithGoogle, signOut, refreshProfile }}
     >
       {children}
     </AuthContext.Provider>

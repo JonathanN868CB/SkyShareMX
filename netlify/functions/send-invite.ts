@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
+import { BEAT_KNOWLEDGE_ATTACHMENT, EMAIL_BCC } from "./_email-assets";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -75,16 +76,19 @@ function buildInviteEmail(opts: {
           <tr>
             <td style="background:#1a1a1a;border-radius:0 0 4px 4px;padding:36px 43px 29px;border:1px solid rgba(255,255,255,0.08);border-top:none;">
 
-              <!-- Logo / wordmark -->
+              <!-- Logo / wordmark + beet -->
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:29px;">
                 <tr>
-                  <td>
+                  <td style="vertical-align:middle;">
                     <span style="font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#d4a017;border-bottom:1px solid #d4a017;padding-bottom:2px;">SKYSHARE MX</span>
                     <span style="font-family:'Montserrat',Arial,sans-serif;font-size:10px;font-weight:400;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.28);margin-left:11px;">Maintenance Portal</span>
                   </td>
+                  <td style="vertical-align:middle;text-align:right;width:40px;">
+                    <img src="cid:beat-knowledge" alt="" width="32" height="32" style="display:block;border:0;border-radius:6px;" />
+                  </td>
                 </tr>
                 <tr>
-                  <td style="padding-top:7px;">
+                  <td colspan="2" style="padding-top:7px;">
                     <div style="height:1px;width:43px;background:#d4a017;"></div>
                   </td>
                 </tr>
@@ -291,9 +295,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const { error: emailError } = await resend.emails.send({
     from: fromAddress,
     to: [email],
+    bcc: EMAIL_BCC,
     subject: `You've been invited to SkyShare MX`,
     html,
     text,
+    attachments: [BEAT_KNOWLEDGE_ATTACHMENT],
   });
 
   if (emailError) {
