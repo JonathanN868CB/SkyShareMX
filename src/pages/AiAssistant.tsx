@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react"
-import { Send, ShieldAlert, Award } from "lucide-react"
+import { Send, ShieldAlert, Award, Database, Wrench } from "lucide-react"
 
 const OPENING_LINES = [
   { quote: "I am ready. State your question. Make it count.", attr: "DW1GHT, upon activation" },
@@ -15,6 +15,8 @@ const OPENING_LINES = [
 type Message = {
   role: "user" | "assistant"
   content: string
+  fromData?: boolean
+  resultCount?: number
 }
 
 export default function AiAssistant() {
@@ -22,6 +24,7 @@ export default function AiAssistant() {
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
+  const [mode, setMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const opening = useMemo(() => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)], [])
@@ -45,11 +48,12 @@ export default function AiAssistant() {
     setLoading(true)
 
     try {
-      const res = await fetch("/.netlify/functions/dw1ght-chat", {
+      const res = await fetch("/.netlify/functions/dw1ght-intel-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
+          mode,
           history: newMessages.slice(0, -1).map((m) => ({
             role: m.role,
             content: m.content,
@@ -57,7 +61,12 @@ export default function AiAssistant() {
         }),
       })
       const data = await res.json()
-      setMessages([...newMessages, { role: "assistant", content: data.reply ?? "..." }])
+      setMessages([...newMessages, {
+        role: "assistant",
+        content: data.reply ?? "...",
+        fromData: data.sqlGenerated === true,
+        resultCount: data.resultCount,
+      }])
       if (data.usage) {
         setSessionTokens(prev => ({
           input: prev.input + (data.usage.input_tokens ?? 0),
@@ -139,7 +148,7 @@ export default function AiAssistant() {
             </p>
 
             <div className="flex flex-wrap gap-2 mt-3">
-              {["Dashboard", "Aircraft Info", "Training Knowledge"].map((scope) => (
+              {["Dashboard", "Aircraft Info", "Discrepancy Intelligence", "Training Knowledge"].map((scope) => (
                 <span
                   key={scope}
                   className="text-[9px] px-2 py-0.5 rounded badge-warning"
@@ -171,29 +180,86 @@ export default function AiAssistant() {
             className="text-[9px] text-muted-foreground opacity-60"
             style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em", textTransform: "uppercase" }}
           >
-            Clearance limited · Unauthorized queries will be reported to Jonathan · Bears. Beets. Battlestar Galactica.
+            Intelligence clearance granted · Fleet data access active · Unauthorized queries will be reported to Jonathan · Bears. Beets. Battlestar Galactica.
           </p>
         </div>
+      </div>
+
+      {/* ── Mode Selector ─────────────────────────────────── */}
+      <div
+        className="flex items-center gap-4 rounded-xl px-4 py-2.5"
+        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <div
+          className="flex items-center rounded-lg overflow-hidden"
+          style={{ border: "1px solid rgba(255,255,255,0.08)" }}
+        >
+          <button
+            onClick={() => setMode("schrute")}
+            className="flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold tracking-widest uppercase transition-colors"
+            style={{
+              fontFamily: "var(--font-heading)",
+              background: mode === "schrute" ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.02)",
+              color: mode === "schrute" ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+            }}
+          >
+            <span className="text-sm leading-none">🌱</span>
+            Full Schrute
+          </button>
+          <button
+            onClick={() => setMode("corporate")}
+            className="flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold tracking-widest uppercase transition-colors"
+            style={{
+              fontFamily: "var(--font-heading)",
+              background: mode === "corporate" ? "rgba(59,130,246,0.15)" : "rgba(255,255,255,0.02)",
+              color: mode === "corporate" ? "rgba(100,170,255,0.9)" : "hsl(var(--muted-foreground))",
+              borderLeft: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <span className="text-sm leading-none">👔</span>
+            Corporate
+          </button>
+          <button
+            onClick={() => setMode("troubleshooting")}
+            className="flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold tracking-widest uppercase transition-colors"
+            style={{
+              fontFamily: "var(--font-heading)",
+              background: mode === "troubleshooting" ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.02)",
+              color: mode === "troubleshooting" ? "rgba(100,220,100,0.9)" : "hsl(var(--muted-foreground))",
+              borderLeft: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <span className="text-sm leading-none">🧠</span>
+            Troubleshooting
+            <Wrench className="w-3 h-3" />
+          </button>
+        </div>
+        <span
+          className="text-[9px] font-bold tracking-widest uppercase"
+          style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}
+        >
+          Operating Mode
+        </span>
       </div>
 
       {/* ── Chat Panel ──────────────────────────────────────── */}
       <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden flex-1 min-h-0">
 
         {/* Chat header */}
-        <div className="grid grid-cols-3 items-center px-5 py-3 bg-background border-b border-border">
-          {/* Left — label */}
+        <div className="flex items-center justify-between px-5 py-3 bg-background border-b border-border">
+          {/* Left — status */}
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
             <span
               className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground"
               style={{ fontFamily: "var(--font-heading)" }}
             >
-              Confessional Cam
+              {mode === "schrute" ? "Confessional Cam" : mode === "corporate" ? "Briefing Room" : "Diagnostic Bay"}
             </span>
           </div>
 
-          {/* Center — token tally */}
-          <div className="flex items-center justify-center gap-2">
+          {/* Token tally */}
+          <div className="flex items-center gap-2">
             {totalTokens > 0 ? (
               <>
                 <span
@@ -220,8 +286,8 @@ export default function AiAssistant() {
             )}
           </div>
 
-          {/* Right — clear */}
-          <div className="flex justify-end">
+          {/* Clear */}
+          <div>
             {messages.length > 0 && (
               <button
                 onClick={() => { setMessages([]); setSessionTokens({ input: 0, output: 0 }) }}
@@ -275,12 +341,29 @@ export default function AiAssistant() {
               {/* Bubble */}
               <div className={`max-w-[78%] flex flex-col gap-1 ${m.role === "user" ? "items-end" : "items-start"}`}>
                 {m.role === "assistant" && (
-                  <span
-                    className="text-[9px] font-bold tracking-widest uppercase px-1"
-                    style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
-                  >
-                    DW1GHT
-                  </span>
+                  <div className="flex items-center gap-2 px-1">
+                    <span
+                      className="text-[9px] font-bold tracking-widest uppercase"
+                      style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)", opacity: 0.8 }}
+                    >
+                      DW1GHT
+                    </span>
+                    {m.fromData && (
+                      <span
+                        className="flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: "rgba(59,130,246,0.12)",
+                          color: "rgba(100,170,255,0.9)",
+                          fontFamily: "var(--font-heading)",
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        <Database className="w-2.5 h-2.5" />
+                        {m.resultCount != null ? `${m.resultCount} records` : "queried"}
+                      </span>
+                    )}
+                  </div>
                 )}
                 <div
                   className="rounded-xl px-4 py-2.5 text-foreground"
