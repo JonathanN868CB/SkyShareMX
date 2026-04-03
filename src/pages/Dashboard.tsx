@@ -29,6 +29,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Apr 2", text: "Parts module launched: submit parts requests, track order status, manage approvals, and view FedEx tracking — all in one place. Replaces the Google Form workflow. 616 historical orders imported. Find it under Parts in the sidebar." },
   { date: "Apr 1", text: "DW1GHT Interview System launched: AI-powered mechanic interviews with automatic learning, DOM review workflow, and email notifications. Check your interview assignments under Discrepancy Intelligence." },
   { date: "Mar 31", text: "Discrepancy Intelligence launched: browse fleet discrepancy records by aircraft, view full detail with pilot reports, corrective actions, AMM references, turnaround time, and airframe hours between events. 40 records imported for N499CB." },
   { date: "Mar 31", text: "Aircraft Info now pulls live fleet data from Supabase instead of static config. Portal Updates section is now scrollable." },
