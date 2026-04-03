@@ -7,6 +7,9 @@ import {
 import { toast } from "sonner"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/features/auth"
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/shared/ui/select"
 import { PartsStatusBadge } from "./PartsStatusBadge"
 import { PartsApprovalPanel } from "./PartsApprovalPanel"
 import { TrackingTimeline } from "./TrackingTimeline"
@@ -96,11 +99,16 @@ export function PartsDetailView({ requestId }: Props) {
   const [requesterName, setRequesterName] = useState("")
   const [loading, setLoading] = useState(true)
 
+  const isSingleLine = lines.length === 1
+
   // Note input
   const [noteText, setNoteText] = useState("")
   const [sendingNote, setSendingNote] = useState(false)
   const [editingFrontLink, setEditingFrontLink] = useState(false)
   const [frontLinkDraft, setFrontLinkDraft] = useState("")
+
+  // Cancel confirmation
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{ lineId: string; field: string } | null>(null)
@@ -221,7 +229,7 @@ export function PartsDetailView({ requestId }: Props) {
       .update({ status: newStatus })
       .eq("id", request.id)
 
-    if (error) { toast.error("Failed to update status"); return }
+    if (error) { toast.error(`Failed to update status: ${error.message}`); return }
 
     await supabase.from("parts_status_history").insert({
       request_id: request.id,
@@ -274,8 +282,36 @@ export function PartsDetailView({ requestId }: Props) {
       )
     }
 
+    // Single-part order: keep the line in sync with request status
+    if (isSingleLine && lines[0]) {
+      const lineStatusMap: Record<string, string> = {
+        requested: "requested",
+        ordered: "ordered",
+        shipped: "shipped",
+        received: "received",
+        closed: "closed",
+      }
+      const mapped = lineStatusMap[newStatus]
+      if (mapped && mapped !== lines[0].line_status) {
+        await supabase
+          .from("parts_request_lines")
+          .update({ line_status: mapped })
+          .eq("id", lines[0].id)
+      }
+    }
+
     toast.success(`Status updated to ${STATUS_CONFIG[newStatus]?.label ?? newStatus}`)
     loadData()
+  }
+
+  async function handleCancelDelete() {
+    if (!request) return
+    // ON DELETE CASCADE handles all child rows
+    const { error } = await supabase.from("parts_requests").delete().eq("id", request.id)
+
+    if (error) { toast.error(`Failed to delete: ${error.message}`); return }
+    toast.success("Parts request deleted")
+    navigate("/app/parts")
   }
 
   async function saveLineField(lineId: string, field: string, value: string) {
@@ -489,7 +525,26 @@ export function PartsDetailView({ requestId }: Props) {
         {/* Status + controls */}
         <div className="flex items-center gap-3">
           <PartsStatusBadge status={request.status} size="md" />
-          {canEdit && (
+          {canEdit && request.status === "cancelled" && (
+            <button
+              onClick={() => changeStatus("requested")}
+              className="px-2 py-1 rounded text-xs font-medium transition-colors"
+              style={{
+                background: "rgba(100,180,255,0.12)",
+                border: "1px solid rgba(100,180,255,0.3)",
+                color: "rgba(100,180,255,0.9)",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = "rgba(100,180,255,0.2)"
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = "rgba(100,180,255,0.12)"
+              }}
+            >
+              Reopen
+            </button>
+          )}
+          {canEdit && request.status !== "closed" && request.status !== "cancelled" && (
             <div className="relative">
               <button
                 onClick={() => setShowStatusMenu(!showStatusMenu)}
@@ -511,7 +566,7 @@ export function PartsDetailView({ requestId }: Props) {
                     boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
                   }}
                 >
-                  {REQUEST_STATUSES.filter(s => s !== request.status).map(s => (
+                  {REQUEST_STATUSES.filter(s => s !== request.status && s !== "cancelled").map(s => (
                     <button
                       key={s}
                       onClick={() => changeStatus(s)}
@@ -526,6 +581,62 @@ export function PartsDetailView({ requestId }: Props) {
                 </div>
               )}
             </div>
+          )}
+          {(canEdit || request.requested_by === profile?.id) && request.status !== "closed" && request.status !== "cancelled" && (
+            confirmCancel ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Cancel order:</span>
+                <button
+                  onClick={() => { setConfirmCancel(false); handleCancelDelete() }}
+                  className="px-2 py-1 rounded text-xs font-medium transition-colors"
+                  style={{
+                    background: "rgba(255,60,60,0.2)",
+                    border: "1px solid rgba(255,60,60,0.4)",
+                    color: "rgba(255,100,100,0.95)",
+                  }}
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={() => { setConfirmCancel(false); changeStatus("cancelled") }}
+                  className="px-2 py-1 rounded text-xs font-medium transition-colors"
+                  style={{
+                    background: "rgba(255,165,80,0.15)",
+                    border: "1px solid rgba(255,165,80,0.3)",
+                    color: "rgba(255,165,80,0.9)",
+                  }}
+                >
+                  Archive
+                </button>
+                <button
+                  onClick={() => setConfirmCancel(false)}
+                  className="px-2 py-1 rounded text-xs transition-colors"
+                  style={{ color: "rgba(255,255,255,0.4)" }}
+                >
+                  Nevermind
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmCancel(true)}
+                className="px-2 py-1 rounded text-xs transition-colors"
+                style={{
+                  background: "rgba(255,100,100,0.08)",
+                  border: "1px solid rgba(255,100,100,0.2)",
+                  color: "rgba(255,100,100,0.7)",
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = "rgba(255,100,100,0.15)"
+                  e.currentTarget.style.color = "rgba(255,100,100,0.9)"
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = "rgba(255,100,100,0.08)"
+                  e.currentTarget.style.color = "rgba(255,100,100,0.7)"
+                }}
+              >
+                Cancel
+              </button>
+            )
           )}
         </div>
       </div>
@@ -759,23 +870,26 @@ export function PartsDetailView({ requestId }: Props) {
                       Exchange
                     </span>
                   )}
-                  {canEdit ? (
-                    <select
-                      value={line.line_status}
-                      onChange={e => changeLineStatus(line.id, e.target.value as LineStatus)}
-                      className="rounded px-2 py-1 text-xs font-medium"
-                      style={{
-                        background: "rgba(255,255,255,0.05)",
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        color: "rgba(255,255,255,0.7)",
-                      }}
-                    >
-                      {LINE_STATUSES.map(s => (
-                        <option key={s} value={s}>
-                          {s.charAt(0).toUpperCase() + s.slice(1)}
-                        </option>
-                      ))}
-                    </select>
+                  {canEdit && !isSingleLine ? (
+                    <Select value={line.line_status} onValueChange={v => changeLineStatus(line.id, v as LineStatus)}>
+                      <SelectTrigger
+                        className="rounded px-2 py-1 text-xs font-medium h-auto w-auto min-w-[110px]"
+                        style={{
+                          background: "rgba(255,255,255,0.05)",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          color: "rgba(255,255,255,0.7)",
+                        }}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LINE_STATUSES.map(s => (
+                          <SelectItem key={s} value={s}>
+                            {s.charAt(0).toUpperCase() + s.slice(1)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <PartsStatusBadge status={line.line_status} variant="line" />
                   )}
@@ -837,22 +951,25 @@ export function PartsDetailView({ requestId }: Props) {
                     <div>
                       <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: "rgba(255,255,255,0.3)" }}>Core Status</p>
                       {canEdit ? (
-                        <select
-                          value={line.core_status ?? "pending"}
-                          onChange={e => saveLineField(line.id, "core_status", e.target.value)}
-                          className="rounded px-2 py-1 text-xs"
-                          style={{
-                            background: "rgba(255,255,255,0.05)",
-                            border: "1px solid rgba(255,255,255,0.1)",
-                            color: "rgba(178,130,255,0.85)",
-                          }}
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="paperwork_complete">Paperwork Complete</option>
-                          <option value="shipped">Core Shipped</option>
-                          <option value="vendor_received">Vendor Received</option>
-                          <option value="closed">Closed</option>
-                        </select>
+                        <Select value={line.core_status ?? "pending"} onValueChange={v => saveLineField(line.id, "core_status", v)}>
+                          <SelectTrigger
+                            className="rounded px-2 py-1 text-xs h-auto w-auto min-w-[130px]"
+                            style={{
+                              background: "rgba(255,255,255,0.05)",
+                              border: "1px solid rgba(255,255,255,0.1)",
+                              color: "rgba(178,130,255,0.85)",
+                            }}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending">Pending</SelectItem>
+                            <SelectItem value="paperwork_complete">Paperwork Complete</SelectItem>
+                            <SelectItem value="shipped">Core Shipped</SelectItem>
+                            <SelectItem value="vendor_received">Vendor Received</SelectItem>
+                            <SelectItem value="closed">Closed</SelectItem>
+                          </SelectContent>
+                        </Select>
                       ) : (
                         <span className="text-xs" style={{ color: "rgba(178,130,255,0.7)" }}>
                           {(line.core_status ?? "pending").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}

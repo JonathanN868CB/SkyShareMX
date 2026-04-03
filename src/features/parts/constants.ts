@@ -10,6 +10,7 @@ export const REQUEST_STATUSES = [
   "shipped",
   "received",
   "closed",
+  "cancelled",
 ] as const
 
 export type RequestStatus = (typeof REQUEST_STATUSES)[number]
@@ -56,6 +57,7 @@ export const STATUS_CONFIG: Record<
   shipped:          { label: "Shipped",          color: "rgba(255,165,80,0.9)",   bg: "rgba(255,165,80,0.12)" },
   received:         { label: "Received",         color: "rgba(100,220,100,0.9)",  bg: "rgba(100,220,100,0.12)" },
   closed:           { label: "Closed",           color: "rgba(255,255,255,0.35)", bg: "rgba(255,255,255,0.05)" },
+  cancelled:        { label: "Cancelled",        color: "rgba(255,100,100,0.6)",  bg: "rgba(255,100,100,0.08)" },
 }
 
 export const LINE_STATUS_CONFIG: Record<
