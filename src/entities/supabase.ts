@@ -220,6 +220,7 @@ export const APP_SECTIONS: AppSection[] = [
   "Compliance",
   "Safety",
   "Discrepancy Intelligence",
+  "Parts",
 ]
 
 export const DEFAULT_PERMISSIONS: AppSection[] = [
