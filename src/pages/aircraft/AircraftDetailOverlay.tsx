@@ -9,6 +9,7 @@ import IdentityEditorOverlay from "./IdentityEditorOverlay"
 import PropulsionEditorOverlay from "./PropulsionEditorOverlay"
 import DocumentationEditorOverlay from "./DocumentationEditorOverlay"
 import ExportModal from "./ExportModal"
+import MmAuditWidget from "@/features/mm-audit/MmAuditWidget"
 
 interface Props {
   aircraft: AircraftBase
@@ -2086,15 +2087,18 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
               </div>
 
               {/* Right: Documentation & Manuals */}
-              <DocumentationCard
-                fields={baseDetail.documentation}
-                tailNumber={aircraft.tailNumber}
-                cmms={baseDetail.cmms ?? []}
-                familyGroup={familyGroup}
-                canDelete={canDelete}
-                canEdit={canEditSection}
-                onEdit={() => setShowDocumentationEditor(true)}
-              />
+              <div className="flex flex-col gap-4">
+                <DocumentationCard
+                  fields={baseDetail.documentation}
+                  tailNumber={aircraft.tailNumber}
+                  cmms={baseDetail.cmms ?? []}
+                  familyGroup={familyGroup}
+                  canDelete={canDelete}
+                  canEdit={canEditSection}
+                  onEdit={() => setShowDocumentationEditor(true)}
+                />
+                <MmAuditWidget aircraftId={aircraft.id} />
+              </div>
 
             </div>
           </div>

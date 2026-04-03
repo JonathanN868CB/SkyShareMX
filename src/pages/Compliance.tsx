@@ -2,6 +2,7 @@ import { useState } from "react"
 import { FileText, Plane, Tablet, CalendarClock, Award, ClipboardList, ExternalLink, BookOpen, Shield, AlertTriangle, ChevronRight } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { FLEET } from "@/pages/aircraft/fleetData"
+import MmAuditSection from "@/features/mm-audit/MmAuditSection"
 
 // ─── Color token ─────────────────────────────────────────────────────────────
 const C = "#a78bfa" // violet-400 — compliance accent
@@ -225,6 +226,9 @@ export default function Compliance() {
           Registrations · Documents · Certificates · Program Oversight
         </p>
       </div>
+
+      {/* ── MM Revision & Audit Tracking ──────────────────────────────────── */}
+      <MmAuditSection />
 
       {/* ── Aircraft Registrations ────────────────────────────────────────── */}
       <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${C}` }}>
