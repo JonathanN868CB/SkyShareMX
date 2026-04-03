@@ -143,6 +143,12 @@ When building new pages, follow this structure:
 
 ---
 
+## Data Architecture — Interconnected by Design
+
+This is a maintenance portal for a specific fleet of aircraft. The fleet is the nucleus — nearly every feature (discrepancies, parts, compliance, training, documentation) relates back to individual tail numbers and their configurations. These modules are separated in the UI for human usability, but they share data and cross-reference each other throughout the database. When changing aircraft data, engine models, document references, or any fleet-level information, check for downstream impact in related modules. A single aircraft change can ripple across compliance audits, discrepancy records, parts history, and detail cards.
+
+---
+
 ## Database & Supabase Rules
 
 - All user-scoped tables must have a `user_id UUID` referencing `auth.users(id) ON DELETE CASCADE` — not `profiles.id`

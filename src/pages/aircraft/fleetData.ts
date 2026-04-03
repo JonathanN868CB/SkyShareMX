@@ -175,11 +175,16 @@ export const FLEET: ManufacturerGroup[] = [
         ],
       },
       {
-        family: "Citation 560XL / XLS+",
+        family: "Citation 560XL",
         aircraft: [
-          { tailNumber: "N766CB", year: 2003, model: "Cessna Citation 560XL",    serialNumber: "560-5341" },
-          { tailNumber: "N606CB", year: 2003, model: "Cessna Citation 560XL",    serialNumber: "560-5333" },
-          { tailNumber: "N6TM",   year: 2010, model: "Cessna Citation 560 XLS+", serialNumber: "560-6071" },
+          { tailNumber: "N766CB", year: 2003, model: "Cessna Citation 560XL", serialNumber: "560-5341" },
+          { tailNumber: "N606CB", year: 2003, model: "Cessna Citation 560XL", serialNumber: "560-5333" },
+        ],
+      },
+      {
+        family: "Citation XLS+",
+        aircraft: [
+          { tailNumber: "N6TM", year: 2010, model: "Cessna Citation 560 XLS+", serialNumber: "560-6071" },
         ],
       },
       {
@@ -278,6 +283,7 @@ interface MakeDetailParams {
   hasProp: boolean
   hasAPU: boolean
   avionicsSystems?: string[]  // kept for call-site compat; display migrated to avionics field
+  documentation?: DataField[] // override default "—" documentation with populated values
 }
 
 // Split "Pratt & Whitney Canada PT6A-67P" → "Pratt & Whitney Canada"
@@ -313,6 +319,7 @@ function makeDetail({
   isTwin,
   hasProp,
   hasAPU,
+  documentation: docOverride,
 }: MakeDetailParams): AircraftDetailData {
 
   const mfr = inferManufacturer(engineModel)
@@ -361,7 +368,7 @@ function makeDetail({
     ),
   ]
 
-  const documentation: DataField[] = [
+  const documentation: DataField[] = docOverride ?? [
     { label: "Digital AFM",         value: "None" },
     { label: "Airframe Manuals",    value: "—" },
     { label: "Engine Manuals",      value: "—" },
@@ -420,7 +427,7 @@ export const AIRCRAFT_DETAILS: Record<string, AircraftDetailData> = {
       { label: "Propeller 1 Blades",       value: "5" },
       { label: "Propeller 1 Model",        value: "MTV-27-1-N-C-F-R(P)" },
       { label: "Propeller 1 S/N",          value: "150628" },
-      { label: "Propeller 1 Descriptor",   value: "MT 5-blade upgrade" },
+      { label: "Propeller 1 Descriptor",   value: "5-blade composite (MT Propeller, Germany) — Finnoff STC" },
     ],
     apu: null,
     programs: [
@@ -444,62 +451,293 @@ export const AIRCRAFT_DETAILS: Record<string, AircraftDetailData> = {
       },
     ],
     documentation: [
-      { label: "Digital AFM",       value: "None" },
-      { label: "Airframe Manuals",  value: "—" },
-      { label: "Engine Manuals",    value: "—" },
-      { label: "Propeller Manuals", value: "—" },
+      { label: "Digital AFM",                                    value: "None" },
+      { label: "Pilatus PC-12/45 & PC-12/47 Maintenance Manual", value: "—", note: "PIL-02049 · Rev 50 · Jan 2026" },
+      { label: "P&WC PT6A Maintenance Manual",                   value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+      { label: "MT Propeller Service Bulletin 1",                 value: "—", note: "MT-SB1 · Rev 11 · Oct 2025" },
+      { label: "MT Propeller Overhaul Manual E-1083",             value: "—", note: "MT-E1083 · Rev 39 · May 2024" },
     ],
     cmms: [],
     avionics: [],
     notes: "",
   },
-  "N515RP": makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["—"] }),
-  "N870CB": makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["—"] }),
+  "N515RP": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67B", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                                    value: "None" },
+    { label: "Pilatus PC-12/45 & PC-12/47 Maintenance Manual", value: "—", note: "PIL-02049 · Rev 50 · Jan 2026" },
+    { label: "P&WC PT6A Maintenance Manual",                   value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147",       value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67B" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "4" },
+    { label: "Propeller 1 Model",        value: "HC-E4A-3D" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "4-blade aluminum Hartzell" },
+  ]},
+  "N870CB": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67B", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                                    value: "None" },
+    { label: "Pilatus PC-12/45 & PC-12/47 Maintenance Manual", value: "—", note: "PIL-02049 · Rev 50 · Jan 2026" },
+    { label: "P&WC PT6A Maintenance Manual",                   value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147",       value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67B" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "4" },
+    { label: "Propeller 1 Model",        value: "HC-E4A-3D" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "4-blade aluminum Hartzell" },
+  ]},
 
   // ── Pilatus PC-12/47 Legacy ──────────────────────────────────────────────────
-  "N739S":  makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["—"] }),
-  "N863CB": makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["—"] }),
+  "N739S":  { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67B", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                                    value: "None" },
+    { label: "Pilatus PC-12/45 & PC-12/47 Maintenance Manual", value: "—", note: "PIL-02049 · Rev 50 · Jan 2026" },
+    { label: "P&WC PT6A Maintenance Manual",                   value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147",       value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67B" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "5" },
+    { label: "Propeller 1 Model",        value: "HC-E5A-3A" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "5-blade composite Hartzell" },
+  ]},
+  "N863CB": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67B", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                                    value: "None" },
+    { label: "Pilatus PC-12/45 & PC-12/47 Maintenance Manual", value: "—", note: "PIL-02049 · Rev 50 · Jan 2026" },
+    { label: "P&WC PT6A Maintenance Manual",                   value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147",       value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67B" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "4" },
+    { label: "Propeller 1 Model",        value: "HC-E4A-3D" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "4-blade aluminum Hartzell" },
+  ]},
 
   // ── Pilatus PC-12/47E NG ─────────────────────────────────────────────────────
-  "N963CB": makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["Honeywell Primus Apex"] }),
-  "N413UU": makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["Honeywell Primus Apex"] }),
-  "N477KR": makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["Honeywell Primus Apex"] }),
-  "N418T":  makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["Honeywell Primus Apex"] }),
+  "N963CB": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                          value: "None" },
+    { label: "Pilatus PC-12/47E Maintenance Manual", value: "—", note: "PIL-02300 · Rev 35 · Jan 2025" },
+    { label: "P&WC PT6A Maintenance Manual",         value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "MT Propeller Service Bulletin 1",       value: "—", note: "MT-SB1 · Rev 11 · Oct 2025" },
+    { label: "MT Propeller Overhaul Manual E-1083",   value: "—", note: "MT-E1083 · Rev 39 · May 2024" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67P" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "MT Propeller" },
+    { label: "Propeller 1 Blades",       value: "7" },
+    { label: "Propeller 1 Model",        value: "MTV-47-1-N-C-F-R(P)-V" },
+    { label: "Propeller 1 S/N",          value: "231721" },
+    { label: "Propeller 1 Descriptor",   value: "\"Silent Seven\" — 7-blade composite (MT Propeller, Germany)" },
+  ]},
+  "N413UU": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                          value: "None" },
+    { label: "Pilatus PC-12/47E Maintenance Manual", value: "—", note: "PIL-02300 · Rev 35 · Jan 2025" },
+    { label: "P&WC PT6A Maintenance Manual",         value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147", value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67P" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "4" },
+    { label: "Propeller 1 Model",        value: "HC-E4A-3D" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "4-blade aluminum Hartzell" },
+  ]},
+  "N477KR": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                          value: "None" },
+    { label: "Pilatus PC-12/47E Maintenance Manual", value: "—", note: "PIL-02300 · Rev 35 · Jan 2025" },
+    { label: "P&WC PT6A Maintenance Manual",         value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147", value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67P" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "5" },
+    { label: "Propeller 1 Model",        value: "HC-E5A-3A" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "5-blade composite Hartzell" },
+  ]},
+  "N418T":  { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6A-67P", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                          value: "None" },
+    { label: "Pilatus PC-12/47E Maintenance Manual", value: "—", note: "PIL-02300 · Rev 35 · Jan 2025" },
+    { label: "P&WC PT6A Maintenance Manual",         value: "—", note: "PWC-3038336 · Rev 62 · Oct 2025" },
+    { label: "Hartzell Propeller Maintenance Manual 147", value: "—", note: "HC-MAN147 · Rev 23 · Sep 2025" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6A-67P" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "5" },
+    { label: "Propeller 1 Model",        value: "HC-E5A-3A" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "5-blade composite Hartzell" },
+  ]},
 
   // ── Pilatus PC-12 NGX ────────────────────────────────────────────────────────
-  "N511DR": makeDetail({ engineModel: "Pratt & Whitney Canada PT6E-67XP", isTwin: false, hasProp: true, hasAPU: false, avionicsSystems: ["Honeywell Primus Apex (NGX)"] }),
+  "N511DR": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6E-67XP", isTwin: false, hasProp: true, hasAPU: false, documentation: [
+    { label: "Digital AFM",                                       value: "None" },
+    { label: "Pilatus PC-12/47E NGX Maintenance Manual",          value: "—", note: "PIL-02436 · Rev 13 · Jan 2025" },
+    { label: "P&WC PT6E-67XP Engine Maintenance Manual",          value: "—", note: "PWC-PT6E-MM · Rev TBD" },
+    { label: "Hartzell HC-E5A-31A Propeller Maintenance Manual",  value: "—", note: "HC-E5A-31A-MM · Rev TBD" },
+  ]}), powerplant: [
+    { label: "Engine 1 Manufacturer",    value: "Pratt & Whitney Canada" },
+    { label: "Engine 1 Model",           value: "PT6E-67XP" },
+    { label: "Engine 1 S/N",             value: "—" },
+    { label: "Engine 1 Descriptor",      value: "—" },
+    { label: "Propeller 1 Manufacturer", value: "Hartzell" },
+    { label: "Propeller 1 Blades",       value: "5" },
+    { label: "Propeller 1 Model",        value: "HC-E5A-31A" },
+    { label: "Propeller 1 S/N",          value: "—" },
+    { label: "Propeller 1 Descriptor",   value: "5-blade composite Hartzell (NGX)" },
+  ]},
 
   // ── Cessna Citation CJ2 (525A) ───────────────────────────────────────────────
-  "N868CB": makeDetail({ engineModel: "Williams International FJ44-3A", isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Garmin G1000"] }),
-  "N871CB": makeDetail({ engineModel: "Williams International FJ44-3A", isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Garmin G1000"] }),
-  "N744CB": makeDetail({ engineModel: "Williams International FJ44-3A", isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Garmin G1000"] }),
+  "N868CB": makeDetail({ engineModel: "Williams International FJ44-2C", isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                       value: "None" },
+    { label: "Cessna 525A Maintenance Manual",    value: "—", note: "525AMM-CH04 Rev 11 · 525AMM-CH05 Rev 21" },
+    { label: "Williams FJ44-2C Engine Manual",    value: "—", note: "WI-64135 · Rev 69 · Sep 2025" },
+  ]}),
+  "N871CB": makeDetail({ engineModel: "Williams International FJ44-2C", isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                       value: "None" },
+    { label: "Cessna 525A Maintenance Manual",    value: "—", note: "525AMM-CH04 Rev 11 · 525AMM-CH05 Rev 21" },
+    { label: "Williams FJ44-2C Engine Manual",    value: "—", note: "WI-64135 · Rev 69 · Sep 2025" },
+  ]}),
+  "N744CB": makeDetail({ engineModel: "Williams International FJ44-2C", isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                       value: "None" },
+    { label: "Cessna 525A Maintenance Manual",    value: "—", note: "525AMM-CH04 Rev 11 · 525AMM-CH05 Rev 21" },
+    { label: "Williams FJ44-2C Engine Manual",    value: "—", note: "WI-64135 · Rev 69 · Sep 2025" },
+  ]}),
 
-  // ── Cessna Citation 560XL / XLS+ ────────────────────────────────────────────
-  "N766CB": makeDetail({ engineModel: "Pratt & Whitney Canada PW545A",  isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Collins Pro Line 21"] }),
-  "N606CB": makeDetail({ engineModel: "Pratt & Whitney Canada PW545A",  isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Collins Pro Line 21"] }),
-  "N6TM":   makeDetail({ engineModel: "Pratt & Whitney Canada PW545C",  isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Collins Pro Line 21"] }),
+  // ── Cessna Citation 560XL ─────────────────────────────────────────────────
+  "N766CB": makeDetail({ engineModel: "Pratt & Whitney Canada PW545A",  isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                       value: "None" },
+    { label: "Cessna 560XL Maintenance Manual",   value: "—", note: "56XMM-CH04 Rev 17 · 56XMM-CH05 Rev 50" },
+    { label: "P&WC PW545A Engine Manual",         value: "—", note: "PWC-30J1272 · Rev 64 · Oct 2025" },
+  ]}),
+  "N606CB": makeDetail({ engineModel: "Pratt & Whitney Canada PW545A",  isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                       value: "None" },
+    { label: "Cessna 560XL Maintenance Manual",   value: "—", note: "56XMM-CH04 Rev 17 · 56XMM-CH05 Rev 50" },
+    { label: "P&WC PW545A Engine Manual",         value: "—", note: "PWC-30J1272 · Rev 64 · Oct 2025" },
+  ]}),
+
+  // ── Cessna Citation XLS+ ────────────────────────────────────────────────────
+  "N6TM":   makeDetail({ engineModel: "Pratt & Whitney Canada PW545C",  isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                       value: "None" },
+    { label: "Cessna 560XL Maintenance Manual",   value: "—", note: "56XMM-CH04 Rev 17 · 56XMM-CH05 Rev 50" },
+    { label: "P&WC PW545C Engine Manual",         value: "—", note: "PWC-30J2302 (AWL) Rev 37 · PWC-30J2602 (Sched) Rev 37" },
+  ]}),
 
   // ── Cessna Citation M2 Gen2 ──────────────────────────────────────────────────
-  "N785PD": makeDetail({ engineModel: "Williams International FJ44-4A", isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Garmin G3000"] }),
+  "N785PD": makeDetail({ engineModel: "Williams International FJ44-4A", isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                             value: "None" },
+    { label: "Cessna Citation M2 Maintenance Manual",   value: "—", note: "525MM-M2 · Rev 10 · Sep 2025" },
+    { label: "Williams FJ44-4A Engine Manual",          value: "—", note: "WI-FJ44-4A-MM · Rev TBD" },
+  ]}),
 
   // ── Gulfstream G200 ──────────────────────────────────────────────────────────
-  "N860CB": makeDetail({ engineModel: "Pratt & Whitney Canada PW306A", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Collins Pro Line 4"] }),
-  "N861CB": makeDetail({ engineModel: "Pratt & Whitney Canada PW306A", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Collins Pro Line 4"] }),
-  "N612FA": makeDetail({ engineModel: "Pratt & Whitney Canada PW306A", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Collins Pro Line 4"] }),
+  "N860CB": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PW306A", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                    value: "None" },
+    { label: "IAI G200 Maintenance Manual",    value: "—", note: "IAI-G200-1001-06 · Rev 39 · Aug 2025" },
+    { label: "P&WC PW306A Engine Manual",      value: "—", note: "PWC-30B1412 · Rev 63 · Nov 2025" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "GTCP36-150[IAI]" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
+  "N861CB": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PW306A", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                    value: "None" },
+    { label: "IAI G200 Maintenance Manual",    value: "—", note: "IAI-G200-1001-06 · Rev 39 · Aug 2025" },
+    { label: "P&WC PW306A Engine Manual",      value: "—", note: "PWC-30B1412 · Rev 63 · Nov 2025" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "GTCP36-150[IAI]" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
+  "N612FA": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PW306A", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                    value: "None" },
+    { label: "IAI G200 Maintenance Manual",    value: "—", note: "IAI-G200-1001-06 · Rev 39 · Aug 2025" },
+    { label: "P&WC PW306A Engine Manual",      value: "—", note: "PWC-30B1412 · Rev 63 · Nov 2025" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "GTCP36-150[IAI]" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
 
   // ── Gulfstream G450 ──────────────────────────────────────────────────────────
-  "N663CB": makeDetail({ engineModel: "Rolls-Royce Tay 611-8C", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Honeywell Primus Epic"] }),
-  "N787JS": makeDetail({ engineModel: "Rolls-Royce Tay 611-8C", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Honeywell Primus Epic"] }),
+  "N663CB": { ...makeDetail({ engineModel: "Rolls-Royce Tay 611-8C", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                               value: "None" },
+    { label: "Gulfstream G450 AMM",                       value: "—", note: "GAC-G450-AMM · Rev 34 · Apr 2025" },
+    { label: "Rolls-Royce Tay 611-8C Engine Manual",      value: "—", note: "RR-T-TAY-6RR · Rev 34 · Apr 2025" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "GTCP36-150(GIV)" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
+  "N787JS": { ...makeDetail({ engineModel: "Rolls-Royce Tay 611-8C", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                               value: "None" },
+    { label: "Gulfstream G450 AMM",                       value: "—", note: "GAC-G450-AMM · Rev 34 · Apr 2025" },
+    { label: "Rolls-Royce Tay 611-8C Engine Manual",      value: "—", note: "RR-T-TAY-6RR · Rev 34 · Apr 2025" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "GTCP36-150(GIV)" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
 
   // ── Gulfstream GV ────────────────────────────────────────────────────────────
-  "N563CB": makeDetail({ engineModel: "Rolls-Royce BR710C4-11", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Honeywell SPZ-8000"] }),
+  "N563CB": { ...makeDetail({ engineModel: "Rolls-Royce BR710C4-11", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                               value: "None" },
+    { label: "Gulfstream GV AMM",                         value: "—", note: "GAC-GV-AMM · Rev 59 · Jan 2025" },
+    { label: "Rolls-Royce BR710C4-11 Engine Manual",      value: "—", note: "RR-BR710-MM · Rev TBD" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "GTCP36-150(GIV)" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
 
   // ── Embraer Phenom 100 ───────────────────────────────────────────────────────
-  "N450JF": makeDetail({ engineModel: "Pratt & Whitney Canada PW617F-E", isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Garmin G950"] }),
+  "N450JF": makeDetail({ engineModel: "Pratt & Whitney Canada PW617F-E", isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                            value: "None" },
+    { label: "Embraer Phenom 100 (EMB-500) AMM",      value: "—", note: "EMB-500-AMM · Rev TBD" },
+    { label: "P&WC PW617F-E Engine Manual",            value: "—", note: "PWC-PW617F-MM · Rev TBD" },
+  ]}),
 
   // ── Embraer Phenom 300E ──────────────────────────────────────────────────────
-  "N409KG": makeDetail({ engineModel: "Pratt & Whitney Canada PW535E1", isTwin: true, hasProp: false, hasAPU: false, avionicsSystems: ["Garmin G3000"] }),
+  "N409KG": makeDetail({ engineModel: "Pratt & Whitney Canada PW535E1", isTwin: true, hasProp: false, hasAPU: false, documentation: [
+    { label: "Digital AFM",                        value: "None" },
+    { label: "Embraer EMB-505 AMM 2757",           value: "—", note: "Pt III Rev 8 · Pt IV Rev 2 · Engine Rev 32" },
+    { label: "P&WC PW535E1 Engine Manual",         value: "—", note: "Integrated in EMB-505 AMM 2757 · EMB-AMM2757-ENG Rev 32" },
+  ]}),
 
   // ── Embraer Legacy 650 ───────────────────────────────────────────────────────
-  "N650JF": makeDetail({ engineModel: "Rolls-Royce AE3007A1E", isTwin: true, hasProp: false, hasAPU: true, avionicsSystems: ["Honeywell Primus Epic 1.5"] }),
+  "N650JF": { ...makeDetail({ engineModel: "Rolls-Royce AE3007A1E", isTwin: true, hasProp: false, hasAPU: true, documentation: [
+    { label: "Digital AFM",                               value: "None" },
+    { label: "Embraer Legacy 650 (EMB-135BJ) AMM",       value: "—", note: "EMB-135BJ-AMM · Rev TBD" },
+    { label: "Rolls-Royce AE3007A1E Engine Manual",       value: "—", note: "RR-AE3007-MM · Rev TBD" },
+  ]}), apu: [
+    { label: "APU 1 Manufacturer", value: "Honeywell" },
+    { label: "APU 1 Model",        value: "—" },
+    { label: "APU 1 S/N",          value: "—" },
+  ]},
 }

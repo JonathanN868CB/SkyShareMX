@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
+import { useMmFleetOverview as useMmFleetOverviewForBadge } from "@/features/mm-audit/useMmAuditData"
 import {
   Home,
   Plane,
@@ -168,7 +169,8 @@ export function AppSidebar() {
                 className={cn("flex-shrink-0", collapsed ? "w-[22px] h-[22px]" : "w-[17px] h-[17px]")}
                 style={isActive ? { color: "var(--skyshare-gold)" } : {}}
               />
-              {!collapsed && <span className="truncate tracking-wide">{item.name}</span>}
+              {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
+              {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
             </NavLink>
           ) : (
             <button
@@ -352,5 +354,20 @@ export function AppSidebar() {
         )}
       </SidebarFooter>
     </Sidebar>
+  )
+}
+
+// ─── Compliance audit overdue badge ──────────────────────────────────────────
+function ComplianceBadge() {
+  const { data } = useMmFleetOverviewForBadge()
+  const overdue = (data?.summaries ?? []).filter((s: { status: string }) => s.status === "overdue").length
+  if (overdue === 0) return null
+  return (
+    <span
+      className="ml-auto inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold"
+      style={{ background: "rgba(239,68,68,0.2)", color: "#f87171" }}
+    >
+      {overdue}
+    </span>
   )
 }
