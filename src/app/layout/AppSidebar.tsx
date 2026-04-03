@@ -21,6 +21,7 @@ import {
   HardHat,
   ChevronRight,
   Activity,
+  Package,
 } from "lucide-react"
 import {
   Sidebar,
@@ -76,6 +77,7 @@ const sidebarSections: SidebarSection[] = [
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
+      { name: "Parts",                  path: "/app/parts",                    icon: Package,       section: "Parts"                     },
       { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
       { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],

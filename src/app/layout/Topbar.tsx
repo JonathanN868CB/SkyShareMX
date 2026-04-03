@@ -1,5 +1,6 @@
-import { useRef, useState } from "react"
-import { Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { useRef, useState, useEffect } from "react"
+import { AlertTriangle, Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { useTheme } from "next-themes"
 import { useAuth } from "@/features/auth"
 import { supabase } from "@/lib/supabase"
@@ -44,7 +45,7 @@ const ALL_SECTIONS: AppSection[] = [
   "Dashboard", "Aircraft Info", "AI Assistant", "Aircraft Conformity",
   "14-Day Check", "Maintenance Planning", "Ten or More", "Terminal-OGD",
   "Projects", "Training", "Docs & Links", "My Journey", "Vendor Map",
-  "Compliance", "Safety", "Discrepancy Intelligence",
+  "Compliance", "Safety", "Discrepancy Intelligence", "Parts",
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -428,6 +429,23 @@ export function Topbar() {
   const { theme, setTheme } = useTheme()
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [aogCount, setAogCount] = useState(0)
+  const navigate = useNavigate()
+
+  // Poll for active AOG parts requests
+  useEffect(() => {
+    async function checkAog() {
+      const { count } = await supabase
+        .from("parts_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("aog", true)
+        .not("status", "in", '("received","closed")')
+      setAogCount(count ?? 0)
+    }
+    checkAog()
+    const interval = setInterval(checkAog, 60_000) // refresh every minute
+    return () => clearInterval(interval)
+  }, [])
 
   const displayName = profile?.display_name ?? profile?.full_name ?? profile?.email ?? user?.email ?? "User"
   const initials = profile?.avatar_initials || getInitials(displayName)
@@ -446,6 +464,25 @@ export function Topbar() {
       </div>
 
       <div className="flex items-center gap-1 ml-auto">
+
+        {/* AOG indicator */}
+        {aogCount > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2 gap-1.5 hover:bg-accent"
+            onClick={() => navigate("/app/parts")}
+            title={`${aogCount} active AOG request${aogCount > 1 ? "s" : ""}`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" style={{ color: "rgba(255,80,80,0.9)" }} />
+            <span
+              className="text-[10px] font-bold uppercase tracking-wider"
+              style={{ color: "rgba(255,100,100,0.9)" }}
+            >
+              AOG {aogCount > 1 ? `(${aogCount})` : ""}
+            </span>
+          </Button>
+        )}
 
         {/* Notifications bell */}
         <Popover>
