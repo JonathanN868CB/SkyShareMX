@@ -36,6 +36,24 @@ const HARDCODED_RULES: {
     source: "AppSidebar.tsx",
     roles: ["Super Admin"],
   },
+  {
+    feature: "Parts — Edit Orders & Update Status",
+    detail: "Inline-edit vendor, PO#, cost, tracking, ETA; change request/line status",
+    source: "PartsDetailView.tsx",
+    roles: ["Manager", "Admin", "Super Admin"],
+  },
+  {
+    feature: "Parts — Approval Config",
+    detail: "Enable/disable approvals, configure which roles require approval",
+    source: "Parts.tsx (gear icon)",
+    roles: ["Admin", "Super Admin"],
+  },
+  {
+    feature: "Parts — Cancel Own Request",
+    detail: "Requester can cancel (archive or delete) their own parts request",
+    source: "PartsDetailView.tsx",
+    roles: ["Technician", "Manager", "Admin", "Super Admin"],
+  },
 ]
 
 const ROLE_ORDER: AppRole[] = ["Super Admin", "Admin", "Manager", "Technician", "Read-Only"]
