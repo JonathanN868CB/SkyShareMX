@@ -4,15 +4,14 @@ import { Plus, AlertTriangle, Plane, Package as PackageIcon } from "lucide-react
 import { toast } from "sonner"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/features/auth"
+import { useFleet } from "@/pages/aircraft/useFleet"
+import {
+  Select, SelectTrigger, SelectValue, SelectContent,
+  SelectGroup, SelectLabel, SelectItem,
+} from "@/shared/ui/select"
 import { ORDER_TYPES, type OrderType } from "../constants"
 import { PartsLineItem, EMPTY_LINE, type LineItemData } from "./PartsLineItem"
 import { shouldRequireApproval, notifyByRoles, getApproverProfileIds, notifyProfileIds } from "../helpers"
-
-interface AircraftOption {
-  aircraft_id: string
-  registration: string
-  model_family: string
-}
 
 interface ShipToOption {
   label: string
@@ -24,8 +23,10 @@ export function PartsRequestForm() {
   const { profile } = useAuth()
   const [submitting, setSubmitting] = useState(false)
 
+  // Fleet data from the shared hook (same source as Aircraft Info)
+  const { data: fleet } = useFleet()
+
   // Data
-  const [aircraftOptions, setAircraftOptions] = useState<AircraftOption[]>([])
   const [shipToOptions, setShipToOptions] = useState<ShipToOption[]>([])
 
   // Form state — header
@@ -62,52 +63,30 @@ export function PartsRequestForm() {
     {}
   )
 
-  // Load aircraft + ship-to config
+  // Load ship-to config (aircraft comes from useFleet)
   useEffect(() => {
     async function load() {
-      const [acRes, configRes] = await Promise.all([
-        supabase
-          .from("aircraft_registrations")
-          .select("aircraft_id, registration")
-          .eq("is_current", true)
-          .order("registration"),
-        supabase
-          .from("parts_config")
-          .select("value")
-          .eq("key", "ship_to_addresses")
-          .single(),
-      ])
-
-      if (acRes.data) {
-        // Enrich with model info
-        const ids = acRes.data.map((r: { aircraft_id: string }) => r.aircraft_id)
-        const { data: acData } = await supabase
-          .from("aircraft")
-          .select("id, model_family")
-          .in("id", ids)
-
-        const modelMap = new Map(acData?.map((a: { id: string; model_family: string }) => [a.id, a.model_family]) ?? [])
-        setAircraftOptions(
-          acRes.data.map((r: { aircraft_id: string; registration: string }) => ({
-            aircraft_id: r.aircraft_id,
-            registration: r.registration,
-            model_family: (modelMap.get(r.aircraft_id) as string) ?? "",
-          }))
-        )
-      }
-
-      if (configRes.data?.value) {
-        setShipToOptions(configRes.data.value as ShipToOption[])
-      }
+      const { data } = await supabase
+        .from("parts_config")
+        .select("value")
+        .eq("key", "ship_to_addresses")
+        .single()
+      if (data?.value) setShipToOptions(data.value as ShipToOption[])
     }
     load()
   }, [])
 
-  // Aircraft selection handler
+  // Aircraft selection handler — looks up from shared fleet data
   function handleAircraftChange(value: string) {
     setAircraftId(value)
-    const ac = aircraftOptions.find(a => a.aircraft_id === value)
-    setAircraftTail(ac?.registration ?? "")
+    // Find tail number from fleet
+    for (const mfg of fleet ?? []) {
+      for (const fam of mfg.families) {
+        const ac = fam.aircraft.find(a => a.id === value)
+        if (ac) { setAircraftTail(ac.tailNumber); return }
+      }
+    }
+    setAircraftTail("")
   }
 
   // Line management
@@ -335,19 +314,30 @@ export function PartsRequestForm() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelClass} style={labelStyle}>Aircraft{requiredMark}</label>
-              <select
-                value={aircraftId}
-                onChange={e => handleAircraftChange(e.target.value)}
-                className="w-full rounded-md px-3 py-2 text-sm"
-                style={inputStyle(!!errors.aircraftId)}
-              >
-                <option value="">Select aircraft...</option>
-                {aircraftOptions.map(ac => (
-                  <option key={ac.aircraft_id} value={ac.aircraft_id}>
-                    {ac.registration} — {ac.model_family}
-                  </option>
-                ))}
-              </select>
+              <Select value={aircraftId} onValueChange={handleAircraftChange}>
+                <SelectTrigger
+                  className="w-full rounded-md px-3 py-2 text-sm h-auto"
+                  style={inputStyle(!!errors.aircraftId)}
+                >
+                  <SelectValue placeholder="Select aircraft..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(fleet ?? []).map(mfg => (
+                    <SelectGroup key={mfg.manufacturer}>
+                      <SelectLabel className="text-xs font-semibold" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }}>
+                        {mfg.manufacturer}
+                      </SelectLabel>
+                      {mfg.families.flatMap(fam =>
+                        fam.aircraft.map(ac => (
+                          <SelectItem key={ac.id} value={ac.id}>
+                            {ac.tailNumber} — {fam.family}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
               {errors.aircraftId && <p className="text-xs mt-0.5" style={{ color: "rgba(255,100,100,0.8)" }}>{errors.aircraftId}</p>}
             </div>
 
@@ -357,7 +347,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={jobDescription}
                 onChange={e => { setJobDescription(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.jobDescription; return n }) }}
-                placeholder='e.g. "Brake Change", "600hr Engine Check"'
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle(!!errors.jobDescription)}
               />
@@ -370,7 +360,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={workOrder}
                 onChange={e => { setWorkOrder(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.workOrder; return n }) }}
-                placeholder="e.g. 26-0392"
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle(!!errors.workOrder)}
               />
@@ -383,7 +373,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={itemNumber}
                 onChange={e => setItemNumber(e.target.value)}
-                placeholder="e.g. 003"
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle()}
               />
@@ -400,7 +390,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={jobDescription}
                 onChange={e => { setJobDescription(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.jobDescription; return n }) }}
-                placeholder='e.g. "Replenish brake pads for CL-604 fleet"'
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle(!!errors.jobDescription)}
               />
@@ -412,7 +402,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={stockPurpose}
                 onChange={e => setStockPurpose(e.target.value)}
-                placeholder="Why are we ordering for stock?"
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle()}
               />
@@ -491,18 +481,23 @@ export function PartsRequestForm() {
 
           <div>
             <label className={labelClass} style={labelStyle}>Ship To{requiredMark}</label>
-            <select
+            <Select
               value={shipTo}
-              onChange={e => { setShipTo(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.shipTo; return n }) }}
-              className="w-full rounded-md px-3 py-2 text-sm"
-              style={inputStyle(!!errors.shipTo)}
+              onValueChange={v => { setShipTo(v); setErrors(prev => { const n = { ...prev }; delete n.shipTo; return n }) }}
             >
-              <option value="">Select location...</option>
-              {shipToOptions.map(opt => (
-                <option key={opt.label} value={opt.label}>{opt.label}</option>
-              ))}
-              <option value="other">Other (specify below)</option>
-            </select>
+              <SelectTrigger
+                className="w-full rounded-md px-3 py-2 text-sm h-auto"
+                style={inputStyle(!!errors.shipTo)}
+              >
+                <SelectValue placeholder="Select location..." />
+              </SelectTrigger>
+              <SelectContent>
+                {shipToOptions.map(opt => (
+                  <SelectItem key={opt.label} value={opt.label}>{opt.label}</SelectItem>
+                ))}
+                <SelectItem value="other">Other (specify below)</SelectItem>
+              </SelectContent>
+            </Select>
             {errors.shipTo && <p className="text-xs mt-0.5" style={{ color: "rgba(255,100,100,0.8)" }}>{errors.shipTo}</p>}
           </div>
         </div>
@@ -514,7 +509,7 @@ export function PartsRequestForm() {
               type="text"
               value={shipToAddress}
               onChange={e => { setShipToAddress(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.shipToAddress; return n }) }}
-              placeholder="Full shipping address"
+              placeholder=""
               className="w-full rounded-md px-3 py-2 text-sm"
               style={inputStyle(!!errors.shipToAddress)}
             />
@@ -525,28 +520,28 @@ export function PartsRequestForm() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass} style={labelStyle}>Are all parts needed at once?</label>
-            <select
-              value={allAtOnce}
-              onChange={e => setAllAtOnce(e.target.value)}
-              className="w-full rounded-md px-3 py-2 text-sm"
-              style={inputStyle()}
-            >
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
+            <Select value={allAtOnce} onValueChange={setAllAtOnce}>
+              <SelectTrigger className="w-full rounded-md px-3 py-2 text-sm h-auto" style={inputStyle()}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="yes">Yes</SelectItem>
+                <SelectItem value="no">No</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div>
             <label className={labelClass} style={labelStyle}>If delayed, changes expected RTS?</label>
-            <select
-              value={delayAffectsRts}
-              onChange={e => setDelayAffectsRts(e.target.value)}
-              className="w-full rounded-md px-3 py-2 text-sm"
-              style={inputStyle()}
-            >
-              <option value="no">No</option>
-              <option value="yes">Yes</option>
-            </select>
+            <Select value={delayAffectsRts} onValueChange={setDelayAffectsRts}>
+              <SelectTrigger className="w-full rounded-md px-3 py-2 text-sm h-auto" style={inputStyle()}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="no">No</SelectItem>
+                <SelectItem value="yes">Yes</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -601,7 +596,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={aogRemovedPn}
                 onChange={e => { setAogRemovedPn(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.aogRemovedPn; return n }) }}
-                placeholder="P/N of removed part"
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle(!!errors.aogRemovedPn)}
               />
@@ -614,7 +609,7 @@ export function PartsRequestForm() {
                 type="text"
                 value={aogRemovedSn}
                 onChange={e => { setAogRemovedSn(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.aogRemovedSn; return n }) }}
-                placeholder="S/N of removed part"
+                placeholder=""
                 className="w-full rounded-md px-3 py-2 text-sm"
                 style={inputStyle(!!errors.aogRemovedSn)}
               />
@@ -627,7 +622,7 @@ export function PartsRequestForm() {
             <textarea
               value={aogSquawk}
               onChange={e => { setAogSquawk(e.target.value); setErrors(prev => { const n = { ...prev }; delete n.aogSquawk; return n }) }}
-              placeholder="Describe the discrepancy that grounded the aircraft"
+              placeholder=""
               rows={3}
               className="w-full rounded-md px-3 py-2 text-sm resize-none"
               style={inputStyle(!!errors.aogSquawk)}
@@ -652,7 +647,7 @@ export function PartsRequestForm() {
         <textarea
           value={notes}
           onChange={e => setNotes(e.target.value)}
-          placeholder="Anything else Jessica should know — vendor preferences, special instructions, etc."
+          placeholder=""
           rows={3}
           className="w-full rounded-md px-3 py-2 text-sm resize-none"
           style={inputStyle()}

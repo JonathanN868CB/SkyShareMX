@@ -67,6 +67,7 @@ export function useFleet() {
         if (!tailNumber) continue
 
         const ac: AircraftBase = {
+          id:           row.id,
           tailNumber,
           year:         row.year,
           model:        row.model_full,

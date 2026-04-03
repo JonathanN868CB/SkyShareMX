@@ -1,7 +1,10 @@
 import { useState, useEffect, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
-import { AlertTriangle, Package, Search, X, Filter, RotateCcw } from "lucide-react"
+import { AlertTriangle, Package, Search, X, Filter, RotateCcw, ChevronRight } from "lucide-react"
 import { supabase } from "@/lib/supabase"
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/shared/ui/select"
 import { PartsStatusBadge } from "./PartsStatusBadge"
 import { REQUEST_STATUSES, type RequestStatus } from "../constants"
 
@@ -145,10 +148,8 @@ export function PartsDashboard() {
   const filtered = useMemo(() => {
     let result = requests
 
-    // Exclude closed by default unless specifically filtering for them
-    if (statusFilter === "all") {
-      result = result.filter(r => r.status !== "closed")
-    } else {
+    // Filter by status (all = include everything; active/historical split handles display)
+    if (statusFilter !== "all") {
       result = result.filter(r => r.status === statusFilter)
     }
 
@@ -201,9 +202,36 @@ export function PartsDashboard() {
     return result
   }, [requests, statusFilter, aircraftFilter, aogOnly, searchQuery, sortField, sortDir])
 
-  const aogRequests = filtered.filter(r => r.aog)
-  const nonAogRequests = filtered.filter(r => !r.aog)
+  // Split: active vs historical
+  const activeRequests = filtered.filter(r => r.status !== "closed" && r.status !== "cancelled")
+  const historicalRequests = filtered.filter(r => r.status === "closed" || r.status === "cancelled")
+
+  const aogRequests = activeRequests.filter(r => r.aog)
+  const nonAogRequests = activeRequests.filter(r => !r.aog)
   const hasActiveFilters = statusFilter !== "all" || aircraftFilter !== "all" || aogOnly || coreReturnsOnly || searchQuery.trim()
+
+  // Group historical by year, newest first
+  const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
+
+  const yearGroups = useMemo(() => {
+    const groups = new Map<string, PartsRequestRow[]>()
+    for (const r of historicalRequests) {
+      const year = new Date(r.created_at).getFullYear().toString()
+      const list = groups.get(year) ?? []
+      list.push(r)
+      groups.set(year, list)
+    }
+    return [...groups.entries()].sort((a, b) => Number(b[0]) - Number(a[0]))
+  }, [historicalRequests])
+
+  function toggleYear(year: string) {
+    setExpandedYears(prev => {
+      const next = new Set(prev)
+      if (next.has(year)) next.delete(year)
+      else next.add(year)
+      return next
+    })
+  }
 
   // Sort handler
   function toggleSort(field: SortField) {
@@ -361,41 +389,47 @@ export function PartsDashboard() {
         </div>
 
         {/* Status filter */}
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as RequestStatus | "all")}
-          className="rounded-md px-3 py-2 text-sm"
-          style={{
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <option value="all">All Active</option>
-          {REQUEST_STATUSES.map(s => (
-            <option key={s} value={s}>
-              {s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
-            </option>
-          ))}
-        </select>
+        <Select value={statusFilter} onValueChange={v => setStatusFilter(v as RequestStatus | "all")}>
+          <SelectTrigger
+            className="rounded-md px-3 py-2 text-sm h-auto w-auto min-w-[140px]"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "rgba(255,255,255,0.7)",
+            }}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Active</SelectItem>
+            {REQUEST_STATUSES.map(s => (
+              <SelectItem key={s} value={s}>
+                {s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* Aircraft filter */}
-        <select
-          value={aircraftFilter}
-          onChange={e => setAircraftFilter(e.target.value)}
-          className="rounded-md px-3 py-2 text-sm"
-          style={{
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            color: "rgba(255,255,255,0.7)",
-          }}
-        >
-          <option value="all">All Aircraft</option>
-          <option value="stock">Stock Orders</option>
-          {aircraftTails.map(t => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
+        <Select value={aircraftFilter} onValueChange={setAircraftFilter}>
+          <SelectTrigger
+            className="rounded-md px-3 py-2 text-sm h-auto w-auto min-w-[140px]"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "rgba(255,255,255,0.7)",
+            }}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Aircraft</SelectItem>
+            <SelectItem value="stock">Stock Orders</SelectItem>
+            {aircraftTails.map(t => (
+              <SelectItem key={t} value={t}>{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* AOG toggle */}
         <button
@@ -444,7 +478,7 @@ export function PartsDashboard() {
 
         {/* Count */}
         <span className="ml-auto text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
-          {filtered.length} request{filtered.length !== 1 ? "s" : ""}
+          {activeRequests.length} active{historicalRequests.length > 0 ? ` · ${historicalRequests.length} historical` : ""}
         </span>
       </div>
 
@@ -559,6 +593,54 @@ export function PartsDashboard() {
           </table>
         )}
       </div>
+
+      {/* ── Historical Orders — collapsed by year ───────────────────── */}
+      {yearGroups.length > 0 && (
+        <div className="space-y-1">
+          {yearGroups.map(([year, records]) => (
+            <div
+              key={year}
+              className="rounded-lg border overflow-hidden"
+              style={{ borderColor: "rgba(255,255,255,0.06)" }}
+            >
+              <button
+                onClick={() => toggleYear(year)}
+                className="w-full px-4 py-2.5 flex items-center gap-2 text-left transition-colors"
+                style={{
+                  background: expandedYears.has(year) ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
+                onMouseLeave={e => (e.currentTarget.style.background = expandedYears.has(year) ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)")}
+              >
+                <ChevronRight
+                  className="w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200"
+                  style={{
+                    color: "rgba(212,160,23,0.5)",
+                    transform: expandedYears.has(year) ? "rotate(90deg)" : "rotate(0deg)",
+                  }}
+                />
+                <span
+                  className="text-xs font-semibold tracking-widest uppercase"
+                  style={{ color: "rgba(255,255,255,0.4)", fontFamily: "var(--font-heading)" }}
+                >
+                  {year}
+                </span>
+                <span className="text-xs" style={{ color: "rgba(255,255,255,0.2)" }}>
+                  {records.length} order{records.length !== 1 ? "s" : ""}
+                </span>
+              </button>
+
+              {expandedYears.has(year) && (
+                <table className="w-full">
+                  <tbody>
+                    {records.map(r => renderRow(r))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

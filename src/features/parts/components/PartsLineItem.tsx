@@ -1,4 +1,5 @@
 import { Trash2 } from "lucide-react"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/shared/ui/select"
 import { CONDITIONS } from "../constants"
 
 export interface LineItemData {
@@ -73,7 +74,7 @@ export function PartsLineItem({ index, data, onChange, onRemove, canRemove, erro
             type="text"
             value={data.part_number}
             onChange={e => update("part_number", e.target.value)}
-            placeholder="e.g. 3E2042-4"
+            placeholder=""
             className="w-full rounded-md px-3 py-2 text-sm"
             style={{
               background: "rgba(255,255,255,0.05)",
@@ -95,7 +96,7 @@ export function PartsLineItem({ index, data, onChange, onRemove, canRemove, erro
             type="text"
             value={data.alternate_pn}
             onChange={e => update("alternate_pn", e.target.value)}
-            placeholder="Optional"
+            placeholder=""
             className="w-full rounded-md px-3 py-2 text-sm"
             style={{
               background: "rgba(255,255,255,0.05)",
@@ -129,20 +130,23 @@ export function PartsLineItem({ index, data, onChange, onRemove, canRemove, erro
           <label className="block text-xs mb-1" style={{ color: "rgba(255,255,255,0.5)" }}>
             Condition <span style={{ color: "rgba(255,100,100,0.7)" }}>*</span>
           </label>
-          <select
-            value={data.condition}
-            onChange={e => update("condition", e.target.value)}
-            className="w-full rounded-md px-3 py-2 text-sm"
-            style={{
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              color: "rgba(255,255,255,0.9)",
-            }}
-          >
-            {CONDITIONS.map(c => (
-              <option key={c.value} value={c.value}>{c.label}</option>
-            ))}
-          </select>
+          <Select value={data.condition} onValueChange={v => update("condition", v)}>
+            <SelectTrigger
+              className="w-full rounded-md px-3 py-2 text-sm h-auto"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                color: "rgba(255,255,255,0.9)",
+              }}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CONDITIONS.map(c => (
+                <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -155,7 +159,7 @@ export function PartsLineItem({ index, data, onChange, onRemove, canRemove, erro
           type="text"
           value={data.description}
           onChange={e => update("description", e.target.value)}
-          placeholder="e.g. Igniter plug, PT6A-135A"
+          placeholder=""
           className="w-full rounded-md px-3 py-2 text-sm"
           style={{
             background: "rgba(255,255,255,0.05)",

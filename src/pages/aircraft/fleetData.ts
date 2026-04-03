@@ -15,6 +15,7 @@
 // Future: AIRCRAFT_DETAILS migrates to Supabase as a JSONB column per tail number.
 
 export interface AircraftBase {
+  id: string           // aircraft table UUID — used as FK by parts, discrepancies, etc.
   tailNumber: string
   year: number
   model: string
