@@ -22,6 +22,7 @@ export type AircraftCheckSummary = {
   daysSince: number | null
   status: CheckStatus
   hasPendingSubmission: boolean
+  lastDispatch: { sentToName: string; sentToEmail: string; sentAt: string } | null
 }
 
 function computeStatus(daysSince: number | null): CheckStatus {
@@ -67,6 +68,24 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
 
   if (sErr) throw sErr
 
+  // Load latest dispatch per token
+  const { data: allDispatches } = await db
+    .from("fourteen_day_check_dispatches")
+    .select("token_id, sent_to_name, sent_to_email, sent_at")
+    .in("token_id", tokenIds)
+    .order("sent_at", { ascending: false })
+
+  const latestDispatchByToken = new Map<string, { sentToName: string; sentToEmail: string; sentAt: string }>()
+  for (const d of (allDispatches ?? [])) {
+    if (!latestDispatchByToken.has(d.token_id)) {
+      latestDispatchByToken.set(d.token_id, {
+        sentToName:  d.sent_to_name,
+        sentToEmail: d.sent_to_email,
+        sentAt:      d.sent_at,
+      })
+    }
+  }
+
   // Latest submission per token_id
   const latestByToken = new Map<string, FourteenDayCheckSubmission>()
   for (const sub of (allSubs ?? [])) {
@@ -103,6 +122,7 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       daysSince,
       status,
       hasPendingSubmission: pendingTokenIds.has(t.id),
+      lastDispatch: latestDispatchByToken.get(t.id) ?? null,
     }
   }).sort((a: AircraftCheckSummary, b: AircraftCheckSummary) => {
     // Sort: overdue first, then due_soon, then never, then ok
