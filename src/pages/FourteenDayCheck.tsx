@@ -268,6 +268,7 @@ export default function FourteenDayCheck() {
             onHistory: setHistoryAircraft,
             onEmail: setEmailAircraft,
             onClearDispatch: handleClearDispatch,
+            onReview: openReview,
           }
           return viewMode === "grid" ? (
             <div className="space-y-6">
@@ -524,6 +525,7 @@ type FleetViewProps = {
   onHistory: (a: AircraftCheckSummary) => void
   onEmail: (a: AircraftCheckSummary) => void
   onClearDispatch: (id: string) => void
+  onReview: (submissionId: string, registration: string) => void
 }
 
 function FleetListView({
@@ -536,6 +538,7 @@ function FleetListView({
   onHistory,
   onEmail,
   onClearDispatch,
+  onReview,
 }: { grouped: ReturnType<typeof groupFleet>; collapsedMfrs: Set<string>; toggleMfr: (name: string) => void } & FleetViewProps) {
   return (
     <div
@@ -607,6 +610,7 @@ function FleetListView({
                       onHistory={() => onHistory(aircraft)}
                       onEmail={() => onEmail(aircraft)}
                       onClearDispatch={onClearDispatch}
+                      onReview={onReview}
                     />
                   </div>
                 ))}
@@ -629,6 +633,7 @@ function AircraftCheckRow({
   onHistory,
   onEmail,
   onClearDispatch,
+  onReview,
 }: {
   aircraft: AircraftCheckSummary
   pendingSubmission: PendingSubmission | null
@@ -637,6 +642,7 @@ function AircraftCheckRow({
   onHistory: () => void
   onEmail: () => void
   onClearDispatch: (dispatchId: string) => void
+  onReview: (submissionId: string, registration: string) => void
 }) {
   const statusConfig = {
     ok:       { label: "OK",        color: "#4ade80", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.2)"  },
@@ -710,14 +716,32 @@ function AircraftCheckRow({
       {/* Right: inline badges + action icons */}
       <div className="flex items-center gap-1 flex-shrink-0">
 
-        {/* New badge */}
-        {hasPending && (
-          <span
-            className="text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded mr-1"
-            style={{ background: "rgba(212,160,23,0.2)", color: "#d4a017" }}
+        {/* New submission — clickable review button */}
+        {hasPending && pendingSubmission && (
+          <button
+            type="button"
+            onClick={() => onReview(pendingSubmission.id, aircraft.registration)}
+            title="Open new submission for review"
+            className="flex items-center gap-1 px-2 py-1 rounded text-[9px] font-bold uppercase tracking-widest transition-all mr-1"
+            style={{
+              background: "rgba(212,160,23,0.2)",
+              border: "1px solid rgba(212,160,23,0.45)",
+              color: "#d4a017",
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = "rgba(212,160,23,0.32)"
+              e.currentTarget.style.borderColor = "rgba(212,160,23,0.7)"
+              e.currentTarget.style.color = "#f0bc30"
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = "rgba(212,160,23,0.2)"
+              e.currentTarget.style.borderColor = "rgba(212,160,23,0.45)"
+              e.currentTarget.style.color = "#d4a017"
+            }}
           >
             New
-          </span>
+            <ChevronRight className="w-3 h-3" />
+          </button>
         )}
 
         {/* Dispatch badge */}
@@ -752,18 +776,38 @@ function AircraftCheckRow({
         {/* Separator */}
         <div style={{ width: "1px", height: "18px", background: "rgba(255,255,255,0.07)", margin: "0 3px" }} />
 
-        {/* History */}
-        <button
-          type="button"
-          onClick={onHistory}
-          title="History"
-          className="p-2 rounded transition-colors"
-          style={{ color: "rgba(255,255,255,0.3)" }}
-          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
-          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
-        >
-          <History className="w-4 h-4" />
-        </button>
+        {/* History — styled to reflect submission state */}
+        {(() => {
+          const hasHistory = !!aircraft.lastSubmittedAt
+          const historyStyle = hasPending
+            ? { color: "#d4a017", background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.35)" }
+            : hasHistory
+              ? { color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }
+              : { color: "rgba(255,255,255,0.25)", background: "transparent", border: "1px solid transparent" }
+          const historyHover = hasPending
+            ? { color: "#f0bc30", background: "rgba(212,160,23,0.2)", border: "1px solid rgba(212,160,23,0.55)" }
+            : hasHistory
+              ? { color: "rgba(255,255,255,0.9)", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)" }
+              : { color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }
+          return (
+            <button
+              type="button"
+              onClick={onHistory}
+              title={hasPending ? "New submission — view history" : hasHistory ? "View history" : "No checks yet"}
+              className="flex items-center gap-1 px-2 py-1.5 rounded transition-all text-[10px] font-medium"
+              style={historyStyle}
+              onMouseEnter={e => {
+                Object.assign(e.currentTarget.style, historyHover)
+              }}
+              onMouseLeave={e => {
+                Object.assign(e.currentTarget.style, historyStyle)
+              }}
+            >
+              <History className="w-3.5 h-3.5 flex-shrink-0" />
+              History
+            </button>
+          )
+        })()}
 
         {/* QR */}
         <button
