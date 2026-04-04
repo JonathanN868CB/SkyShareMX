@@ -1,7 +1,7 @@
 // 14-Day Check — MC Dashboard
 // Fleet status grid + pending submissions review queue.
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Link } from "react-router-dom"
 import { formatDistanceToNow } from "date-fns"
 import {
@@ -12,8 +12,8 @@ import {
 import {
   useFleetCheckSummaries,
   usePendingSubmissions,
-  useInvalidateChecks,
   useCheckSubmission,
+  useTokenFieldSchema,
   type AircraftCheckSummary,
   type PendingSubmission,
 } from "@/hooks/useFourteenDayChecks"
@@ -27,7 +27,6 @@ import { SendCheckEmailModal } from "@/features/fourteen-day-check/SendCheckEmai
 export default function FourteenDayCheck() {
   const { data: fleet = [], isLoading: fleetLoading, refetch } = useFleetCheckSummaries()
   const { data: pending = [], isLoading: pendingLoading } = usePendingSubmissions()
-  const invalidate = useInvalidateChecks()
   const { profile } = useAuth()
   const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
 
@@ -41,7 +40,7 @@ export default function FourteenDayCheck() {
   const ok      = fleet.filter(a => a.status === "ok").length
   const dueSoon = fleet.filter(a => a.status === "due_soon").length
   const overdue = fleet.filter(a => a.status === "overdue" || a.status === "never").length
-  const flagged = pending.filter(s => s.review_status === "flagged").length
+  const flagged = fleet.filter(a => a.hasFlaggedSubmission).length
 
   function openReview(submissionId: string, registration: string) {
     setReviewSubmissionId(submissionId)
@@ -51,7 +50,6 @@ export default function FourteenDayCheck() {
   function closeReview() {
     setReviewSubmissionId(null)
     setReviewRegistration("")
-    invalidate()
   }
 
   const enrolledAircraftIds = new Set(fleet.map(a => a.aircraftId))
@@ -207,7 +205,6 @@ export default function FourteenDayCheck() {
                 key={aircraft.tokenId}
                 aircraft={aircraft}
                 pendingSubmission={pending.find(s => s.aircraft_id === aircraft.aircraftId) ?? null}
-                onReview={(subId) => openReview(subId, aircraft.registration)}
                 onQR={() => setQrAircraft(aircraft)}
                 onHistory={() => setHistoryAircraft(aircraft)}
                 onEmail={() => setEmailAircraft(aircraft)}
@@ -280,24 +277,9 @@ function ReviewPanelLoader({
   onClose: () => void
 }) {
   const { data: submission, isLoading: subLoading } = useCheckSubmission(submissionId)
-  const [fieldSchema, setFieldSchema] = useState<import("@/entities/supabase").FieldDef[]>([])
+  const { data: fieldSchema = [], isLoading: schemaLoading } = useTokenFieldSchema(submission?.token_id)
 
-  useEffect(() => {
-    if (!submission?.token_id) return
-    import("@/lib/supabase").then(({ supabase }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(supabase as any)
-        .from("fourteen_day_check_tokens")
-        .select("field_schema")
-        .eq("id", submission.token_id)
-        .single()
-        .then(({ data }: { data: { field_schema: import("@/entities/supabase").FieldDef[] } | null }) => {
-          if (data?.field_schema) setFieldSchema(data.field_schema)
-        })
-    })
-  }, [submission?.token_id])
-
-  if (subLoading || !submission) {
+  if (subLoading || schemaLoading || !submission) {
     return (
       <>
         <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
@@ -326,14 +308,12 @@ function ReviewPanelLoader({
 function AircraftCheckCard({
   aircraft,
   pendingSubmission,
-  onReview,
   onQR,
   onHistory,
   onEmail,
 }: {
   aircraft: AircraftCheckSummary
   pendingSubmission: PendingSubmission | null
-  onReview: (submissionId: string) => void
   onQR: () => void
   onHistory: () => void
   onEmail: () => void
@@ -436,25 +416,7 @@ function AircraftCheckCard({
 
       {/* Action row */}
       <div className="p-3 flex flex-col gap-2">
-        {/* Primary action — review if pending */}
-        {pendingSubmission && (
-          <button
-            type="button"
-            onClick={() => onReview(pendingSubmission.id)}
-            className="flex items-center justify-center gap-1.5 w-full text-xs font-medium rounded-md px-3 py-2 transition-all"
-            style={{
-              background: "rgba(212,160,23,0.15)",
-              border: "1px solid rgba(212,160,23,0.3)",
-              color: "#d4a017",
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.25)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.15)")}
-          >
-            Review Submission <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        )}
-
-        {/* Secondary actions row */}
+        {/* Actions row */}
         <div className="flex items-center gap-2">
           {/* History — full labeled button */}
           <button

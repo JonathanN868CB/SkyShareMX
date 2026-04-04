@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
-import type { FourteenDayCheckToken, FourteenDayCheckSubmission, FourteenDayCheckAttachment } from "@/entities/supabase"
+import type { FourteenDayCheckToken, FourteenDayCheckSubmission, FourteenDayCheckAttachment, FieldDef } from "@/entities/supabase"
 import { encodeToken } from "@/shared/lib/tokenEncoder"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -22,6 +22,7 @@ export type AircraftCheckSummary = {
   daysSince: number | null
   status: CheckStatus
   hasPendingSubmission: boolean
+  hasFlaggedSubmission: boolean
   lastDispatch: { sentToName: string; sentToEmail: string; sentAt: string } | null
 }
 
@@ -101,6 +102,13 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       .map((s: any) => s.token_id)
   )
 
+  // Flagged submissions per token_id (for summary tile)
+  const flaggedTokenIds = new Set<string>(
+    (allSubs ?? [])
+      .filter((s: any) => s.review_status === "flagged")
+      .map((s: any) => s.token_id)
+  )
+
   return tokens.map((t: any) => {
     const regs = t.aircraft?.aircraft_registrations ?? []
     const currentReg = regs.find((r: any) => r.is_current)
@@ -122,6 +130,7 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       daysSince,
       status,
       hasPendingSubmission: pendingTokenIds.has(t.id),
+      hasFlaggedSubmission: flaggedTokenIds.has(t.id),
       lastDispatch: latestDispatchByToken.get(t.id) ?? null,
     }
   }).sort((a: AircraftCheckSummary, b: AircraftCheckSummary) => {
@@ -271,12 +280,14 @@ export async function getCheckPhotoUrl(storagePath: string): Promise<string> {
 export async function updateSubmissionStatus(
   id: string,
   status: FourteenDayCheckSubmission["review_status"],
-  notes?: string
+  notes?: string,
+  reviewedBy?: string
 ): Promise<void> {
   const update: Record<string, unknown> = { review_status: status }
   if (notes !== undefined) update.review_notes = notes
   if (status !== "pending") {
     update.reviewed_at = new Date().toISOString()
+    if (reviewedBy) update.reviewed_by = reviewedBy
   }
   const { error } = await db
     .from("fourteen_day_check_submissions")
@@ -291,6 +302,36 @@ export async function saveReviewNotes(id: string, notes: string): Promise<void> 
     .update({ review_notes: notes })
     .eq("id", id)
   if (error) throw error
+}
+
+export async function deleteSubmission(id: string): Promise<void> {
+  const { error } = await db
+    .from("fourteen_day_check_submissions")
+    .delete()
+    .eq("id", id)
+  if (error) throw error
+}
+
+// ─── Field schema for a single token ─────────────────────────────────────────
+
+async function fetchTokenFieldSchema(tokenId: string): Promise<FieldDef[]> {
+  const { data, error } = await db
+    .from("fourteen_day_check_tokens")
+    .select("field_schema")
+    .eq("id", tokenId)
+    .single()
+  if (error) throw error
+  return (data?.field_schema ?? []) as FieldDef[]
+}
+
+export function useTokenFieldSchema(tokenId: string | undefined) {
+  return useQuery({
+    queryKey: ["fourteen-day-checks", "token-schema", tokenId],
+    queryFn: () => fetchTokenFieldSchema(tokenId!),
+    enabled: !!tokenId,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
 }
 
 // ─── Invalidation ────────────────────────────────────────────────────────────

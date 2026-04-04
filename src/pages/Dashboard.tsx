@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { Shield, BookOpen, Bell, MapPin, ExternalLink, X, Radio, BarChart3, FileText, ClipboardList, AlertOctagon, Award, Wrench, Scale, Clock } from "lucide-react"
 import { useAuth } from "@/features/auth"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
+import { PongGame } from "@/components/PongGame"
 
 /* ─── Data ─────────────────────────────────────────────────────── */
 
@@ -29,6 +30,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Apr 3", text: "14-Day Check is live — standing inspection links for each aircraft, mobile photo capture, and a full MC review dashboard with fleet status at a glance." },
   { date: "Apr 3", text: "External Requests is live. Send structured requests to anyone outside the platform and collect responses through a secure, no-login portal." },
   { date: "Apr 3", text: "MM Revision & Audit Tracking is now live under Compliance. Quarterly audit campaigns replace the spreadsheet — review the entire fleet by type group, track revision changes, and generate PDF reports ready for the FSDO." },
   { date: "Apr 2", text: "Parts module launched: submit parts requests, track order status, manage approvals, and view FedEx tracking — all in one place. Replaces the Google Form workflow. 616 historical orders imported. Find it under Parts in the sidebar." },
@@ -280,13 +282,15 @@ export default function Dashboard() {
         {/* ── Core Values ───────────────────────────────────────── */}
         <div style={{ margin: "0 -1.5rem 0" }}>
 
-          {/* Section heading — logo image */}
-          <div className="flex items-center justify-center" style={{ padding: 0 }}>
+          {/* Section heading — logo image / Pong field */}
+          {/* Canvas fills this banner; gradient stripe above is the top wall, tile border below is the bottom wall */}
+          <div className="flex items-center justify-center" style={{ padding: 0, position: "relative" }}>
+            <PongGame />
             <img
               src="/core-values-logo.png"
               alt="Core Values"
               className=""
-              style={{ height: "7rem", width: "auto", objectFit: "contain" }}
+              style={{ height: "7rem", width: "auto", objectFit: "contain", position: "relative", zIndex: 1 }}
             />
           </div>
 
