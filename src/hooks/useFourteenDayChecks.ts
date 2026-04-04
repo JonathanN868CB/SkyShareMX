@@ -1,0 +1,280 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { supabase } from "@/lib/supabase"
+import type { FourteenDayCheckToken, FourteenDayCheckSubmission, FourteenDayCheckAttachment } from "@/entities/supabase"
+import { encodeToken } from "@/shared/lib/tokenEncoder"
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = supabase as any
+
+// ─── Derived types ────────────────────────────────────────────────────────────
+
+export type CheckStatus = "ok" | "due_soon" | "overdue" | "never"
+
+export type AircraftCheckSummary = {
+  tokenId: string
+  encodedToken: string           // base62 for URL
+  aircraftId: string
+  registration: string
+  traxxallUrl: string | null
+  lastSubmittedAt: string | null
+  lastReviewStatus: FourteenDayCheckSubmission["review_status"] | null
+  daysSince: number | null
+  status: CheckStatus
+  hasPendingSubmission: boolean
+}
+
+function computeStatus(daysSince: number | null): CheckStatus {
+  if (daysSince === null) return "never"
+  if (daysSince > 14) return "overdue"
+  if (daysSince > 10) return "due_soon"
+  return "ok"
+}
+
+function daysBetween(isoDate: string): number {
+  const ms = Date.now() - new Date(isoDate).getTime()
+  return Math.floor(ms / (1000 * 60 * 60 * 24))
+}
+
+// ─── Fleet check summaries ────────────────────────────────────────────────────
+
+async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
+  // Load all tokens with aircraft + current registration
+  const { data: tokens, error: tErr } = await db
+    .from("fourteen_day_check_tokens")
+    .select(`
+      id,
+      token,
+      aircraft_id,
+      traxxall_url,
+      aircraft:aircraft_id (
+        id,
+        aircraft_registrations (registration, is_current)
+      )
+    `)
+
+  if (tErr) throw tErr
+  if (!tokens?.length) return []
+
+  // Load all submissions (just enough fields to compute status per aircraft)
+  const tokenIds = tokens.map((t: any) => t.id)
+  const { data: allSubs, error: sErr } = await db
+    .from("fourteen_day_check_submissions")
+    .select("id, token_id, aircraft_id, submitted_at, review_status")
+    .in("token_id", tokenIds)
+    .order("submitted_at", { ascending: false })
+
+  if (sErr) throw sErr
+
+  // Latest submission per token_id
+  const latestByToken = new Map<string, FourteenDayCheckSubmission>()
+  for (const sub of (allSubs ?? [])) {
+    if (!latestByToken.has(sub.token_id)) {
+      latestByToken.set(sub.token_id, sub)
+    }
+  }
+
+  // Pending submissions per token_id (for badge)
+  const pendingTokenIds = new Set<string>(
+    (allSubs ?? [])
+      .filter((s: any) => s.review_status === "pending")
+      .map((s: any) => s.token_id)
+  )
+
+  return tokens.map((t: any) => {
+    const regs = t.aircraft?.aircraft_registrations ?? []
+    const currentReg = regs.find((r: any) => r.is_current)
+    const registration = currentReg?.registration ?? "UNKNOWN"
+
+    const latest = latestByToken.get(t.id) ?? null
+    const daysSince = latest ? daysBetween(latest.submitted_at) : null
+    const status = computeStatus(daysSince)
+
+    return {
+      tokenId: t.id,
+      encodedToken: encodeToken(t.token),
+      aircraftId: t.aircraft_id,
+      registration,
+      traxxallUrl: t.traxxall_url ?? null,
+      lastSubmittedAt: latest?.submitted_at ?? null,
+      lastReviewStatus: latest?.review_status ?? null,
+      daysSince,
+      status,
+      hasPendingSubmission: pendingTokenIds.has(t.id),
+    }
+  }).sort((a: AircraftCheckSummary, b: AircraftCheckSummary) => {
+    // Sort: overdue first, then due_soon, then never, then ok
+    const order = { overdue: 0, never: 1, due_soon: 2, ok: 3 }
+    return order[a.status] - order[b.status]
+  })
+}
+
+export function useFleetCheckSummaries() {
+  return useQuery({
+    queryKey: ["fourteen-day-checks", "fleet"],
+    queryFn: fetchFleetSummaries,
+    staleTime: 30_000,
+    retry: 1,
+  })
+}
+
+// ─── Pending submissions queue ────────────────────────────────────────────────
+
+export type PendingSubmission = FourteenDayCheckSubmission & {
+  registration: string
+}
+
+async function fetchPendingSubmissions(): Promise<PendingSubmission[]> {
+  const { data, error } = await db
+    .from("fourteen_day_check_submissions")
+    .select(`
+      id,
+      token_id,
+      aircraft_id,
+      submitter_name,
+      field_values,
+      notes,
+      submitted_at,
+      submitter_ip,
+      review_status,
+      review_notes,
+      reviewed_by,
+      reviewed_at,
+      token:token_id (
+        aircraft:aircraft_id (
+          aircraft_registrations (registration, is_current)
+        )
+      )
+    `)
+    .eq("review_status", "pending")
+    .order("submitted_at", { ascending: false })
+
+  if (error) throw error
+
+  return (data ?? []).map((row: any) => {
+    const regs = row.token?.aircraft?.aircraft_registrations ?? []
+    const currentReg = regs.find((r: any) => r.is_current)
+    return {
+      ...row,
+      registration: currentReg?.registration ?? "UNKNOWN",
+    }
+  })
+}
+
+export function usePendingSubmissions() {
+  return useQuery({
+    queryKey: ["fourteen-day-checks", "pending"],
+    queryFn: fetchPendingSubmissions,
+    staleTime: 15_000,
+    retry: 1,
+  })
+}
+
+// ─── Single submission with attachments ──────────────────────────────────────
+
+async function fetchSubmission(id: string): Promise<FourteenDayCheckSubmission> {
+  const { data, error } = await db
+    .from("fourteen_day_check_submissions")
+    .select("*")
+    .eq("id", id)
+    .single()
+  if (error) throw error
+  return data as FourteenDayCheckSubmission
+}
+
+export function useCheckSubmission(id: string | undefined) {
+  return useQuery({
+    queryKey: ["fourteen-day-checks", "submission", id],
+    queryFn: () => fetchSubmission(id!),
+    enabled: !!id,
+    staleTime: 10_000,
+    retry: 1,
+  })
+}
+
+async function fetchAttachments(submissionId: string): Promise<FourteenDayCheckAttachment[]> {
+  const { data, error } = await db
+    .from("fourteen_day_check_attachments")
+    .select("*")
+    .eq("submission_id", submissionId)
+    .order("uploaded_at", { ascending: true })
+  if (error) throw error
+  return (data ?? []) as FourteenDayCheckAttachment[]
+}
+
+export function useCheckAttachments(submissionId: string | undefined) {
+  return useQuery({
+    queryKey: ["fourteen-day-checks", "attachments", submissionId],
+    queryFn: () => fetchAttachments(submissionId!),
+    enabled: !!submissionId,
+    staleTime: 30_000,
+    retry: 1,
+  })
+}
+
+// ─── History for a single aircraft ───────────────────────────────────────────
+
+async function fetchHistory(tokenId: string): Promise<FourteenDayCheckSubmission[]> {
+  const { data, error } = await db
+    .from("fourteen_day_check_submissions")
+    .select("*")
+    .eq("token_id", tokenId)
+    .order("submitted_at", { ascending: false })
+  if (error) throw error
+  return (data ?? []) as FourteenDayCheckSubmission[]
+}
+
+export function useCheckHistory(tokenId: string | undefined) {
+  return useQuery({
+    queryKey: ["fourteen-day-checks", "history", tokenId],
+    queryFn: () => fetchHistory(tokenId!),
+    enabled: !!tokenId,
+    staleTime: 30_000,
+    retry: 1,
+  })
+}
+
+// ─── Signed download URL for an attachment ────────────────────────────────────
+
+export async function getCheckPhotoUrl(storagePath: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from("fourteen-day-checks")
+    .createSignedUrl(storagePath, 3600)
+  if (error || !data?.signedUrl) throw error ?? new Error("Failed to get download URL")
+  return data.signedUrl
+}
+
+// ─── Review actions ───────────────────────────────────────────────────────────
+
+export async function updateSubmissionStatus(
+  id: string,
+  status: FourteenDayCheckSubmission["review_status"],
+  notes?: string
+): Promise<void> {
+  const update: Record<string, unknown> = { review_status: status }
+  if (notes !== undefined) update.review_notes = notes
+  if (status !== "pending") {
+    update.reviewed_at = new Date().toISOString()
+  }
+  const { error } = await db
+    .from("fourteen_day_check_submissions")
+    .update(update)
+    .eq("id", id)
+  if (error) throw error
+}
+
+export async function saveReviewNotes(id: string, notes: string): Promise<void> {
+  const { error } = await db
+    .from("fourteen_day_check_submissions")
+    .update({ review_notes: notes })
+    .eq("id", id)
+  if (error) throw error
+}
+
+// ─── Invalidation ────────────────────────────────────────────────────────────
+
+export function useInvalidateChecks() {
+  const qc = useQueryClient()
+  return () => {
+    qc.invalidateQueries({ queryKey: ["fourteen-day-checks"] })
+  }
+}
