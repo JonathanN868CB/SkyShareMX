@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import {
   Users, UserPlus, CheckCircle, XCircle, Settings,
   Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut, Link2,
+  ChevronUp, ChevronDown, ChevronsUpDown,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
@@ -813,6 +814,7 @@ export default function UsersPage() {
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
   const [linkTarget, setLinkTarget]   = useState<Profile | null>(null)
   const [inviteOpen, setInviteOpen]   = useState(false)
+  const [lastSeenSort, setLastSeenSort] = useState<"asc" | "desc" | null>(null)
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -899,6 +901,12 @@ export default function UsersPage() {
   })
 
   const pendingInvites = profiles.filter(p => p.status === "Pending")
+
+  const sortedProfiles = lastSeenSort === null ? profiles : [...profiles].sort((a, b) => {
+    const ta = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0
+    const tb = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0
+    return lastSeenSort === "desc" ? tb - ta : ta - tb
+  })
 
   async function resendInvite(user: Profile) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -1023,13 +1031,21 @@ export default function UsersPage() {
                   <TableRow className="border-white/[0.07] hover:bg-transparent">
                     {["User", "Role", "Status", "Last Seen", "MX-LMS", ""].map(h => (
                       <TableHead key={h} className="text-white/40" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                        {h}
+                        {h === "Last Seen" ? (
+                          <button
+                            onClick={() => setLastSeenSort(s => s === "desc" ? "asc" : "desc")}
+                            className="flex items-center gap-1 hover:text-white/70 transition-colors"
+                          >
+                            Last Seen
+                            {lastSeenSort === "desc" ? <ChevronDown className="h-3 w-3" /> : lastSeenSort === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronsUpDown className="h-3 w-3 opacity-50" />}
+                          </button>
+                        ) : h}
                       </TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {profiles.map(user => (
+                  {sortedProfiles.map(user => (
                     <TableRow key={user.id} className="border-white/[0.05] hover:bg-white/[0.03]">
 
                       {/* User */}

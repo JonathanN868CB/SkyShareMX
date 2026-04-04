@@ -18,7 +18,7 @@ const FAMILY_ORDER = [
   "PC-12/45 — Legacy",
   "PC-12/47 — Legacy",
   "PC-12/47E — NG",
-  "PC-12 — NGX",
+  "PC-12/47E — NGX",
   "Citation CJ2 (525A)",
   "Citation 560XL / XLS+",
   "Citation M2 Gen2",
