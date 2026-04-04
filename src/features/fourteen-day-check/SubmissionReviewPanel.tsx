@@ -2,7 +2,7 @@
 // Shows checklist results, photos inline, notes, and flag/archive actions.
 
 import { useState, useEffect } from "react"
-import { X, CheckCircle2, XCircle, AlertTriangle, Archive, Flag, ImageOff, Loader2 } from "lucide-react"
+import { X, CheckCircle2, XCircle, AlertTriangle, Archive, Flag, ImageOff, Loader2, Trash2 } from "lucide-react"
 import { formatDistanceToNow, format } from "date-fns"
 import type { FourteenDayCheckSubmission, FourteenDayCheckAttachment, FieldDef } from "@/entities/supabase"
 import {
@@ -10,8 +10,10 @@ import {
   getCheckPhotoUrl,
   updateSubmissionStatus,
   saveReviewNotes,
+  deleteSubmission,
   useInvalidateChecks,
 } from "@/hooks/useFourteenDayChecks"
+import { useAuth } from "@/features/auth"
 
 type Props = {
   submission: FourteenDayCheckSubmission
@@ -23,9 +25,12 @@ type Props = {
 export function SubmissionReviewPanel({ submission, registration, fieldSchema, onClose }: Props) {
   const { data: attachments = [] } = useCheckAttachments(submission.id)
   const invalidate = useInvalidateChecks()
+  const { profile } = useAuth()
+  const isSuperAdmin = profile?.role === "Super Admin"
   const [notes, setNotes] = useState(submission.review_notes ?? "")
   const [saving, setSaving] = useState(false)
   const [acting, setActing] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({})
 
@@ -64,11 +69,24 @@ export function SubmissionReviewPanel({ submission, registration, fieldSchema, o
     if (acting) return
     try {
       setActing(true)
-      await updateSubmissionStatus(submission.id, status, notes)
+      await updateSubmissionStatus(submission.id, status, notes, profile?.id)
       invalidate()
       onClose()
     } finally {
       setActing(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (acting) return
+    try {
+      setActing(true)
+      await deleteSubmission(submission.id)
+      invalidate()
+      onClose()
+    } finally {
+      setActing(false)
+      setConfirmDelete(false)
     }
   }
 
@@ -264,74 +282,187 @@ export function SubmissionReviewPanel({ submission, registration, fieldSchema, o
         {/* Action footer */}
         {!isArchived && (
           <div
-            className="flex-shrink-0 px-6 py-4 flex items-center gap-3"
+            className="flex-shrink-0 px-6 py-4 flex flex-col gap-3"
             style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
           >
-            <button
-              type="button"
-              onClick={() => handleAction("flagged")}
-              disabled={acting || submission.review_status === "flagged"}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all disabled:opacity-40"
-              style={{
-                background: "rgba(239,68,68,0.12)",
-                border: "1px solid rgba(239,68,68,0.25)",
-                color: "#f87171",
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.2)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.12)")}
-            >
-              <Flag className="w-3.5 h-3.5" />
-              Flag
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => handleAction("flagged")}
+                disabled={acting || submission.review_status === "flagged"}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all disabled:opacity-40"
+                style={{
+                  background: "rgba(239,68,68,0.12)",
+                  border: "1px solid rgba(239,68,68,0.25)",
+                  color: "#f87171",
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.2)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.12)")}
+              >
+                <Flag className="w-3.5 h-3.5" />
+                Flag
+              </button>
 
-            <div className="flex-1" />
+              <div className="flex-1" />
 
-            <button
-              type="button"
-              onClick={() => handleAction("archived")}
-              disabled={acting}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all disabled:opacity-40"
-              style={{
-                background: "rgba(212,160,23,0.12)",
-                border: "1px solid rgba(212,160,23,0.3)",
-                color: "#d4a017",
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.2)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.12)")}
-            >
-              <Archive className="w-3.5 h-3.5" />
-              Archive
-            </button>
+              <button
+                type="button"
+                onClick={() => handleAction("archived")}
+                disabled={acting}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all disabled:opacity-40"
+                style={{
+                  background: "rgba(212,160,23,0.12)",
+                  border: "1px solid rgba(212,160,23,0.3)",
+                  color: "#d4a017",
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.2)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.12)")}
+              >
+                <Archive className="w-3.5 h-3.5" />
+                Archive
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleAction("cleared")}
-              disabled={acting}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all disabled:opacity-40"
-              style={{
-                background: "rgba(34,197,94,0.12)",
-                border: "1px solid rgba(34,197,94,0.25)",
-                color: "#4ade80",
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(34,197,94,0.2)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(34,197,94,0.12)")}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Clear & Archive
-            </button>
+              <button
+                type="button"
+                onClick={() => handleAction("cleared")}
+                disabled={acting}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all disabled:opacity-40"
+                style={{
+                  background: "rgba(34,197,94,0.12)",
+                  border: "1px solid rgba(34,197,94,0.25)",
+                  color: "#4ade80",
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(34,197,94,0.2)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(34,197,94,0.12)")}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Clear & Archive
+              </button>
 
-            {acting && <Loader2 className="w-4 h-4 animate-spin ml-1" style={{ color: "rgba(255,255,255,0.3)" }} />}
+              {acting && <Loader2 className="w-4 h-4 animate-spin ml-1" style={{ color: "rgba(255,255,255,0.3)" }} />}
+            </div>
+
+            {/* Super Admin delete row */}
+            {isSuperAdmin && (
+              <div
+                className="flex items-center gap-3 pt-2"
+                style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}
+              >
+                {!confirmDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    disabled={acting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all disabled:opacity-40"
+                    style={{
+                      background: "transparent",
+                      border: "1px solid rgba(239,68,68,0.2)",
+                      color: "rgba(248,113,113,0.5)",
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = "rgba(239,68,68,0.1)"
+                      e.currentTarget.style.color = "#f87171"
+                      e.currentTarget.style.borderColor = "rgba(239,68,68,0.4)"
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = "transparent"
+                      e.currentTarget.style.color = "rgba(248,113,113,0.5)"
+                      e.currentTarget.style.borderColor = "rgba(239,68,68,0.2)"
+                    }}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Delete Submission
+                  </button>
+                ) : (
+                  <>
+                    <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+                      Permanently delete this submission?
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      disabled={acting}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-semibold transition-all disabled:opacity-40"
+                      style={{ background: "rgba(239,68,68,0.85)", color: "#fff" }}
+                    >
+                      {acting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                      Confirm Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      className="px-3 py-1.5 rounded text-xs transition-all"
+                      style={{ color: "rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.05)" }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 
         {isArchived && (
           <div
-            className="flex-shrink-0 px-6 py-3 text-center text-xs"
-            style={{ borderTop: "1px solid rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.3)" }}
+            className="flex-shrink-0 px-6 py-3 flex items-center justify-between"
+            style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
           >
-            Archived{submission.reviewed_at
-              ? ` · ${format(new Date(submission.reviewed_at), "MMM d, yyyy")}`
-              : ""}
+            <span className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+              Archived{submission.reviewed_at
+                ? ` · ${format(new Date(submission.reviewed_at), "MMM d, yyyy")}`
+                : ""}
+            </span>
+            {isSuperAdmin && (
+              !confirmDelete ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={acting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all disabled:opacity-40"
+                  style={{
+                    background: "transparent",
+                    border: "1px solid rgba(239,68,68,0.2)",
+                    color: "rgba(248,113,113,0.5)",
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = "rgba(239,68,68,0.1)"
+                    e.currentTarget.style.color = "#f87171"
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.4)"
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = "transparent"
+                    e.currentTarget.style.color = "rgba(248,113,113,0.5)"
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.2)"
+                  }}
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Permanently delete?</span>
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={acting}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-semibold transition-all disabled:opacity-40"
+                    style={{ background: "rgba(239,68,68,0.85)", color: "#fff" }}
+                  >
+                    {acting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-3 py-1.5 rounded text-xs"
+                    style={{ color: "rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.05)" }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )
+            )}
           </div>
         )}
       </div>
