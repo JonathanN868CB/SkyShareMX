@@ -268,7 +268,7 @@ BEGIN
   FROM public.aircraft a
   JOIN public.aircraft_registrations ar
     ON ar.aircraft_id = a.id AND ar.is_current = true
-  WHERE ar.registration IN ('N868CB', 'N871CB', 'N774CB')
+  WHERE ar.registration IN ('N868CB', 'N871CB', 'N744CB')
   ON CONFLICT (aircraft_id) DO NOTHING;
 
 END $$;
