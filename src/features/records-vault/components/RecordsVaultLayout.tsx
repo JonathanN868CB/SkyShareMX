@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react"
-import { Upload, Search as SearchIcon, FolderOpen } from "lucide-react"
+import { Upload, Search as SearchIcon, FolderOpen, Activity } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs"
 import { useAuth } from "@/features/auth"
@@ -11,6 +11,7 @@ import { RecordsResultsList } from "./RecordsResultsList"
 import { RecordSourcesList } from "./RecordSourcesList"
 import { RecordsPageViewer } from "./RecordsPageViewer"
 import { RecordsUploadModal } from "./RecordsUploadModal"
+import { RecordsPipelineView } from "./RecordsPipelineView"
 import { MANAGER_ROLES } from "../constants"
 import type { SourceCategory, SearchHit, RecordSource } from "../types"
 import type { AircraftBase } from "@/pages/aircraft/fleetData"
@@ -162,6 +163,10 @@ export function RecordsVaultLayout() {
                     </span>
                   )}
                 </TabsTrigger>
+                <TabsTrigger value="pipeline" className="text-xs gap-1.5">
+                  <Activity className="h-3.5 w-3.5" />
+                  Pipeline
+                </TabsTrigger>
               </TabsList>
             </div>
 
@@ -184,6 +189,10 @@ export function RecordsVaultLayout() {
                 isLoading={sourcesLoading}
                 onViewSource={handleViewSource}
               />
+            </TabsContent>
+
+            <TabsContent value="pipeline" className="flex-1 overflow-y-auto p-5 mt-0">
+              <RecordsPipelineView aircraftId={selectedAircraftId} />
             </TabsContent>
           </Tabs>
         </main>

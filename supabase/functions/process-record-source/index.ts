@@ -1,84 +1,99 @@
 /**
  * process-record-source — Supabase Edge Function
  *
- * Called by records-vault-register Netlify function (fire-and-forget).
- * Downloads the uploaded PDF from Storage, sends it to Mistral OCR,
- * and populates rv_pages rows for full-text search.
+ * Downloads nothing. Instead it generates a short-lived signed URL for the PDF
+ * in Storage and hands that URL directly to Mistral OCR. Mistral fetches the
+ * file server-side — the Edge Function never holds PDF bytes in memory.
  *
- * Auth: caller must provide SUPABASE_SERVICE_ROLE_KEY as Bearer token.
- * The Edge Function uses the service role client to bypass RLS when
- * writing rv_pages rows.
+ * Pipeline steps logged to rv_ingestion_log for real-time UI visibility:
+ *   queued → download_started → ocr_submitted → ocr_complete →
+ *   pages_inserting → verified | partial | failed
+ *
+ * Auth: caller must present SUPABASE_SERVICE_ROLE_KEY as Bearer token.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY")!;
+const SUPABASE_URL        = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY    = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const MISTRAL_API_KEY     = Deno.env.get("MISTRAL_API_KEY")!;
 
-const MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr";
-// Mistral OCR processes up to 1000 pages per request; we chunk at 50
-// to stay comfortably inside the 150s Edge Function timeout.
-const CHUNK_SIZE = 50;
+const MISTRAL_OCR_URL     = "https://api.mistral.ai/v1/ocr";
+const PAGE_INSERT_CHUNK   = 50;   // rows per upsert batch
+const SIGNED_URL_EXPIRY   = 3600; // seconds — long enough for Mistral to fetch
 
 interface ProcessRequest {
   record_source_id: string;
 }
 
 interface MistralOcrPage {
-  index: number;       // 0-based page index
+  index: number;
   text: string;
-  confidence?: number; // 0–1, not always present
+  confidence?: number;
 }
 
 interface MistralOcrResponse {
   pages: MistralOcrPage[];
 }
 
-Deno.serve(async (req: Request): Promise<Response> => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204 });
-  }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  // Verify caller is our own Netlify function using service role key
+function jsonResp(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+Deno.serve(async (req: Request): Promise<Response> => {
+  if (req.method === "OPTIONS") return new Response(null, { status: 204 });
+
   const authHeader = req.headers.get("Authorization") ?? "";
   if (authHeader !== `Bearer ${SERVICE_ROLE_KEY}`) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResp(401, { error: "Unauthorized" });
   }
 
   let body: ProcessRequest;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResp(400, { error: "Invalid JSON body" });
   }
 
   const { record_source_id } = body;
-  if (!record_source_id) {
-    return new Response(JSON.stringify({ error: "record_source_id required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  if (!record_source_id) return jsonResp(400, { error: "record_source_id required" });
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
   });
 
-  // Mark as extracting
+  // ── Convenience: log a step ──────────────────────────────────────────────
+  async function log(
+    step: string,
+    message: string,
+    page_count?: number
+  ): Promise<void> {
+    await supabase.from("rv_ingestion_log").insert({
+      record_source_id,
+      step,
+      message,
+      page_count: page_count ?? null,
+    });
+  }
+
+  // Mark as extracting + record start time
   await supabase
     .from("rv_record_sources")
-    .update({ ingestion_status: "extracting" })
+    .update({
+      ingestion_status: "extracting",
+      ingestion_started_at: new Date().toISOString(),
+    })
     .eq("id", record_source_id);
 
   try {
-    // Fetch the source record to get storage path + aircraft_id
+    // ── 1. Fetch source record ─────────────────────────────────────────────
     const { data: source, error: sourceErr } = await supabase
       .from("rv_record_sources")
       .select("id, aircraft_id, storage_path, original_filename")
@@ -89,21 +104,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
       throw new Error(`Source record not found: ${sourceErr?.message}`);
     }
 
-    // Download the PDF from Supabase Storage
-    const { data: fileData, error: downloadErr } = await supabase.storage
-      .from("records-vault")
-      .download(source.storage_path);
+    await log("download_started", `Generating signed URL for ${source.original_filename}`);
 
-    if (downloadErr || !fileData) {
-      throw new Error(`Storage download failed: ${downloadErr?.message}`);
+    // ── 2. Generate signed URL — Mistral fetches the PDF directly ──────────
+    // No PDF bytes ever held in Edge Function memory.
+    const { data: signedData, error: signErr } = await supabase.storage
+      .from("records-vault")
+      .createSignedUrl(source.storage_path, SIGNED_URL_EXPIRY);
+
+    if (signErr || !signedData?.signedUrl) {
+      throw new Error(`Failed to generate signed URL: ${signErr?.message}`);
     }
 
-    const pdfBytes = await fileData.arrayBuffer();
-    const pdfBase64 = btoa(
-      String.fromCharCode(...new Uint8Array(pdfBytes))
-    );
+    await log("ocr_submitted", "PDF URL sent to Mistral OCR — awaiting response");
 
-    // Call Mistral OCR — send the full PDF, get per-page text back
+    // ── 3. Call Mistral OCR with the signed URL ────────────────────────────
     const mistralResponse = await fetch(MISTRAL_OCR_URL, {
       method: "POST",
       headers: {
@@ -114,8 +129,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         model: "mistral-ocr-latest",
         document: {
           type: "document_url",
-          // Mistral accepts base64 PDF via data URI
-          document_url: `data:application/pdf;base64,${pdfBase64}`,
+          document_url: signedData.signedUrl,
         },
         include_image_base64: false,
       }),
@@ -130,15 +144,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const pages = ocrResult.pages ?? [];
 
     if (pages.length === 0) {
-      throw new Error("Mistral OCR returned zero pages");
+      throw new Error("Mistral OCR returned zero pages — file may be empty or unreadable");
     }
 
-    // Insert rv_pages in chunks to avoid hitting insert limits
+    await log("ocr_complete", `Mistral returned ${pages.length} pages`, pages.length);
+
+    // Update pages_extracted immediately so the UI can show expected count
+    await supabase
+      .from("rv_record_sources")
+      .update({ pages_extracted: pages.length })
+      .eq("id", record_source_id);
+
+    // ── 4. Insert rv_pages in batches ──────────────────────────────────────
+    await log("pages_inserting", `Inserting ${pages.length} pages into database`);
+
     let totalConfidence = 0;
     let confidenceCount = 0;
+    let insertedCount = 0;
 
-    for (let i = 0; i < pages.length; i += CHUNK_SIZE) {
-      const chunk = pages.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < pages.length; i += PAGE_INSERT_CHUNK) {
+      const chunk = pages.slice(i, i + PAGE_INSERT_CHUNK);
+
       const rows = chunk.map((page) => {
         const conf = page.confidence ?? null;
         if (conf !== null) {
@@ -147,11 +173,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }
         return {
           record_source_id: source.id,
-          aircraft_id: source.aircraft_id,
-          page_number: page.index + 1,   // store 1-based for display
-          raw_ocr_text: page.text ?? "",
-          ocr_confidence: conf,
-          ocr_status: "extracted" as const,
+          aircraft_id:      source.aircraft_id,
+          page_number:      page.index + 1,   // 1-based for display
+          raw_ocr_text:     page.text ?? "",
+          ocr_confidence:   conf,
+          ocr_status:       "extracted" as const,
         };
       });
 
@@ -160,43 +186,83 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .upsert(rows, { onConflict: "record_source_id,page_number" });
 
       if (insertErr) {
-        throw new Error(`Failed to insert pages chunk starting at ${i}: ${insertErr.message}`);
+        throw new Error(
+          `Insert failed at chunk starting page ${i + 1}: ${insertErr.message}`
+        );
       }
+
+      insertedCount += rows.length;
     }
 
+    // ── 5. Verify: count pages actually in the DB ─────────────────────────
+    const { count: dbCount, error: countErr } = await supabase
+      .from("rv_pages")
+      .select("id", { count: "exact", head: true })
+      .eq("record_source_id", record_source_id)
+      .eq("ocr_status", "extracted");
+
+    const pagesInDb = countErr ? null : (dbCount ?? 0);
     const avgConfidence =
       confidenceCount > 0 ? totalConfidence / confidenceCount : null;
 
-    // Mark source as indexed
+    const isVerified = pagesInDb !== null && pagesInDb === pages.length;
+    const verificationStatus = pagesInDb === null
+      ? "partial"
+      : pagesInDb === pages.length
+        ? "verified"
+        : "partial";
+
+    if (isVerified) {
+      await log(
+        "verified",
+        `✓ Verified: ${pagesInDb} of ${pages.length} pages confirmed in database`,
+        pagesInDb
+      );
+    } else {
+      await log(
+        "partial",
+        `⚠ Partial: ${pagesInDb ?? "?"} of ${pages.length} pages found in database — may need retry`,
+        pagesInDb ?? undefined
+      );
+    }
+
+    // ── 6. Mark source as indexed ─────────────────────────────────────────
     await supabase
       .from("rv_record_sources")
       .update({
-        ingestion_status: "indexed",
-        page_count: pages.length,
-        ocr_quality_score: avgConfidence,
-        ingestion_error: null,
+        ingestion_status:       "indexed",
+        page_count:             pages.length,
+        pages_extracted:        pages.length,
+        pages_inserted:         pagesInDb ?? insertedCount,
+        verification_status:    verificationStatus,
+        ocr_quality_score:      avgConfidence,
+        ingestion_error:        null,
+        ingestion_completed_at: new Date().toISOString(),
       })
       .eq("id", record_source_id);
 
-    return new Response(
-      JSON.stringify({ success: true, pages_processed: pages.length }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    return jsonResp(200, {
+      success: true,
+      pages_extracted: pages.length,
+      pages_in_db: pagesInDb,
+      verification_status: verificationStatus,
+    });
+
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[process-record-source] Failed for ${record_source_id}:`, message);
 
+    await log("failed", message);
+
     await supabase
       .from("rv_record_sources")
       .update({
-        ingestion_status: "failed",
-        ingestion_error: message,
+        ingestion_status:       "failed",
+        ingestion_error:        message,
+        ingestion_completed_at: new Date().toISOString(),
       })
       .eq("id", record_source_id);
 
-    return new Response(
-      JSON.stringify({ error: message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return jsonResp(500, { error: message });
   }
 });
