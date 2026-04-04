@@ -4,8 +4,8 @@
 import { useState, useEffect } from "react"
 import { formatDistanceToNow } from "date-fns"
 import {
-  CalendarClock, ExternalLink, Clock, CheckCircle2, AlertTriangle,
-  ChevronRight, RefreshCw,
+  CalendarClock, ExternalLink, Clock, AlertTriangle,
+  ChevronRight, RefreshCw, QrCode, History, Plus,
 } from "lucide-react"
 import {
   useFleetCheckSummaries,
@@ -15,14 +15,24 @@ import {
   type AircraftCheckSummary,
   type PendingSubmission,
 } from "@/hooks/useFourteenDayChecks"
+import { useAuth } from "@/features/auth"
 import { SubmissionReviewPanel } from "@/features/fourteen-day-check/SubmissionReviewPanel"
+import { AircraftCheckQR } from "@/features/fourteen-day-check/AircraftCheckQR"
+import { CheckHistoryDrawer } from "@/features/fourteen-day-check/CheckHistoryDrawer"
+import { AddAircraftModal } from "@/features/fourteen-day-check/AddAircraftModal"
 
 export default function FourteenDayCheck() {
   const { data: fleet = [], isLoading: fleetLoading, refetch } = useFleetCheckSummaries()
   const { data: pending = [], isLoading: pendingLoading } = usePendingSubmissions()
   const invalidate = useInvalidateChecks()
+  const { profile } = useAuth()
+  const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
+
   const [reviewSubmissionId, setReviewSubmissionId] = useState<string | null>(null)
   const [reviewRegistration, setReviewRegistration] = useState("")
+  const [qrAircraft, setQrAircraft] = useState<AircraftCheckSummary | null>(null)
+  const [historyAircraft, setHistoryAircraft] = useState<AircraftCheckSummary | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
 
   const ok       = fleet.filter(a => a.status === "ok").length
   const dueSoon  = fleet.filter(a => a.status === "due_soon").length
@@ -40,6 +50,7 @@ export default function FourteenDayCheck() {
     invalidate()
   }
 
+  const enrolledAircraftIds = new Set(fleet.map(a => a.aircraftId))
   const isLoading = fleetLoading || pendingLoading
 
   return (
@@ -58,21 +69,40 @@ export default function FourteenDayCheck() {
             Maintenance Control · Fleet inspection status
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs transition-colors"
-          style={{
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            color: "rgba(255,255,255,0.5)",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.8)")}
-          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.5)")}
-        >
-          <RefreshCw className="w-3 h-3" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              style={{
+                background: "rgba(212,160,23,0.12)",
+                border: "1px solid rgba(212,160,23,0.3)",
+                color: "#d4a017",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.2)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.12)")}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Aircraft
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs transition-colors"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "rgba(255,255,255,0.5)",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.8)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.5)")}
+          >
+            <RefreshCw className="w-3 h-3" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Summary bar */}
@@ -162,6 +192,8 @@ export default function FourteenDayCheck() {
                 aircraft={aircraft}
                 pendingSubmission={pending.find(s => s.aircraft_id === aircraft.aircraftId) ?? null}
                 onReview={(subId) => openReview(subId, aircraft.registration)}
+                onQR={() => setQrAircraft(aircraft)}
+                onHistory={() => setHistoryAircraft(aircraft)}
               />
             ))}
           </div>
@@ -174,6 +206,36 @@ export default function FourteenDayCheck() {
           submissionId={reviewSubmissionId}
           registration={reviewRegistration}
           onClose={closeReview}
+        />
+      )}
+
+      {/* QR code modal */}
+      {qrAircraft && (
+        <AircraftCheckQR
+          registration={qrAircraft.registration}
+          encodedToken={qrAircraft.encodedToken}
+          onClose={() => setQrAircraft(null)}
+        />
+      )}
+
+      {/* History drawer */}
+      {historyAircraft && (
+        <CheckHistoryDrawer
+          tokenId={historyAircraft.tokenId}
+          registration={historyAircraft.registration}
+          onClose={() => setHistoryAircraft(null)}
+          onReview={(subId) => {
+            setHistoryAircraft(null)
+            openReview(subId, historyAircraft.registration)
+          }}
+        />
+      )}
+
+      {/* Add aircraft modal */}
+      {showAddModal && (
+        <AddAircraftModal
+          enrolledAircraftIds={enrolledAircraftIds}
+          onClose={() => setShowAddModal(false)}
         />
       )}
     </div>
@@ -240,10 +302,14 @@ function AircraftCheckCard({
   aircraft,
   pendingSubmission,
   onReview,
+  onQR,
+  onHistory,
 }: {
   aircraft: AircraftCheckSummary
   pendingSubmission: PendingSubmission | null
   onReview: (submissionId: string) => void
+  onQR: () => void
+  onHistory: () => void
 }) {
   const statusConfig = {
     ok:       { label: "OK",        color: "#4ade80", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.2)"  },
@@ -304,37 +370,60 @@ function AircraftCheckCard({
           : "Never checked"}
       </p>
 
-      {/* Actions */}
-      <div className="flex items-center gap-2 mt-auto pt-1">
-        {pendingSubmission ? (
-          <button
-            type="button"
-            onClick={() => onReview(pendingSubmission.id)}
-            className="flex items-center gap-1 text-xs font-medium rounded px-2 py-1 transition-all"
-            style={{
-              background: "rgba(212,160,23,0.15)",
-              border: "1px solid rgba(212,160,23,0.3)",
-              color: "#d4a017",
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.25)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.15)")}
-          >
-            Review <ChevronRight className="w-3 h-3" />
-          </button>
-        ) : (
-          <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>No pending checks</span>
-        )}
+      {/* Primary action */}
+      {pendingSubmission ? (
+        <button
+          type="button"
+          onClick={() => onReview(pendingSubmission.id)}
+          className="flex items-center justify-center gap-1 w-full text-xs font-medium rounded px-2 py-1.5 transition-all mt-auto"
+          style={{
+            background: "rgba(212,160,23,0.15)",
+            border: "1px solid rgba(212,160,23,0.3)",
+            color: "#d4a017",
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.25)")}
+          onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.15)")}
+        >
+          Review <ChevronRight className="w-3 h-3" />
+        </button>
+      ) : (
+        <div className="mt-auto" />
+      )}
 
+      {/* Icon row */}
+      <div className="flex items-center gap-1 pt-1">
+        <button
+          type="button"
+          onClick={onHistory}
+          className="p-1.5 rounded transition-colors"
+          style={{ color: "rgba(255,255,255,0.3)" }}
+          title="View history"
+          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+        >
+          <History className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onQR}
+          className="p-1.5 rounded transition-colors"
+          style={{ color: "rgba(255,255,255,0.3)" }}
+          title="QR code"
+          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+        >
+          <QrCode className="w-3.5 h-3.5" />
+        </button>
         {aircraft.traxxallUrl && (
           <a
             href={aircraft.traxxallUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto p-1 rounded transition-opacity hover:opacity-80"
+            className="ml-auto p-1.5 rounded transition-opacity hover:opacity-80"
             style={{ color: "rgba(255,255,255,0.3)" }}
             title="View in Traxxall"
           >
-            <ExternalLink className="w-3 h-3" />
+            <ExternalLink className="w-3.5 h-3.5" />
           </a>
         )}
       </div>
