@@ -29,6 +29,8 @@ const PartsDetail = lazy(() => import("@/pages/PartsDetail"))
 const ExternalRequests = lazy(() => import("@/pages/external-requests/ExternalRequestsPage"))
 const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/ExternalRequestDetailPage"))
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
+const FourteenDayCheckResponse = lazy(() => import("@/pages/fourteen-day-check/FourteenDayCheckResponse"))
+const FourteenDayCheck = lazy(() => import("@/pages/FourteenDayCheck"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -59,9 +61,14 @@ const routes: RouteObject[] = [
     element: wrap(<RequestAccess />),
   },
   {
-    // Public response portal — no auth required
+    // External Requests public response portal — no auth required
     path: "/r/:token",
     element: wrap(<ExternalResponse />),
+  },
+  {
+    // 14-Day Check permanent standing form — no auth required
+    path: "/check/:token",
+    element: wrap(<FourteenDayCheckResponse />),
   },
   {
     path: "/app",
@@ -85,7 +92,7 @@ const routes: RouteObject[] = [
       { path: "dev/access-denied", element: wrap(<AccessDenied name="Aircraft Conformity" />) },
       { path: "ai-assistant", element: wrap(<AiAssistant />) },
       { path: "conformity",  element: wrap(<ComingSoon name="Aircraft Conformity" />) },
-      { path: "14-day-check", element: wrap(<ComingSoon name="14-Day Check" />) },
+      { path: "14-day-check", element: wrap(<FourteenDayCheck />) },
       { path: "planning",    element: wrap(<ComingSoon name="Maintenance Planning" />) },
       { path: "ten-or-more", element: wrap(<ComingSoon name="Ten or More" />) },
       { path: "terminal-ogd", element: wrap(<ComingSoon name="Terminal-OGD" />) },
