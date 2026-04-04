@@ -29,6 +29,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Apr 3", text: "External Requests is live. Send structured requests to anyone outside the platform and collect responses through a secure, no-login portal." },
   { date: "Apr 3", text: "MM Revision & Audit Tracking is now live under Compliance. Quarterly audit campaigns replace the spreadsheet — review the entire fleet by type group, track revision changes, and generate PDF reports ready for the FSDO." },
   { date: "Apr 2", text: "Parts module launched: submit parts requests, track order status, manage approvals, and view FedEx tracking — all in one place. Replaces the Google Form workflow. 616 historical orders imported. Find it under Parts in the sidebar." },
   { date: "Apr 1", text: "DW1GHT Interview System launched: AI-powered mechanic interviews with automatic learning, DOM review workflow, and email notifications. Check your interview assignments under Discrepancy Intelligence." },

@@ -165,7 +165,7 @@ export type Database = {
     }
     Enums: {
       app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Read-Only"
-      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence" | "Parts"
+      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence" | "Parts" | "External Requests"
       user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
@@ -221,11 +221,67 @@ export const APP_SECTIONS: AppSection[] = [
   "Safety",
   "Discrepancy Intelligence",
   "Parts",
+  "External Requests",
 ]
+
+// ─── External Requests types ─────────────────────────────────────────────────
+
+export type FieldType = "text" | "textarea" | "number" | "photo" | "file"
+
+export type FieldDef = {
+  id: string
+  label: string
+  type: FieldType
+  required: boolean
+  hint?: string
+}
+
+export type ExternalRequest = {
+  id: string
+  title: string
+  instructions: string | null
+  field_schema: FieldDef[]
+  recipient_name: string
+  recipient_email: string
+  delivery_channel: string
+  token: string
+  status: "draft" | "sent" | "submitted" | "reviewed"
+  expires_at: string | null
+  parent_type: string | null
+  parent_id: string | null
+  parent_label: string | null
+  review_notes: string | null
+  created_by: string
+  created_at: string
+  sent_at: string | null
+  submitted_at: string | null
+  reviewed_at: string | null
+  reviewed_by: string | null
+}
+
+export type ExternalSubmission = {
+  id: string
+  request_id: string
+  field_values: Record<string, string | number | boolean | null>
+  notes: string | null
+  submitted_at: string
+  submitter_ip: string | null
+}
+
+export type ExternalSubmissionAttachment = {
+  id: string
+  submission_id: string
+  file_name: string
+  storage_path: string
+  mime_type: string | null
+  file_size_bytes: number | null
+  uploaded_at: string
+}
 
 export const DEFAULT_PERMISSIONS: AppSection[] = [
   "Dashboard",
   "Aircraft Info",
   "AI Assistant",
   "Parts",
+  "External Requests",
 ]
