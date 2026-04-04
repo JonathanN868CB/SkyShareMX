@@ -53,7 +53,7 @@ export function SendCheckEmailModal({ registration, encodedToken, onClose }: Pro
       const { data } = await db
         .from("profiles")
         .select("id, full_name, email, role")
-        .in("role", ["Technician", "Manager"])
+        .in("role", ["Technician", "Manager", "Admin", "Super Admin"])
         .order("full_name", { ascending: true, nullsFirst: false })
       setProfiles(data ?? [])
       setLoadingProfiles(false)
@@ -86,6 +86,7 @@ export function SendCheckEmailModal({ registration, encodedToken, onClose }: Pro
 
   const technicians = filtered.filter(p => p.role === "Technician")
   const managers    = filtered.filter(p => p.role === "Manager")
+  const admins      = filtered.filter(p => p.role === "Admin" || p.role === "Super Admin")
 
   async function handleSend() {
     const name  = recipientName.trim()
@@ -348,6 +349,9 @@ export function SendCheckEmailModal({ registration, encodedToken, onClose }: Pro
                     )}
                     {managers.length > 0 && (
                       <RoleGroup label="Managers" profiles={managers} onSelect={handleSelect} />
+                    )}
+                    {admins.length > 0 && (
+                      <RoleGroup label="Admin" profiles={admins} onSelect={handleSelect} />
                     )}
                   </>
                 )}
