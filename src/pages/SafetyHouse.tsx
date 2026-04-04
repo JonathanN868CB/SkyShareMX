@@ -1,906 +1,581 @@
-import {
-  Shield, Radio, BarChart3, FileText, AlertTriangle, CheckCircle,
-  CalendarDays, Users, Phone, ExternalLink, BookOpen, Zap,
-  TrendingDown, TrendingUp, Minus, Flag, MessageSquare, ClipboardCheck,
-  Activity, Clock, Globe, Brain, GraduationCap, Building2, Target,
-  Eye, Layers, Newspaper, AlertOctagon,
-} from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
+import { useState, useEffect, useRef, useCallback } from "react"
+import { Shield, X, ChevronRight, Trash2, Pencil, Check } from "lucide-react"
+import { formatDistanceToNow } from "date-fns"
 
-// ─── Color token ─────────────────────────────────────────────────────────────
-const G = "#10b981" // emerald — safety accent
-const rgba = (a: number) => `rgba(16,185,129,${a})`
+// ─── Config ───────────────────────────────────────────────────────────────────
 
-// ─── Placeholder Data ─────────────────────────────────────────────────────────
-// All data below is hardcoded. Wire to Supabase when sections are committed.
+const MSG = "Ricky, what do you want?"
 
-const statCards = [
-  { label: "Open Safety Items",     value: "3",   trend: "up",   trendNote: "+1 this week"         },
-  { label: "Active Investigations", value: "0",   trend: "flat", trendNote: "Clean slate"           },
-  { label: "Days Since Last Event", value: "47",  trend: "up",   trendNote: "Keep it going"         },
-  { label: "Open Action Items",     value: "5",   trend: "down", trendNote: "Down from 8 last mo."  },
-  { label: "Culture Score",         value: "77",  trend: "up",   trendNote: "+3 pts since Aug 25"   },
-  { label: "Open Risk Register",    value: "4",   trend: "flat", trendNote: "1 high priority"       },
-  { label: "Overdue CAs",           value: "1",   trend: "up",   trendNote: "CA-2026-005 aging"     },
-  { label: "Next Audit",            value: "Q3",  trend: "flat", trendNote: "IS-BAO Stage 1 target" },
-]
+const PHASES = [
+  "typewriter", "glitch", "neon", "shake", "stamp",
+  "rainbow", "ghost", "marquee", "disco", "matrix",
+] as const
+type Phase = typeof PHASES[number]
 
-// Safety Inbox — categories and counts only, no sensitive report details
-const safetyInbox = [
-  { source: "PRISM SMS",    category: "Hazard Report",          received: "Mar 29", status: "In Review",      assignedTo: "DoS"      },
-  { source: "Direct",       category: "Near-Miss Observation",  received: "Mar 27", status: "Pending Action", assignedTo: "DoS / DOM"},
-  { source: "PRISM SMS",    category: "Safety Concern",         received: "Mar 20", status: "In Review",      assignedTo: "DoS"      },
-  { source: "Crew Debrief", category: "Ground Ops Observation", received: "Mar 15", status: "Closed",         assignedTo: "DoS"      },
-  { source: "PRISM SMS",    category: "Maintenance Finding",    received: "Mar 10", status: "Closed",         assignedTo: "DOM"      },
-]
+const PHASE_MS = 4500
+const GC = `!<>-_\\/[]{}—=+*^?#$%@ABCDE0123456789`
 
-// ─── Risk Register ────────────────────────────────────────────────────────────
-const riskRegister = [
-  { id: "RR-001", hazard: "Crew fatigue risk on back-to-back early/late rotations", area: "Flight Ops",   severity: 5, likelihood: 2, riskLevel: "High",   mitigation: "Rest-rule review in progress; FDM monitoring active", owner: "DoS / DO", status: "Open",      opened: "Jan 2026" },
-  { id: "RR-002", hazard: "FOD potential during after-hours ramp operations",        area: "Ground Ops",   severity: 4, likelihood: 2, riskLevel: "Medium", mitigation: "Mandatory FOD walk pre/post ops; PRISM logged",        owner: "DOM",       status: "Open",      opened: "Feb 2026" },
-  { id: "RR-003", hazard: "Incomplete MEL entries during line maintenance",          area: "Maintenance",  severity: 3, likelihood: 3, riskLevel: "Medium", mitigation: "MEL audit Q1 2026 complete; RTS checklist revised",    owner: "DOM",       status: "Open",      opened: "Mar 2026" },
-  { id: "RR-004", hazard: "Hangar door clearance — wingtip proximity on park",      area: "Maintenance",  severity: 4, likelihood: 2, riskLevel: "Medium", mitigation: "Wing walker required; visual stop cues installed",      owner: "DOM",       status: "Mitigated", opened: "Nov 2025" },
-  { id: "RR-005", hazard: "Third-party fuel vendor quality records compliance",      area: "Ground Ops",   severity: 5, likelihood: 1, riskLevel: "Low",    mitigation: "Annual vendor audit complete; COQ current on file",     owner: "DoS",       status: "Mitigated", opened: "Sep 2025" },
-]
-
-const smsProgramStatus = [
-  { item: "SMS Manual",               value: "Rev 2.1",   detail: "Effective Jan 2026 · Next review Jan 2027",        status: "Current"   },
-  { item: "Emergency Response Plan",  value: "Rev 1.4",   detail: "Last drill Oct 2025 · Next drill due Apr 2026",     status: "Review"    },
-  { item: "Drug & Alcohol Program",   value: "Active",    detail: "MRO: Concentra · Q2 testing window opens Apr 15",  status: "Current"   },
-  { item: "Safety Training (DoS)",    value: "Current",   detail: "Last completed Dec 2025 · Annual",                  status: "Current"   },
-  { item: "HFACS Awareness Training", value: "Scheduled", detail: "Crew completion deadline May 1, 2026",              status: "Review"    },
-  { item: "Whistleblower Policy",     value: "Posted",    detail: "Last updated Sep 2025 · Posted in all hangars",     status: "Current"   },
-  { item: "IS-BAO Stage 1 Initiation",value: "In Progress",detail:"Gap analysis started Q1 2026 · Target Q3 2026",    status: "Review"    },
-  { item: "ASAP / VDRP Eligibility",  value: "Eligible",  detail: "Program standing confirmed with PHX FSDO",          status: "Current"   },
-]
-
-const committeeItems = [
-  { item: "Review Q1 PRISM report summary",             owner: "DoS",       due: "Apr 15", status: "Open"     },
-  { item: "Close out Feb hazard report — ground ops",   owner: "DoS / DOM", due: "Apr 10", status: "Open"     },
-  { item: "Schedule ERP drill — all stations",          owner: "DoS",       due: "May 01", status: "Open"     },
-  { item: "Distribute revised SMS manual to all crew",  owner: "DoS",       due: "Apr 5",  status: "Complete" },
-  { item: "HFACS training schedule distributed",        owner: "DoS",       due: "Apr 1",  status: "Complete" },
-]
-
-// ─── Human Factors ────────────────────────────────────────────────────────────
-const hfacsData = [
-  { category: "Unsafe Acts",     subcategory: "Skill-based Error",     count: 2, trend: "down" },
-  { category: "Unsafe Acts",     subcategory: "Decision Error",         count: 1, trend: "flat" },
-  { category: "Preconditions",   subcategory: "Physical Environment",   count: 1, trend: "down" },
-  { category: "Preconditions",   subcategory: "Crew Resource Mgmt",     count: 0, trend: "flat" },
-  { category: "Supervision",     subcategory: "Inadequate Supervision",  count: 0, trend: "flat" },
-  { category: "Org Influences",  subcategory: "Resource Management",    count: 1, trend: "up"   },
-]
-
-// ─── Training Compliance ──────────────────────────────────────────────────────
-const trainingCompliance = [
-  { course: "HFACS Awareness",           dept: "All Crew",    completed: 9,  total: 20, pct: 45,  due: "May 1, 2026"  },
-  { course: "ERP Familiarization",       dept: "All Staff",   completed: 22, total: 22, pct: 100, due: "Current"      },
-  { course: "Hazard Reporting (PRISM)",  dept: "Technicians", completed: 8,  total: 10, pct: 80,  due: "Apr 15, 2026" },
-  { course: "Fatigue Risk Awareness",    dept: "Flight Crew", completed: 4,  total: 12, pct: 33,  due: "May 15, 2026" },
-  { course: "SMS Annual Refresher",      dept: "All Crew",    completed: 18, total: 20, pct: 90,  due: "Apr 30, 2026" },
-  { course: "Ground Safety (Ramp Ops)",  dept: "Ground Crew", completed: 6,  total: 6,  pct: 100, due: "Current"      },
-]
-
-// ─── Corrective Action Board ──────────────────────────────────────────────────
-const correctiveActions = [
-  { id: "CA-2026-007", source: "PRISM SMS",       finding: "Ramp lighting insufficient — east apron after hours",     assignedTo: "DOM",    due: "Apr 20, 2026", daysOpen: 12, status: "In Progress" },
-  { id: "CA-2026-006", source: "Safety Committee", finding: "ERP contact list not updated after leadership change",    assignedTo: "DoS",    due: "Apr 5, 2026",  daysOpen: 18, status: "Open"        },
-  { id: "CA-2026-005", source: "Internal Audit",  finding: "Three drug test chain-of-custody records incomplete",     assignedTo: "HR",     due: "Mar 30, 2026", daysOpen: 32, status: "Overdue"     },
-  { id: "CA-2026-004", source: "PRISM SMS",       finding: "Fueling discrepancy — incorrect grade logged at SAN",     assignedTo: "DOM",    due: "Mar 15, 2026", daysOpen: 8,  status: "Closed"      },
-  { id: "CA-2026-003", source: "ERP Drill",       finding: "Station manager unreachable — escalation gap identified",  assignedTo: "DoS",    due: "Apr 30, 2026", daysOpen: 22, status: "In Progress" },
-  { id: "CA-2026-002", source: "PRISM SMS",       finding: "Near-miss report — ground equipment left in taxiway",     assignedTo: "DoS/DO", due: "Apr 10, 2026", daysOpen: 9,  status: "In Progress" },
-]
-
-// ─── Safety Metrics ───────────────────────────────────────────────────────────
-const safetyMetrics = [
-  { month: "Oct 25", reports: 2, closed: 2, open: 0 },
-  { month: "Nov 25", reports: 1, closed: 1, open: 0 },
-  { month: "Dec 25", reports: 3, closed: 2, open: 1 },
-  { month: "Jan 26", reports: 1, closed: 1, open: 0 },
-  { month: "Feb 26", reports: 2, closed: 1, open: 1 },
-  { month: "Mar 26", reports: 2, closed: 0, open: 2 },
-]
-
-// ─── Regulatory Calendar ──────────────────────────────────────────────────────
-const regulatoryCalendar = [
-  { date: "Apr 1, 2026",  event: "SMS Manual Rev 2.1 effective",                type: "Internal",      status: "Upcoming" },
-  { date: "Apr 3, 2026",  event: "Q1 Safety Stand-Down — Hangar 4, 0700",       type: "Training",      status: "Upcoming" },
-  { date: "Apr 10, 2026", event: "Safety Committee Monthly Meeting",             type: "Committee",     status: "Upcoming" },
-  { date: "Apr 15, 2026", event: "D&A Q2 testing window opens",                 type: "Regulatory",    status: "Due Soon" },
-  { date: "Apr 15, 2026", event: "ERP Semi-Annual Drill due",                   type: "ERP",           status: "Due Soon" },
-  { date: "Apr 20, 2026", event: "PRISM Q1 report review deadline",             type: "SMS",           status: "Due Soon" },
-  { date: "May 1, 2026",  event: "HFACS awareness — crew completion deadline",  type: "Training",      status: "Upcoming" },
-  { date: "Jun 30, 2026", event: "IS-BAO Stage 1 gap analysis target close",    type: "Certification", status: "Upcoming" },
-  { date: "Jul 1, 2026",  event: "D&A Q3 testing window opens",                type: "Regulatory",    status: "Upcoming" },
-  { date: "Oct 15, 2026", event: "ERP Semi-Annual Drill — second occurrence",   type: "ERP",           status: "Upcoming" },
-]
-
-// ─── Industry Alerts ──────────────────────────────────────────────────────────
-const industryAlerts = [
-  { date: "Mar 28", source: "FAA",  type: "SAIB",    text: "SAIB AW-26-03: CJ series fuel system inspection guidance issued to all operators" },
-  { date: "Mar 22", source: "NTSB", type: "Safety Alert", text: "Runway incursion trends increasing in Part 135 ops — heightened vigilance advisory" },
-  { date: "Mar 15", source: "FAA",  type: "NOTAM",   text: "PHX FSDO: Winter ops debrief memo distributed to all Part 135 certificate holders" },
-  { date: "Mar 08", source: "NBAA", type: "Bulletin", text: "Updated IS-BAO Stage 2 checklist released — 2026 edition now on IBAC website" },
-  { date: "Feb 28", source: "FAA",  type: "AD",      text: "AD 2026-04-07: Applicable to GIV/GV series — inspect per current MRBR revision" },
-  { date: "Feb 14", source: "ASRS", type: "Report",  text: "NASA ASRS trending: crew communication breakdowns on single-pilot IFR departures" },
-]
-
-// ─── Safety Broadcasts ────────────────────────────────────────────────────────
-const safetyBroadcasts = [
-  { date: "Mar 30", tag: "Reminder",   text: "All FOD walks must be logged in PRISM prior to aircraft departure. No exceptions." },
-  { date: "Mar 22", tag: "Update",     text: "Revised SMS manual effective April 1 — review Section 4 on hazard reporting." },
-  { date: "Mar 15", tag: "Stand-Down", text: "Q1 Safety Stand-Down confirmed April 3, 0700, Hangar 4. Attendance mandatory." },
-  { date: "Mar 05", tag: "Reminder",   text: "PRISM SMS accounts — ensure your login credentials are current before month-end." },
-]
-
-// ─── Safety Goals ─────────────────────────────────────────────────────────────
-const safetyGoals = [
-  { goal: "Zero preventable events — calendar year 2026",          progress: 80,  status: "On Track"   },
-  { goal: "100% PRISM report closure within 30 days",              progress: 62,  status: "In Progress" },
-  { goal: "IS-BAO Stage 1 registration initiated by Q3 2026",      progress: 20,  status: "In Progress" },
-  { goal: "All crew HFACS awareness training complete by May 1",    progress: 45,  status: "In Progress" },
-  { goal: "ERP drill completed semi-annually (Apr + Oct)",          progress: 0,   status: "Upcoming"    },
-  { goal: "Safety committee meets monthly — no missed sessions",    progress: 100, status: "On Track"    },
-  { goal: "100% corrective action closure within 45 days of open", progress: 55,  status: "In Progress" },
-  { goal: "Safety culture score ≥ 80 by year-end 2026",            progress: 77,  status: "In Progress" },
-]
-
-// ─── Safety Culture Pulse ─────────────────────────────────────────────────────
-const culturePulse = [
-  { dimension: "Reporting Culture",  score: 82, benchmark: 78 },
-  { dimension: "Just Culture",       score: 71, benchmark: 75 },
-  { dimension: "Flexible Culture",   score: 85, benchmark: 72 },
-  { dimension: "Learning Culture",   score: 78, benchmark: 74 },
-  { dimension: "Informed Culture",   score: 69, benchmark: 70 },
-]
-
-// ─── Station Safety Snapshot ──────────────────────────────────────────────────
-const stationSnapshot = [
-  { station: "PHX — Deer Valley", lastInspection: "Mar 12, 2026", openItems: 1, status: "Monitor", lead: "— TBD —" },
-  { station: "PHX — Scottsdale",  lastInspection: "Feb 22, 2026", openItems: 0, status: "Good",    lead: "— TBD —" },
-  { station: "LAX",               lastInspection: "Jan 15, 2026", openItems: 2, status: "Monitor", lead: "— TBD —" },
-  { station: "SAN",               lastInspection: "Feb 5, 2026",  openItems: 0, status: "Good",    lead: "— TBD —" },
-  { station: "LAS",               lastInspection: "Mar 1, 2026",  openItems: 0, status: "Good",    lead: "— TBD —" },
-]
-
-// ─── Voluntary Safety Programs ────────────────────────────────────────────────
-const voluntaryPrograms = [
-  { program: "ASRS (NASA)",          status: "Encouraged",  filedYTD: 2, lastFiled: "Feb 2026", note: "Anonymous reports filed directly by crew to NASA" },
-  { program: "VDRP (FAA)",           status: "Eligible",    filedYTD: 0, lastFiled: "—",        note: "Voluntary Disclosure Reporting Program — open to operators" },
-  { program: "PRISM Hazard Reports", status: "Active",      filedYTD: 7, lastFiled: "Mar 29",   note: "Primary internal hazard and safety reporting channel" },
-  { program: "Direct to DoS",        status: "Active",      filedYTD: 2, lastFiled: "Mar 27",   note: "Walk-in, phone, or text to Director of Safety" },
-]
-
-// ─── Emergency Contacts ───────────────────────────────────────────────────────
-const emergencyContacts = [
-  { role: "Director of Safety",      name: "— TBD —",           phone: "—"              },
-  { role: "Director of Maintenance", name: "— TBD —",           phone: "—"              },
-  { role: "Director of Operations",  name: "— TBD —",           phone: "—"              },
-  { role: "PHX FSDO",                name: "Flight Standards",   phone: "(480) 988-7755" },
-  { role: "NTSB Go-Team",            name: "24-hr Response",     phone: "(844) 373-9922" },
-  { role: "MRO / Drug & Alcohol",    name: "Concentra",          phone: "— TBD —"        },
-  { role: "FAA Safety Hotline",      name: "AFS-900",            phone: "(800) 255-1111" },
-  { role: "NBAA Operations Center",  name: "Member Services",    phone: "(202) 783-9000" },
-]
-
-// ─── Regulatory References ────────────────────────────────────────────────────
-const regulatoryRefs = [
-  { label: "14 CFR Part 135",     href: "https://www.ecfr.gov/current/title-14/chapter-I/subchapter-G/part-135"                },
-  { label: "14 CFR Part 119",     href: "https://www.ecfr.gov/current/title-14/chapter-I/subchapter-G/part-119"                },
-  { label: "FAA SMS Info",        href: "https://www.faa.gov/about/initiatives/sms"                                             },
-  { label: "PRISM SMS",           href: "https://prismsms.argus.aero/"                                                          },
-  { label: "ASRS (NASA)",         href: "https://asrs.arc.nasa.gov"                                                             },
-  { label: "FAA Safety Hotline",  href: "https://www.faa.gov/about/office_org/headquarters_offices/afs/afs900"                  },
-  { label: "IS-BAO / IBAC",       href: "https://www.ibac.org/is-bao"                                                           },
-  { label: "NBAA Safety",         href: "https://nbaa.org/operations/safety"                                                    },
-  { label: "NTSB Aviation",       href: "https://www.ntsb.gov/investigations/pages/aviation.aspx"                               },
-  { label: "FAA AD Search",       href: "https://rgl.faa.gov/Regulatory_and_Guidance_Library/rgAD.nsf/0/SearchFrame?OpenPage"  },
-  { label: "Skybrary",            href: "https://skybrary.aero"                                                                 },
-  { label: "CAST / JSSI",         href: "https://www.cast-safety.org"                                                           },
-]
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function StatusChip({ status }: { status: string }) {
-  const map: Record<string, { bg: string; color: string }> = {
-    Current:        { bg: rgba(0.1),                    color: G                          },
-    "In Review":    { bg: "rgba(96,165,250,0.1)",       color: "#60a5fa"                  },
-    "Pending Action":{ bg: "rgba(245,158,11,0.1)",      color: "#f59e0b"                  },
-    Closed:         { bg: "rgba(255,255,255,0.06)",     color: "rgba(255,255,255,0.3)"    },
-    Review:         { bg: "rgba(245,158,11,0.1)",       color: "#f59e0b"                  },
-    "On Track":     { bg: rgba(0.1),                    color: G                          },
-    "In Progress":  { bg: "rgba(96,165,250,0.1)",       color: "#60a5fa"                  },
-    Upcoming:       { bg: "rgba(255,255,255,0.06)",     color: "rgba(255,255,255,0.35)"   },
-    Complete:       { bg: rgba(0.08),                   color: rgba(0.7)                  },
-    Open:           { bg: "rgba(245,158,11,0.1)",       color: "#f59e0b"                  },
-    Scheduled:      { bg: "rgba(167,139,250,0.1)",      color: "#a78bfa"                  },
-    Mitigated:      { bg: rgba(0.08),                   color: G                          },
-    High:           { bg: "rgba(248,113,113,0.12)",     color: "#f87171"                  },
-    Medium:         { bg: "rgba(245,158,11,0.1)",       color: "#f59e0b"                  },
-    Low:            { bg: rgba(0.08),                   color: G                          },
-    Overdue:        { bg: "rgba(248,113,113,0.15)",     color: "#f87171"                  },
-    "Due Soon":     { bg: "rgba(245,158,11,0.12)",      color: "#f59e0b"                  },
-    Good:           { bg: rgba(0.08),                   color: G                          },
-    Monitor:        { bg: "rgba(245,158,11,0.1)",       color: "#f59e0b"                  },
-    Encouraged:     { bg: rgba(0.08),                   color: G                          },
-    Eligible:       { bg: "rgba(96,165,250,0.08)",      color: "#60a5fa"                  },
-    Active:         { bg: rgba(0.1),                    color: G                          },
-    Certification:  { bg: "rgba(167,139,250,0.1)",      color: "#a78bfa"                  },
-  }
-  const s = map[status] ?? { bg: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.3)" }
-  return (
-    <span
-      className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase whitespace-nowrap"
-      style={{ background: s.bg, color: s.color, fontFamily: "var(--font-heading)" }}
-    >
-      {status}
-    </span>
-  )
+function scramble(text: string, intensity: number) {
+  return text.split("").map(c =>
+    " ,?".includes(c) ? c :
+    Math.random() < intensity ? GC[Math.floor(Math.random() * GC.length)] : c
+  ).join("")
 }
 
-function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className="h-8 w-8 rounded flex items-center justify-center flex-shrink-0" style={{ background: rgba(0.1) }}>
-        <Icon className="h-4 w-4" style={{ color: G }} />
-      </div>
-      <CardTitle style={{ fontFamily: "var(--font-heading)", fontSize: "11px", fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: G }}>
-        {title}
-      </CardTitle>
-    </div>
-  )
+const MATRIX_COLS = Array.from({ length: 28 }, (_, i) => ({
+  left:     `${1.5 + i * 3.5}%`,
+  delay:    `-${((i * 0.41) % 4).toFixed(2)}s`,
+  duration: `${(2.4 + (i % 6) * 0.55).toFixed(2)}s`,
+  chars: Array.from({ length: 22 }, () =>
+    "アイウエオカキクケコタチツテト0123456789ABCDEF!@#$%"[Math.floor(Math.random() * 46)]
+  ).join("\n"),
+}))
+
+// ─── Journal types + persistence ─────────────────────────────────────────────
+
+type Idea = { id: string; title: string; text: string; savedAt: string; updatedAt?: string }
+
+function loadIdeas(): Idea[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem("ricky_ideas") ?? "[]")
+    // backwards-compat: old entries may lack `title`
+    return (raw as Idea[]).map(i => ({ title: "", ...i }))
+  } catch { return [] }
 }
 
-function TypeTag({ type }: { type: string }) {
-  const map: Record<string, string> = {
-    Regulatory: "#60a5fa", Training: "#a78bfa", Committee: G, ERP: "#f59e0b",
-    SMS: G, Internal: "rgba(255,255,255,0.4)", Certification: "#a78bfa",
-    SAIB: "#f59e0b", AD: "#f87171", NOTAM: "#60a5fa", Bulletin: "#a78bfa",
-    Report: G, "Safety Alert": "#f87171",
-  }
-  const color = map[type] ?? "rgba(255,255,255,0.35)"
-  return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase"
-      style={{ background: `${color}18`, color, fontFamily: "var(--font-heading)", border: `1px solid ${color}30` }}>
-      {type}
-    </span>
-  )
+function persistIdeas(ideas: Idea[]) {
+  localStorage.setItem("ricky_ideas", JSON.stringify(ideas))
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Auto-grow textarea helper ────────────────────────────────────────────────
+
+function autoGrow(el: HTMLTextAreaElement, max = 300) {
+  el.style.height = "auto"
+  el.style.height = Math.min(el.scrollHeight, max) + "px"
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SafetyHouse() {
+  // Animation
+  const [idx, setIdx]               = useState(0)
+  const [typedLen, setTypedLen]     = useState(0)
+  const [glitchText, setGlitchText] = useState(MSG)
+  const [gx1, setGx1]               = useState(0)
+  const [gx2, setGx2]               = useState(0)
+
+  // Journal — compose
+  const [draftTitle, setDraftTitle] = useState("")
+  const [draft, setDraft]           = useState("")
+  const [draftFocused, setDraftFocused] = useState(false)
+
+  // Journal — saved ideas
+  const [ideas, setIdeas]           = useState<Idea[]>(loadIdeas)
+  const [panelOpen, setPanelOpen]   = useState(false)
+
+  // Journal — inline editing
+  const [editingId,    setEditingId]    = useState<string | null>(null)
+  const [editTitle,    setEditTitle]    = useState("")
+  const [editText,     setEditText]     = useState("")
+
+  const panelRef       = useRef<HTMLDivElement>(null)
+  const composeRef     = useRef<HTMLTextAreaElement>(null)
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const phase: Phase = PHASES[idx % PHASES.length]
+  const composing = draftFocused || draft.length > 0 || draftTitle.length > 0
+
+  // ── Animation effects ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const t = setInterval(() => setIdx(i => i + 1), PHASE_MS)
+    return () => clearInterval(t)
+  }, [])
+
+  useEffect(() => {
+    if (phase !== "typewriter") { setTypedLen(MSG.length); return }
+    setTypedLen(0); let i = 0
+    const t = setInterval(() => { i++; setTypedLen(i); if (i >= MSG.length) clearInterval(t) }, 88)
+    return () => clearInterval(t)
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== "glitch") { setGlitchText(MSG); return }
+    const t = setInterval(() => {
+      setGlitchText(scramble(MSG, Math.random() * 0.42))
+      setGx1((Math.random() - 0.5) * 16)
+      setGx2((Math.random() - 0.5) * 16)
+    }, 105)
+    return () => clearInterval(t)
+  }, [phase])
+
+  // ── Panel close-on-outside-click ──────────────────────────────────────────
+
+  useEffect(() => {
+    if (!panelOpen) return
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setPanelOpen(false)
+        setEditingId(null)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [panelOpen])
+
+  // ── Journal actions ────────────────────────────────────────────────────────
+
+  function commitIdea() {
+    const text = draft.trim()
+    if (!text) return
+    const updated: Idea[] = [{
+      id: crypto.randomUUID(),
+      title: draftTitle.trim(),
+      text,
+      savedAt: new Date().toISOString(),
+    }, ...ideas]
+    setIdeas(updated)
+    persistIdeas(updated)
+    setDraft("")
+    setDraftTitle("")
+    if (composeRef.current) {
+      composeRef.current.style.height = "auto"
+      composeRef.current.focus()
+    }
+  }
+
+  function startEdit(idea: Idea) {
+    setEditingId(idea.id)
+    setEditTitle(idea.title)
+    setEditText(idea.text)
+    // auto-grow the edit textarea after it mounts
+    setTimeout(() => {
+      if (editTextareaRef.current) autoGrow(editTextareaRef.current, 400)
+    }, 30)
+  }
+
+  function saveEdit() {
+    if (!editingId) return
+    const updated = ideas.map(i =>
+      i.id === editingId
+        ? { ...i, title: editTitle.trim(), text: editText.trim(), updatedAt: new Date().toISOString() }
+        : i
+    )
+    setIdeas(updated)
+    persistIdeas(updated)
+    setEditingId(null)
+  }
+
+  function deleteIdea(id: string) {
+    const updated = ideas.filter(i => i.id !== id)
+    setIdeas(updated)
+    persistIdeas(updated)
+    if (editingId === id) setEditingId(null)
+  }
+
+  const handleComposeChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setDraft(e.target.value)
+    autoGrow(e.target, 300)
+  }, [])
+
+  const big: React.CSSProperties = {
+    fontSize: "clamp(2rem, 5.5vw, 5rem)", fontWeight: 900,
+    fontFamily: "var(--font-heading, sans-serif)", letterSpacing: "-0.02em",
+    lineHeight: 1.1, textAlign: "center", userSelect: "none", margin: 0,
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="space-y-8">
+    <div style={{ minHeight: "calc(100vh - 56px)", display: "flex", flexDirection: "column", background: "#070707", position: "relative", overflow: "hidden" }}>
+      <style>{`
+        @keyframes ricky-blink  { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+        @keyframes ricky-neon   { 0%,100%{text-shadow:0 0 12px #10b981,0 0 35px #10b981,0 0 70px #10b981,0 0 130px #059669,0 0 220px #047857} 50%{text-shadow:0 0 4px #10b981,0 0 12px #10b981,0 0 24px #10b981,0 0 50px #059669} }
+        @keyframes ricky-shake  { 0%,100%{transform:translate(0,0) rotate(0deg)} 8%{transform:translate(-9px,3px) rotate(-1.2deg)} 16%{transform:translate(9px,-5px) rotate(1.8deg)} 24%{transform:translate(-6px,7px) rotate(-0.6deg)} 32%{transform:translate(12px,-4px) rotate(2.2deg)} 40%{transform:translate(-10px,5px) rotate(-1.8deg)} 48%{transform:translate(7px,-7px) rotate(1.2deg)} 56%{transform:translate(-12px,4px) rotate(-2.4deg)} 64%{transform:translate(6px,6px) rotate(0.8deg)} 72%{transform:translate(-7px,-5px) rotate(-1.4deg)} 80%{transform:translate(10px,3px) rotate(1.6deg)} 90%{transform:translate(-5px,2px) rotate(-0.4deg)} }
+        @keyframes ricky-stamp  { 0%{transform:scale(5.5) rotate(-4deg);opacity:0;filter:blur(12px)} 18%{transform:scale(0.90) rotate(1.5deg);opacity:1;filter:blur(0)} 28%{transform:scale(1.07) rotate(-0.8deg)} 36%{transform:scale(0.96) rotate(0.4deg)} 44%,100%{transform:scale(1) rotate(0deg)} }
+        @keyframes ricky-hue    { 0%{filter:hue-rotate(0deg)} 100%{filter:hue-rotate(360deg)} }
+        @keyframes ricky-ghost  { 0%,100%{transform:translateY(0px) scale(1);opacity:0.055} 33%{transform:translateY(-22px) scale(1.01);opacity:0.22} 66%{transform:translateY(12px) scale(0.99);opacity:0.08} }
+        @keyframes ricky-ticker { 0%{transform:translateX(115vw)} 100%{transform:translateX(-115%)} }
+        @keyframes ricky-letter { 0%,100%{transform:translateY(0px) rotate(0deg) scale(1)} 20%{transform:translateY(-22px) rotate(-6deg) scale(1.1)} 70%{transform:translateY(12px) rotate(4deg) scale(0.95)} }
+        @keyframes ricky-fall   { 0%{transform:translateY(-120%);opacity:1} 80%{opacity:0.55} 100%{transform:translateY(115vh);opacity:0} }
+        @keyframes ricky-pulse  { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
+        @keyframes ricky-stamp-box { 0%{transform:scale(5.5);opacity:0} 18%{transform:scale(0.90);opacity:1} 28%{transform:scale(1.07)} 36%{transform:scale(0.96)} 44%,100%{transform:scale(1)} }
+        @keyframes ricky-panel-in { 0%{opacity:0;transform:translateY(-6px) scale(0.98)} 100%{opacity:1;transform:translateY(0) scale(1)} }
+        .ricky-idea-row:hover { background: rgba(255,255,255,0.025) !important; }
+        .ricky-idea-row:hover .ricky-row-actions { opacity: 1 !important; }
+        .ricky-placeholder::placeholder { color: rgba(255,255,255,0.25); }
+        .ricky-title-input::placeholder { color: rgba(255,255,255,0.2); }
+        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+      `}</style>
 
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <div className="hero-area">
-        <h1 className="text-[2.6rem] leading-none text-foreground" style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
-          SAFETY'S HOUSE
-        </h1>
-        <div className="mt-2 mb-2" style={{ height: "1px", background: G, width: "3.5rem" }} />
-        <p className="text-sm text-muted-foreground" style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}>
-          Director of Safety · SMS · ERP · Risk Register · Culture · Program Oversight · Communications
-        </p>
-      </div>
+      {/* ─── Top-left journal ──────────────────────────────────────────── */}
+      <div style={{ position: "relative", flexShrink: 0, zIndex: 50, padding: "16px 20px 14px" }}>
 
-      {/* ── Stat Cards ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map(card => {
-          const TrendIcon = card.trend === "up" ? TrendingUp : card.trend === "down" ? TrendingDown : Minus
-          const isPositiveUp = card.label === "Days Since Last Event" || card.label === "Culture Score"
-          const trendColor = card.trend === "flat"
-            ? "rgba(255,255,255,0.3)"
-            : card.trend === "up"
-              ? (isPositiveUp ? G : "#f59e0b")
-              : G
-          return (
-            <Card key={card.label} className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-              <CardContent className="p-4">
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: rgba(0.6) }}>
-                  {card.label}
-                </p>
-                <p className="text-3xl font-bold mt-1" style={{ fontFamily: "var(--font-display)", color: G }}>
-                  {card.value}
-                </p>
-                <div className="flex items-center gap-1 mt-1">
-                  <TrendIcon className="h-3 w-3" style={{ color: trendColor }} />
-                  <p className="text-[10px]" style={{ fontFamily: "var(--font-heading)", color: trendColor }}>{card.trendNote}</p>
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+        {/* Label + saved count */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+          <Shield style={{ width: 11, height: 11, color: "rgba(16,185,129,0.3)", flexShrink: 0 }} />
+          <span style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.2)" }}>
+            Ricky's Ideas
+          </span>
+          {ideas.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setPanelOpen(p => !p)}
+              style={{
+                display: "flex", alignItems: "center", gap: 4, marginLeft: 4,
+                background: panelOpen ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.06)",
+                border: `1px solid ${panelOpen ? "rgba(16,185,129,0.3)" : "rgba(255,255,255,0.1)"}`,
+                borderRadius: 4, padding: "2px 8px",
+                color: panelOpen ? "#10b981" : "rgba(255,255,255,0.45)",
+                fontSize: 10, cursor: "pointer", transition: "all 0.2s ease",
+              }}
+            >
+              {ideas.length} {ideas.length === 1 ? "idea" : "ideas"}
+              <ChevronRight style={{ width: 10, height: 10, transform: panelOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }} />
+            </button>
+          )}
+        </div>
 
-      {/* ── Safety Inbox ─────────────────────────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-3">
-          <SectionHeader icon={Radio} title="Safety Inbox" />
-          <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-            Category-level tracking only. Individual report details remain in PRISM SMS.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                  {["Source", "Category", "Received", "Assigned To", "Status"].map(h => (
-                    <th key={h} className="text-left pb-2 pr-4" style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.15em", textTransform: "uppercase", color: rgba(0.5) }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {safetyInbox.map((row, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }} className="hover:bg-white/[0.02]">
-                    <td className="py-2.5 pr-4 text-muted-foreground" style={{ fontFamily: "var(--font-heading)", fontSize: "10px" }}>{row.source}</td>
-                    <td className="py-2.5 pr-4 text-foreground/80">{row.category}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>{row.received}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground">{row.assignedTo}</td>
-                    <td className="py-2.5"><StatusChip status={row.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {/* Compose card */}
+        <div style={{
+          width: 340,
+          background: "rgba(255,255,255,0.03)",
+          border: `1px solid ${composing ? "rgba(16,185,129,0.3)" : "rgba(255,255,255,0.09)"}`,
+          borderRadius: 10,
+          overflow: "hidden",
+          transition: "border-color 0.25s ease",
+        }}>
+          {/* Title field */}
+          <input
+            className="ricky-title-input"
+            value={draftTitle}
+            onChange={e => setDraftTitle(e.target.value)}
+            onFocus={() => setDraftFocused(true)}
+            onBlur={() => setDraftFocused(false)}
+            onKeyDown={e => { if (e.key === "Enter") composeRef.current?.focus() }}
+            placeholder="Give it a title…"
+            style={{
+              display: "block", width: "100%", boxSizing: "border-box",
+              background: "transparent", border: "none", outline: "none",
+              borderBottom: "1px solid rgba(255,255,255,0.06)",
+              padding: "10px 14px 9px",
+              color: "rgba(255,255,255,0.75)",
+              fontSize: 11, fontWeight: 600, letterSpacing: "0.04em",
+              fontFamily: "var(--font-heading, sans-serif)",
+            }}
+          />
+
+          {/* Body textarea — auto-grows, handles large pastes */}
+          <textarea
+            ref={composeRef}
+            className="ricky-placeholder"
+            value={draft}
+            rows={2}
+            onChange={handleComposeChange}
+            onFocus={() => setDraftFocused(true)}
+            onBlur={() => setDraftFocused(false)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && draft.trim() && draft.length < 120) { e.preventDefault(); commitIdea() } }}
+            placeholder="What do you want, Ricky?"
+            style={{
+              display: "block", width: "100%", boxSizing: "border-box",
+              background: "transparent", border: "none", outline: "none",
+              resize: "none", overflowY: "auto",
+              padding: "10px 14px",
+              color: "#fff", fontSize: 13, lineHeight: 1.65,
+              fontFamily: "var(--font-body, system-ui, sans-serif)",
+              caretColor: "#10b981",
+              minHeight: 56, maxHeight: 300,
+            }}
+          />
+
+          {/* Footer: hint + save button */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "6px 10px 8px",
+            borderTop: "1px solid rgba(255,255,255,0.05)",
+          }}>
+            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.18)", letterSpacing: "0.04em" }}>
+              {draft.length > 120 ? "Ctrl+Enter or ↵ button to save" : draft.trim() ? "Enter to save · Shift+Enter new line" : "Paste or type freely"}
+            </span>
+            <button
+              type="button"
+              onClick={commitIdea}
+              disabled={!draft.trim()}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "4px 10px", borderRadius: 5, border: "none",
+                background: draft.trim() ? "rgba(16,185,129,0.18)" : "rgba(255,255,255,0.04)",
+                color: draft.trim() ? "#10b981" : "rgba(255,255,255,0.2)",
+                fontSize: 10, fontWeight: 600, cursor: draft.trim() ? "pointer" : "default",
+                transition: "all 0.2s ease", letterSpacing: "0.06em",
+              }}
+              onMouseEnter={e => { if (draft.trim()) e.currentTarget.style.background = "rgba(16,185,129,0.28)" }}
+              onMouseLeave={e => { if (draft.trim()) e.currentTarget.style.background = "rgba(16,185,129,0.18)" }}
+            >
+              Save ↵
+            </button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* ── Risk Register ─────────────────────────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-3">
-          <SectionHeader icon={Layers} title="Risk Register" />
-          <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-            Open organizational hazards classified by severity and likelihood. Source of truth for SMS risk posture.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                  {["ID", "Hazard", "Area", "Risk", "Mitigation", "Owner", "Status"].map(h => (
-                    <th key={h} className="text-left pb-2 pr-4" style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.15em", textTransform: "uppercase", color: rgba(0.5) }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {riskRegister.map((row, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }} className="hover:bg-white/[0.02]">
-                    <td className="py-2.5 pr-4" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", color: rgba(0.7) }}>{row.id}</td>
-                    <td className="py-2.5 pr-4 text-foreground/80 max-w-[220px]" style={{ lineHeight: "1.4" }}>{row.hazard}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap" style={{ fontFamily: "var(--font-heading)", fontSize: "10px" }}>{row.area}</td>
-                    <td className="py-2.5 pr-4"><StatusChip status={row.riskLevel} /></td>
-                    <td className="py-2.5 pr-4 text-muted-foreground max-w-[200px]" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", lineHeight: "1.4" }}>{row.mitigation}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap" style={{ fontFamily: "var(--font-heading)", fontSize: "10px" }}>{row.owner}</td>
-                    <td className="py-2.5"><StatusChip status={row.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── SMS Program + Safety Committee ───────────────────────────────── */}
-      <div className="grid md:grid-cols-2 gap-6">
-
-        {/* SMS Program Health */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Shield} title="SMS Program Health" />
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {smsProgramStatus.map((row, i) => (
-              <div key={i} className="flex items-start gap-3 rounded px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <p className="text-xs font-medium text-foreground/80">{row.item}</p>
-                    <span className="text-[9px] font-bold" style={{ color: G, fontFamily: "var(--font-heading)" }}>{row.value}</span>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground leading-snug" style={{ fontFamily: "var(--font-heading)" }}>{row.detail}</p>
-                </div>
-                <StatusChip status={row.status} />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* Safety Committee */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Users} title="Safety Committee" />
-            <div className="mt-2 flex gap-4">
-              <div className="rounded px-3 py-2 flex-1" style={{ background: rgba(0.06), border: `1px solid ${rgba(0.14)}` }}>
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.15em", textTransform: "uppercase", color: rgba(0.6) }}>Next Meeting</p>
-                <p className="text-sm font-semibold text-foreground/85 mt-0.5">April 10, 2026</p>
-                <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>0800 · Hangar 4 Conference Room</p>
-              </div>
-              <div className="rounded px-3 py-2 flex-1" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)" }}>Last Meeting</p>
-                <p className="text-sm font-semibold text-foreground/85 mt-0.5">March 6, 2026</p>
-                <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>All members present</p>
-              </div>
+        {/* ─── Ideas panel — floats right, never touches animation ─────── */}
+        {panelOpen && (
+          <div
+            ref={panelRef}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 380,
+              width: 400,
+              maxHeight: "calc(100vh - 80px)",
+              background: "#0c0c0c",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 12,
+              zIndex: 200,
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.75), 0 0 0 1px rgba(16,185,129,0.07)",
+              animation: "ricky-panel-in 0.18s ease forwards",
+              overflow: "hidden",
+            }}
+          >
+            {/* Panel header */}
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+              <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", fontFamily: "var(--font-heading)", color: "rgba(16,185,129,0.6)" }}>
+                {ideas.length} {ideas.length === 1 ? "idea" : "ideas"} saved
+              </span>
+              <button
+                type="button"
+                onClick={() => { setPanelOpen(false); setEditingId(null) }}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.25)", cursor: "pointer", display: "flex", padding: 2 }}
+                onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.6)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.25)")}
+              >
+                <X style={{ width: 13, height: 13 }} />
+              </button>
             </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.2em", textTransform: "uppercase", color: rgba(0.5), marginBottom: "0.5rem" }}>
-              Open Action Items
-            </p>
-            <div className="space-y-1.5">
-              {committeeItems.map((item, i) => (
-                <div key={i} className="flex items-start gap-3 rounded px-3 py-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-foreground/75 leading-snug">{item.item}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>{item.owner} · Due {item.due}</p>
-                  </div>
-                  <StatusChip status={item.status} />
+
+            {/* Scrollable list */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
+              {ideas.length === 0 ? (
+                <p style={{ padding: "24px 18px", color: "rgba(255,255,255,0.18)", fontSize: 13, textAlign: "center" }}>
+                  Nothing saved yet.
+                </p>
+              ) : ideas.map((idea, i) => (
+                <div
+                  key={idea.id}
+                  className="ricky-idea-row"
+                  style={{
+                    borderBottom: i < ideas.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none",
+                    transition: "background 0.12s ease",
+                  }}
+                >
+                  {editingId === idea.id ? (
+                    /* ── Edit mode ───────────────────────────────── */
+                    <div style={{ padding: "14px 16px" }}>
+                      <input
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        placeholder="Title (optional)"
+                        style={{
+                          display: "block", width: "100%", boxSizing: "border-box",
+                          background: "rgba(255,255,255,0.04)",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          borderRadius: 6, padding: "7px 10px",
+                          color: "rgba(255,255,255,0.8)",
+                          fontSize: 12, fontWeight: 600,
+                          fontFamily: "var(--font-heading, sans-serif)",
+                          outline: "none", marginBottom: 8,
+                        }}
+                        onFocus={e => (e.currentTarget.style.borderColor = "rgba(16,185,129,0.4)")}
+                        onBlur={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)")}
+                      />
+                      <textarea
+                        ref={editTextareaRef}
+                        className="ricky-placeholder"
+                        value={editText}
+                        onChange={e => { setEditText(e.target.value); autoGrow(e.target, 400) }}
+                        style={{
+                          display: "block", width: "100%", boxSizing: "border-box",
+                          background: "rgba(255,255,255,0.04)",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          borderRadius: 6, padding: "8px 10px",
+                          color: "#fff", fontSize: 13, lineHeight: 1.6,
+                          fontFamily: "var(--font-body, system-ui, sans-serif)",
+                          outline: "none", resize: "none",
+                          overflowY: "auto", minHeight: 80, maxHeight: 400,
+                          caretColor: "#10b981",
+                        }}
+                        onFocus={e => (e.currentTarget.style.borderColor = "rgba(16,185,129,0.4)")}
+                        onBlur={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)")}
+                      />
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button
+                          type="button"
+                          onClick={saveEdit}
+                          disabled={!editText.trim()}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 6, border: "none",
+                            background: editText.trim() ? "rgba(16,185,129,0.18)" : "rgba(255,255,255,0.05)",
+                            color: editText.trim() ? "#10b981" : "rgba(255,255,255,0.2)",
+                            fontSize: 11, fontWeight: 600, cursor: editText.trim() ? "pointer" : "default",
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                          }}
+                        >
+                          <Check style={{ width: 11, height: 11 }} /> Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 6,
+                            border: "1px solid rgba(255,255,255,0.08)",
+                            background: "transparent",
+                            color: "rgba(255,255,255,0.35)", fontSize: 11, cursor: "pointer",
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Read mode ───────────────────────────────── */
+                    <div style={{ padding: "13px 16px", display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <div style={{ width: 2, alignSelf: "stretch", background: "rgba(16,185,129,0.22)", borderRadius: 1, flexShrink: 0, marginTop: 2 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {idea.title && (
+                          <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.75)", fontFamily: "var(--font-heading, sans-serif)", marginBottom: 4, margin: "0 0 5px" }}>
+                            {idea.title}
+                          </p>
+                        )}
+                        <p style={{
+                          fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.55,
+                          margin: 0, wordBreak: "break-word",
+                          display: "-webkit-box", WebkitLineClamp: 6,
+                          WebkitBoxOrient: "vertical", overflow: "hidden",
+                        }}>
+                          {idea.text}
+                        </p>
+                        <p style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", marginTop: 6 }}>
+                          {idea.updatedAt
+                            ? `edited ${formatDistanceToNow(new Date(idea.updatedAt), { addSuffix: true })}`
+                            : formatDistanceToNow(new Date(idea.savedAt), { addSuffix: true })}
+                        </p>
+                      </div>
+                      {/* Row actions — fade in on hover */}
+                      <div className="ricky-row-actions" style={{ display: "flex", flexDirection: "column", gap: 4, opacity: 0, transition: "opacity 0.15s ease", flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(idea)}
+                          title="Edit"
+                          style={{ background: "none", border: "none", color: "rgba(255,255,255,0.25)", cursor: "pointer", padding: 3, display: "flex" }}
+                          onMouseEnter={e => (e.currentTarget.style.color = "rgba(16,185,129,0.8)")}
+                          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.25)")}
+                        >
+                          <Pencil style={{ width: 12, height: 12 }} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteIdea(idea.id)}
+                          title="Delete"
+                          style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", cursor: "pointer", padding: 3, display: "flex" }}
+                          onMouseEnter={e => (e.currentTarget.style.color = "rgba(239,68,68,0.7)")}
+                          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.2)")}
+                        >
+                          <Trash2 style={{ width: 12, height: 12 }} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        )}
       </div>
 
-      {/* ── Human Factors + Training Compliance ──────────────────────────── */}
-      <div className="grid md:grid-cols-2 gap-6">
+      {/* ─── Animation stage — full, never shrinks ─────────────────────── */}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 40px 32px", position: "relative", overflow: "hidden" }}>
 
-        {/* Human Factors Snapshot */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Brain} title="Human Factors Snapshot" />
-            <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-              HFACS category roll-up — rolling 12 months. Source: PRISM SMS report analysis.
+        {phase === "typewriter" && (
+          <div style={{ position: "relative" }}>
+            <div style={{ position: "fixed", inset: 0, background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,65,0.012) 2px, rgba(0,255,65,0.012) 4px)", pointerEvents: "none", zIndex: 0 }} />
+            <p style={{ ...big, color: "#00ff41", fontFamily: "'Courier New', monospace", letterSpacing: "0.04em", position: "relative", zIndex: 1 }}>
+              {MSG.slice(0, typedLen)}<span style={{ borderRight: "4px solid #00ff41", marginLeft: 3, animation: "ricky-blink 0.75s step-end infinite" }} />
             </p>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {hfacsData.map((row, i) => {
-              const TIcon = row.trend === "up" ? TrendingUp : row.trend === "down" ? TrendingDown : Minus
-              const tColor = row.count === 0
-                ? rgba(0.5)
-                : row.trend === "down" ? G : row.trend === "up" ? "#f59e0b" : "rgba(255,255,255,0.3)"
-              return (
-                <div key={i} className="flex items-center justify-between gap-3 rounded px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[9px] font-bold uppercase tracking-wider" style={{ color: rgba(0.5), fontFamily: "var(--font-heading)" }}>{row.category}</p>
-                    <p className="text-xs text-foreground/75">{row.subcategory}</p>
-                  </div>
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: row.count === 0 ? rgba(0.4) : "#f59e0b" }}>
-                      {row.count}
-                    </span>
-                    <TIcon className="h-3.5 w-3.5" style={{ color: tColor }} />
-                  </div>
-                </div>
-              )
+          </div>
+        )}
+
+        {phase === "glitch" && (
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <p style={{ ...big, color: "cyan", position: "absolute", inset: 0, transform: `translateX(${gx1}px)`, clipPath: "polygon(0 18%,100% 18%,100% 44%,0 44%)", mixBlendMode: "screen", pointerEvents: "none" }}>{glitchText}</p>
+            <p style={{ ...big, color: "#ff2244", position: "absolute", inset: 0, transform: `translateX(${gx2}px)`, clipPath: "polygon(0 58%,100% 58%,100% 82%,0 82%)", mixBlendMode: "screen", pointerEvents: "none" }}>{glitchText}</p>
+            <p style={{ ...big, color: "#fff" }}>{glitchText}</p>
+          </div>
+        )}
+
+        {phase === "neon" && <p style={{ ...big, color: "#10b981", animation: "ricky-neon 1.7s ease-in-out infinite" }}>{MSG}</p>}
+
+        {phase === "shake" && (
+          <div style={{ textAlign: "center" }}>
+            <p style={{ ...big, color: "#ef4444", animation: "ricky-shake 0.38s linear infinite", textShadow: "0 0 24px rgba(239,68,68,0.6)" }}>{MSG}</p>
+            <p style={{ color: "rgba(239,68,68,0.45)", fontSize: 10, letterSpacing: "0.32em", textTransform: "uppercase", marginTop: 20, fontFamily: "monospace" }}>DIRECTOR OF SAFETY IS WAITING</p>
+          </div>
+        )}
+
+        {phase === "stamp" && (
+          <div style={{ textAlign: "center", position: "relative", display: "inline-block" }}>
+            <p style={{ ...big, fontSize: "clamp(2.5rem,7vw,6.5rem)", color: "#fff", animation: "ricky-stamp 0.65s cubic-bezier(0.36,0.07,0.19,0.97) forwards", textShadow: "0 6px 40px rgba(0,0,0,0.9)" }}>{MSG}</p>
+            <div style={{ position: "absolute", inset: "-14px -28px", border: "5px solid rgba(239,68,68,0.65)", borderRadius: 3, animation: "ricky-stamp-box 0.65s cubic-bezier(0.36,0.07,0.19,0.97) forwards", pointerEvents: "none" }} />
+          </div>
+        )}
+
+        {phase === "rainbow" && <p style={{ ...big, color: "#ff0044", animation: "ricky-hue 2s linear infinite", textShadow: "0 0 40px rgba(255,255,255,0.15)" }}>{MSG}</p>}
+
+        {phase === "ghost" && <p style={{ fontSize: "clamp(3.5rem,12vw,13rem)", fontWeight: 900, fontFamily: "var(--font-heading,sans-serif)", color: "#fff", textAlign: "center", animation: "ricky-ghost 4s ease-in-out infinite", letterSpacing: "-0.03em", lineHeight: 1, userSelect: "none", margin: 0 }}>{MSG}</p>}
+
+        {phase === "marquee" && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 28, overflow: "hidden", pointerEvents: "none" }}>
+            {([
+              { size: "clamp(1.2rem,3.2vw,2.8rem)", color: "rgba(212,160,23,0.25)", dur: "12s", delay: "-4s" },
+              { size: "clamp(2.2rem,6.5vw,6rem)",   color: "#d4a017",               dur: "8s",  delay: "0s"  },
+              { size: "clamp(1.2rem,3.2vw,2.8rem)", color: "rgba(212,160,23,0.25)", dur: "15s", delay: "-7s" },
+            ] as const).map((row, i) => (
+              <div key={i} style={{ overflow: "hidden", whiteSpace: "nowrap" }}>
+                <span style={{ display: "inline-block", fontSize: row.size, fontWeight: 900, fontFamily: "var(--font-heading,sans-serif)", color: row.color, letterSpacing: "-0.02em", animation: `ricky-ticker ${row.dur} linear infinite`, animationDelay: row.delay, whiteSpace: "nowrap" }}>
+                  {Array(8).fill(`${MSG}  ·  `).join("")}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {phase === "disco" && (
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-end", maxWidth: "90vw" }}>
+            {MSG.split("").map((ch, i) => {
+              const hue = (i * 31 + 20) % 360
+              return <span key={i} style={{ display: "inline-block", fontSize: "clamp(2rem,5.5vw,5rem)", fontWeight: 900, fontFamily: "var(--font-heading,sans-serif)", color: `hsl(${hue},90%,65%)`, textShadow: `0 0 22px hsl(${hue},90%,65%)`, animation: `ricky-letter ${1.1+(i%5)*0.22}s ease-in-out infinite`, animationDelay: `${i*0.065}s`, whiteSpace: "pre", userSelect: "none" }}>{ch}</span>
             })}
-            <div className="rounded px-3 py-2 text-center mt-1" style={{ background: rgba(0.04), border: `1px dashed ${rgba(0.18)}` }}>
-              <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
-                HFACS coding done by DoS after each PRISM report closure.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        )}
 
-        {/* Safety Training Compliance */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={GraduationCap} title="Safety Training Compliance" />
-            <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-              Completion rates by course and department.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-3">
-            {trainingCompliance.map((row, i) => (
-              <div key={i}>
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <div>
-                    <p className="text-xs text-foreground/80">{row.course}</p>
-                    <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>{row.dept} · Due {row.due}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span className="text-[10px] font-bold" style={{ color: row.pct === 100 ? G : row.pct >= 70 ? "#f59e0b" : "#f87171", fontFamily: "var(--font-heading)" }}>
-                      {row.completed}/{row.total}
-                    </span>
-                  </div>
-                </div>
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${row.pct}%`,
-                      background: row.pct === 100 ? G : row.pct >= 70 ? "rgba(245,158,11,0.7)" : "rgba(248,113,113,0.7)",
-                    }}
-                  />
-                </div>
-              </div>
+        {phase === "matrix" && (
+          <div style={{ position: "absolute", inset: 0 }}>
+            {MATRIX_COLS.map((col, i) => (
+              <div key={i} style={{ position: "absolute", left: col.left, top: 0, fontFamily: "'Courier New',monospace", fontSize: 12, color: "#10b981", opacity: 0.28, whiteSpace: "pre", lineHeight: 1.7, animation: `ricky-fall ${col.duration} linear infinite`, animationDelay: col.delay, pointerEvents: "none" }}>{col.chars}</div>
             ))}
-          </CardContent>
-        </Card>
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <p style={{ ...big, color: "#10b981", fontFamily: "'Courier New',monospace", textShadow: "0 0 10px #10b981,0 0 30px #10b981,0 0 70px #059669", animation: "ricky-pulse 2.2s ease-in-out infinite" }}>{MSG}</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Corrective Action Board ───────────────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-3">
-          <SectionHeader icon={Activity} title="Corrective Action Board" />
-          <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-            All open CAs from every source — PRISM, audits, ERP drills, safety committee.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                  {["CA ID", "Source", "Finding", "Assigned To", "Due", "Days Open", "Status"].map(h => (
-                    <th key={h} className="text-left pb-2 pr-4" style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.15em", textTransform: "uppercase", color: rgba(0.5) }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {correctiveActions.map((row, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }} className="hover:bg-white/[0.02]">
-                    <td className="py-2.5 pr-4" style={{ fontFamily: "var(--font-heading)", fontSize: "10px", color: rgba(0.7) }}>{row.id}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap" style={{ fontFamily: "var(--font-heading)", fontSize: "10px" }}>{row.source}</td>
-                    <td className="py-2.5 pr-4 text-foreground/75 max-w-[240px]" style={{ lineHeight: "1.4" }}>{row.finding}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap" style={{ fontFamily: "var(--font-heading)", fontSize: "10px" }}>{row.assignedTo}</td>
-                    <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap" style={{ fontFamily: "var(--font-heading)", fontSize: "10px" }}>{row.due}</td>
-                    <td className="py-2.5 pr-4 whitespace-nowrap">
-                      <span style={{ fontFamily: "var(--font-heading)", fontSize: "10px", color: row.daysOpen > 30 ? "#f87171" : row.daysOpen > 15 ? "#f59e0b" : rgba(0.7) }}>
-                        {row.daysOpen}d
-                      </span>
-                    </td>
-                    <td className="py-2.5"><StatusChip status={row.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Safety Metrics — 6-month table ───────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-3">
-          <SectionHeader icon={BarChart3} title="Safety Metrics — Rolling 6 Months" />
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                  {["Month", "Reports Filed", "Closed", "Open / Pending"].map(h => (
-                    <th key={h} className="text-left pb-2 pr-6" style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.15em", textTransform: "uppercase", color: rgba(0.5) }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {safetyMetrics.map((row, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }} className="hover:bg-white/[0.02]">
-                    <td className="py-2.5 pr-6 text-foreground/70" style={{ fontFamily: "var(--font-heading)" }}>{row.month}</td>
-                    <td className="py-2.5 pr-6 font-bold" style={{ color: G }}>{row.reports}</td>
-                    <td className="py-2.5 pr-6 text-foreground/60">{row.closed}</td>
-                    <td className="py-2.5">
-                      {row.open > 0
-                        ? <span className="font-bold" style={{ color: "#f59e0b" }}>{row.open}</span>
-                        : <span style={{ color: rgba(0.6) }}>—</span>
-                      }
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Regulatory Calendar + Industry Alerts ────────────────────────── */}
-      <div className="grid md:grid-cols-2 gap-6">
-
-        {/* Regulatory Calendar */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Clock} title="Regulatory Calendar" />
-            <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-              Key safety, training, and regulatory deadlines — rolling 12 months.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-1.5">
-            {regulatoryCalendar.map((row, i) => (
-              <div key={i} className="flex items-start gap-3 rounded px-3 py-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div className="flex-shrink-0 w-20">
-                  <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>{row.date}</p>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-foreground/75 leading-snug">{row.event}</p>
-                </div>
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  <TypeTag type={row.type} />
-                  <StatusChip status={row.status} />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* Industry Alerts */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Newspaper} title="Industry Alerts & Notices" />
-            <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-              Curated FAA, NTSB, and NBAA items relevant to Part 135 operations.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {industryAlerts.map((row, i) => (
-              <div key={i} className="rounded px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: rgba(0.45), fontFamily: "var(--font-heading)" }}>{row.date}</span>
-                  <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.25)", fontFamily: "var(--font-heading)" }}>{row.source}</span>
-                  <TypeTag type={row.type} />
-                </div>
-                <p className="text-xs text-foreground/70 leading-relaxed">{row.text}</p>
-              </div>
-            ))}
-            <div className="rounded px-3 py-2 text-center" style={{ background: rgba(0.04), border: `1px dashed ${rgba(0.18)}` }}>
-              <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
-                DoS curates this feed manually. Auto-sync with FAA RSS coming soon.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Phase dots */}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 5, padding: "0 0 20px", flexShrink: 0 }}>
+        {PHASES.map((p, i) => (
+          <div key={p} style={{ width: i === idx % PHASES.length ? 16 : 4, height: 4, borderRadius: 2, background: i === idx % PHASES.length ? "rgba(16,185,129,0.65)" : "rgba(255,255,255,0.1)", transition: "width 0.3s ease, background 0.3s ease" }} />
+        ))}
       </div>
-
-      {/* ── Safety Broadcasts + Goals ─────────────────────────────────────── */}
-      <div className="grid md:grid-cols-2 gap-6">
-
-        {/* Safety Broadcasts */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={MessageSquare} title="Safety Broadcasts" />
-            <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.03em" }}>
-              These also appear in the Safety Dashboard on the main portal page.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {safetyBroadcasts.map((item, i) => (
-              <div key={i} className="rounded px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: rgba(0.45), fontFamily: "var(--font-heading)" }}>{item.date}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider" style={{ background: rgba(0.1), color: G, fontFamily: "var(--font-heading)" }}>{item.tag}</span>
-                </div>
-                <p className="text-xs text-foreground/70 leading-relaxed">{item.text}</p>
-              </div>
-            ))}
-            <div className="rounded px-3 py-2 text-center" style={{ background: rgba(0.04), border: `1px dashed ${rgba(0.2)}` }}>
-              <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
-                Inline editing coming soon — DoS will manage broadcasts from this panel.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Safety Goals */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Flag} title="Safety Goals — 2026" />
-          </CardHeader>
-          <CardContent className="pt-0 space-y-3">
-            {safetyGoals.map((goal, i) => (
-              <div key={i}>
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <p className="text-xs text-foreground/75 leading-snug flex-1">{goal.goal}</p>
-                  <StatusChip status={goal.status} />
-                </div>
-                <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${goal.progress}%`,
-                      background: goal.progress === 100 ? G : goal.progress > 50 ? rgba(0.7) : "rgba(245,158,11,0.6)",
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Safety Culture Pulse + Station Safety Snapshot ───────────────── */}
-      <div className="grid md:grid-cols-2 gap-6">
-
-        {/* Culture Pulse */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Target} title="Safety Culture Pulse" />
-            <div className="mt-2 flex gap-3">
-              <div className="rounded px-3 py-1.5 flex-1" style={{ background: rgba(0.06), border: `1px solid ${rgba(0.14)}` }}>
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.12em", textTransform: "uppercase", color: rgba(0.6) }}>Last Survey</p>
-                <p className="text-xs font-semibold text-foreground/80 mt-0.5">February 2026</p>
-                <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>17 of 22 participants</p>
-              </div>
-              <div className="rounded px-3 py-1.5 flex-1" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)" }}>Next Survey</p>
-                <p className="text-xs font-semibold text-foreground/80 mt-0.5">August 2026</p>
-                <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>Semi-annual cadence</p>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2.5">
-            <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.18em", textTransform: "uppercase", color: rgba(0.5), marginBottom: "0.25rem" }}>
-              vs. Industry Benchmark
-            </p>
-            {culturePulse.map((row, i) => (
-              <div key={i}>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs text-foreground/75">{row.dimension}</p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>Benchmark {row.benchmark}</span>
-                    <span className="text-xs font-bold" style={{ color: row.score >= row.benchmark ? G : "#f59e0b", fontFamily: "var(--font-heading)" }}>
-                      {row.score}
-                    </span>
-                  </div>
-                </div>
-                <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
-                  <div className="absolute h-full rounded-full" style={{ width: `${row.benchmark}%`, background: "rgba(255,255,255,0.12)" }} />
-                  <div className="absolute h-full rounded-full transition-all" style={{ width: `${row.score}%`, background: row.score >= row.benchmark ? rgba(0.7) : "rgba(245,158,11,0.65)" }} />
-                </div>
-              </div>
-            ))}
-            <div className="rounded px-3 py-2 mt-1" style={{ background: rgba(0.04), border: `1px dashed ${rgba(0.18)}` }}>
-              <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
-                Survey tool: anonymous Google Form distributed by DoS. Scored 0–100 per dimension.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Station Safety Snapshot */}
-        <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-          <CardHeader className="pb-3">
-            <SectionHeader icon={Building2} title="Station Safety Snapshot" />
-            <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-              Per-station safety status, last inspection date, and open items.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-2">
-            {stationSnapshot.map((row, i) => (
-              <div key={i} className="flex items-center gap-3 rounded px-3 py-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-foreground/85">{row.station}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
-                    Last inspection: {row.lastInspection}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {row.openItems > 0 && (
-                    <span className="text-[10px] font-bold" style={{ color: "#f59e0b", fontFamily: "var(--font-heading)" }}>
-                      {row.openItems} open
-                    </span>
-                  )}
-                  <StatusChip status={row.status} />
-                </div>
-              </div>
-            ))}
-            <div className="rounded px-3 py-2 mt-1" style={{ background: rgba(0.04), border: `1px dashed ${rgba(0.18)}` }}>
-              <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
-                Station leads TBD. Safety walkthrough checklist coming soon for each location.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Voluntary Safety Programs ─────────────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-3">
-          <SectionHeader icon={Eye} title="Voluntary Safety Reporting Programs" />
-          <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.03em" }}>
-            All channels through which safety concerns can be raised — anonymous, internal, and regulatory. Just culture begins here.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="grid sm:grid-cols-2 gap-3">
-            {voluntaryPrograms.map((row, i) => (
-              <div key={i} className="rounded px-4 py-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-xs font-semibold text-foreground/85">{row.program}</p>
-                  <StatusChip status={row.status} />
-                </div>
-                <p className="text-[10px] text-muted-foreground leading-snug mb-2" style={{ fontFamily: "var(--font-heading)" }}>{row.note}</p>
-                <div className="flex items-center gap-4">
-                  <div>
-                    <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.12em", textTransform: "uppercase", color: rgba(0.5) }}>Filed YTD</p>
-                    <p className="text-base font-bold" style={{ fontFamily: "var(--font-display)", color: G }}>{row.filedYTD}</p>
-                  </div>
-                  <div>
-                    <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.25)" }}>Last Filed</p>
-                    <p className="text-xs text-foreground/60 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>{row.lastFiled}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Emergency Response ────────────────────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-3">
-          <SectionHeader icon={AlertTriangle} title="Emergency Response Quick Reference" />
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div>
-              <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.2em", textTransform: "uppercase", color: rgba(0.5), marginBottom: "0.75rem" }}>
-                ERP Status
-              </p>
-              <div className="space-y-2">
-                {[
-                  { label: "ERP Version",     value: "Rev 1.4 · Oct 2025"                  },
-                  { label: "Last Drill",       value: "Oct 14, 2025 — PHX Station"          },
-                  { label: "Next Drill Due",   value: "Apr 15, 2026 (semi-annual)"          },
-                  { label: "Distribution",     value: "All crew + station managers on file" },
-                  { label: "NTSB Go-Team",     value: "Notification protocol current"       },
-                  { label: "Media Protocol",   value: "All media → VP Communications only"  },
-                ].map(row => (
-                  <div key={row.label} className="flex items-center justify-between gap-4 rounded px-3 py-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                    <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>{row.label}</p>
-                    <p className="text-xs text-foreground/75 text-right">{row.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.2em", textTransform: "uppercase", color: rgba(0.5), marginBottom: "0.75rem" }}>
-                Key Contacts
-              </p>
-              <div className="space-y-2">
-                {emergencyContacts.map((c, i) => (
-                  <div key={i} className="flex items-center justify-between gap-3 rounded px-3 py-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-heading)" }}>{c.role}</p>
-                      <p className="text-xs text-foreground/75">{c.name}</p>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Phone className="h-3 w-3" style={{ color: rgba(0.5) }} />
-                      <p className="text-xs" style={{ fontFamily: "var(--font-heading)", color: rgba(0.8) }}>{c.phone}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Safety Resources ─────────────────────────────────────────────── */}
-      <Card className="card-elevated border-0" style={{ borderLeft: `3px solid ${G}` }}>
-        <CardHeader className="pb-2">
-          <SectionHeader icon={BookOpen} title="Safety Resources & Regulatory References" />
-        </CardHeader>
-        <CardContent className="pt-3">
-          <div className="flex flex-wrap gap-2">
-            {regulatoryRefs.map(link => (
-              <a
-                key={link.label}
-                href={link.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
-                style={{ fontFamily: "var(--font-heading)", fontSize: "10px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: G, background: rgba(0.07), border: `1px solid ${rgba(0.18)}` }}
-              >
-                <ExternalLink className="h-3 w-3" />
-                {link.label}
-              </a>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
     </div>
   )
 }

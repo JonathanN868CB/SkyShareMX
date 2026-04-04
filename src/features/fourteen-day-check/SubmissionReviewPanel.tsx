@@ -27,6 +27,7 @@ export function SubmissionReviewPanel({ submission, registration, fieldSchema, o
   const invalidate = useInvalidateChecks()
   const { profile } = useAuth()
   const isSuperAdmin = profile?.role === "Super Admin"
+  const isManagerOrAbove = profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager"
   const [notes, setNotes] = useState(submission.review_notes ?? "")
   const [saving, setSaving] = useState(false)
   const [acting, setActing] = useState(false)
@@ -279,8 +280,8 @@ export function SubmissionReviewPanel({ submission, registration, fieldSchema, o
 
         </div>
 
-        {/* Action footer */}
-        {!isArchived && (
+        {/* Action footer — Manager+ only */}
+        {!isArchived && isManagerOrAbove && (
           <div
             className="flex-shrink-0 px-6 py-4 flex flex-col gap-3"
             style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
