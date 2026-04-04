@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
-import { ChevronLeft, ChevronRight, X, Loader2, AlertTriangle } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, AlertTriangle } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
 import {
@@ -68,12 +68,9 @@ export function RecordsPageViewer({ open, onClose, hit }: Props) {
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-0 gap-0">
         <DialogHeader className="flex-none px-5 py-3 border-b border-border flex-row items-center justify-between">
-          <DialogTitle className="text-sm font-medium text-foreground truncate pr-4">
+          <DialogTitle className="text-sm font-medium text-foreground truncate pr-8">
             {title}
           </DialogTitle>
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
         </DialogHeader>
 
         {/* Navigation bar */}

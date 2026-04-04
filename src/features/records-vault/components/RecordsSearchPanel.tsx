@@ -11,43 +11,33 @@ import {
 } from "@/shared/ui/select"
 import { SOURCE_CATEGORIES, SOURCE_CATEGORY_LABELS } from "../constants"
 import type { SourceCategory } from "../types"
-import type { AircraftBase } from "@/pages/aircraft/fleetData"
 
 interface Props {
   query: string
   onQueryChange: (q: string) => void
-  selectedAircraftId: string | null
-  onAircraftChange: (id: string | null) => void
   selectedCategory: SourceCategory | null
   onCategoryChange: (c: SourceCategory | null) => void
   selectedSourceId: string | null
   onSourceChange: (id: string | null) => void
-  aircraft: AircraftBase[]
   sources: Array<{ id: string; original_filename: string }>
-  isLoadingAircraft: boolean
 }
 
 export function RecordsSearchPanel({
   query,
   onQueryChange,
-  selectedAircraftId,
-  onAircraftChange,
   selectedCategory,
   onCategoryChange,
   selectedSourceId,
   onSourceChange,
-  aircraft,
   sources,
-  isLoadingAircraft,
 }: Props) {
   function clearAll() {
     onQueryChange("")
-    onAircraftChange(null)
     onCategoryChange(null)
     onSourceChange(null)
   }
 
-  const hasFilters = query || selectedAircraftId || selectedCategory || selectedSourceId
+  const hasFilters = query || selectedCategory || selectedSourceId
 
   return (
     <div className="flex flex-col gap-5">
@@ -70,30 +60,6 @@ export function RecordsSearchPanel({
             <X className="h-3.5 w-3.5" />
           </button>
         )}
-      </div>
-
-      {/* Aircraft scope */}
-      <div className="space-y-1.5">
-        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Aircraft
-        </Label>
-        <Select
-          value={selectedAircraftId ?? "fleet"}
-          onValueChange={(v) => onAircraftChange(v === "fleet" ? null : v)}
-          disabled={isLoadingAircraft}
-        >
-          <SelectTrigger className="h-8 text-sm">
-            <SelectValue placeholder="All aircraft" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="fleet">All aircraft (fleet-wide)</SelectItem>
-            {aircraft.map((ac) => (
-              <SelectItem key={ac.id} value={ac.id}>
-                {ac.tailNumber} — {ac.model}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Category filter */}
