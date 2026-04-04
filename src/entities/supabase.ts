@@ -226,7 +226,7 @@ export const APP_SECTIONS: AppSection[] = [
 
 // ─── External Requests types ─────────────────────────────────────────────────
 
-export type FieldType = "text" | "textarea" | "number" | "photo" | "file"
+export type FieldType = "text" | "textarea" | "number" | "photo" | "file" | "checkbox" | "section"
 
 export type FieldDef = {
   id: string
@@ -271,6 +271,54 @@ export type ExternalSubmission = {
 export type ExternalSubmissionAttachment = {
   id: string
   submission_id: string
+  file_name: string
+  storage_path: string
+  mime_type: string | null
+  file_size_bytes: number | null
+  uploaded_at: string
+}
+
+// ─── 14-Day Check ────────────────────────────────────────────────────────────
+
+export type InspectionCardTemplate = {
+  id: string
+  name: string
+  aircraft_type: string | null
+  field_schema: FieldDef[]
+  created_by: string | null
+  created_at: string
+}
+
+export type FourteenDayCheckToken = {
+  id: string
+  aircraft_id: string
+  token: string
+  field_schema: FieldDef[]
+  traxxall_url: string | null
+  template_id: string | null
+  created_by: string
+  created_at: string
+}
+
+export type FourteenDayCheckSubmission = {
+  id: string
+  token_id: string
+  aircraft_id: string
+  submitter_name: string
+  field_values: Record<string, string | number | boolean | null>
+  notes: string | null
+  submitted_at: string
+  submitter_ip: string | null
+  review_status: "pending" | "flagged" | "cleared" | "archived"
+  review_notes: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+}
+
+export type FourteenDayCheckAttachment = {
+  id: string
+  submission_id: string
+  field_id: string
   file_name: string
   storage_path: string
   mime_type: string | null

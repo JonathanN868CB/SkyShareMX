@@ -29,6 +29,7 @@ const PartsDetail = lazy(() => import("@/pages/PartsDetail"))
 const ExternalRequests = lazy(() => import("@/pages/external-requests/ExternalRequestsPage"))
 const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/ExternalRequestDetailPage"))
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
+const FourteenDayCheckResponse = lazy(() => import("@/pages/fourteen-day-check/FourteenDayCheckResponse"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -59,9 +60,14 @@ const routes: RouteObject[] = [
     element: wrap(<RequestAccess />),
   },
   {
-    // Public response portal — no auth required
+    // External Requests public response portal — no auth required
     path: "/r/:token",
     element: wrap(<ExternalResponse />),
+  },
+  {
+    // 14-Day Check permanent standing form — no auth required
+    path: "/check/:token",
+    element: wrap(<FourteenDayCheckResponse />),
   },
   {
     path: "/app",
