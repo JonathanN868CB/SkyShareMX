@@ -155,6 +155,18 @@ export default function FourteenDayCheck() {
         </section>
       )}
 
+      {/* Keyframes for dispatch button */}
+      <style>{`
+        @keyframes fdcheck-ping {
+          0%   { transform: scale(1);   opacity: 0.7; }
+          100% { transform: scale(2.4); opacity: 0;   }
+        }
+        @keyframes fdcheck-signal {
+          0%, 100% { opacity: 0.3; transform: scaleY(0.6); }
+          50%       { opacity: 1;   transform: scaleY(1);   }
+        }
+      `}</style>
+
       {/* Fleet grid */}
       <section>
         <p
@@ -464,19 +476,6 @@ function AircraftCheckCard({
             <QrCode className="w-3.5 h-3.5" />
           </button>
 
-          {/* Send email */}
-          <button
-            type="button"
-            onClick={onEmail}
-            className="p-1.5 rounded-md transition-colors"
-            style={{ color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.07)" }}
-            title="Send check link by email"
-            onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
-            onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
-          >
-            <Mail className="w-3.5 h-3.5" />
-          </button>
-
           {/* Traxxall */}
           {aircraft.traxxallUrl && (
             <a
@@ -491,8 +490,124 @@ function AircraftCheckCard({
             </a>
           )}
         </div>
+
+        {/* Dispatch button */}
+        <DispatchButton onClick={onEmail} />
       </div>
     </div>
+  )
+}
+
+// ─── Dispatch button ─────────────────────────────────────────────────────────
+// Full-width styled send button with brand gradient, shimmer, and radar ping.
+
+function DispatchButton({ onClick }: { onClick: () => void }) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "9px 12px",
+        borderRadius: "6px",
+        // 3px gold left accent, rest is a thin border
+        borderLeft: "3px solid rgba(212,160,23,0.75)",
+        borderTop: `1px solid ${hovered ? "rgba(212,160,23,0.4)" : "rgba(212,160,23,0.15)"}`,
+        borderRight: `1px solid ${hovered ? "rgba(212,160,23,0.4)" : "rgba(212,160,23,0.15)"}`,
+        borderBottom: `1px solid ${hovered ? "rgba(212,160,23,0.4)" : "rgba(212,160,23,0.15)"}`,
+        // Brand gradient: SkyShare red → navy at very low opacity
+        background: hovered
+          ? "linear-gradient(105deg, rgba(193,2,48,0.14) 0%, rgba(1,46,69,0.22) 100%)"
+          : "linear-gradient(105deg, rgba(193,2,48,0.06) 0%, rgba(1,46,69,0.12) 100%)",
+        cursor: "pointer",
+        transition: "border-color 0.2s ease, background 0.25s ease, box-shadow 0.2s ease",
+        boxShadow: hovered ? "0 2px 18px rgba(193,2,48,0.1), 0 0 0 1px rgba(212,160,23,0.08)" : "none",
+      }}
+    >
+      {/* Shimmer beam — sweeps left-to-right on hover */}
+      <span
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: "60%",
+          background: "linear-gradient(90deg, transparent, rgba(212,160,23,0.1), transparent)",
+          transform: hovered ? "translateX(250%)" : "translateX(-100%)",
+          transition: hovered ? "transform 0.55s ease" : "none",
+          pointerEvents: "none",
+          skewX: "-12deg",
+        }}
+      />
+
+      {/* Mail icon with radar ping ring */}
+      <span style={{ position: "relative", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {hovered && (
+          <span
+            style={{
+              position: "absolute",
+              inset: "-5px",
+              borderRadius: "50%",
+              border: "1px solid rgba(212,160,23,0.55)",
+              animation: "fdcheck-ping 0.9s ease-out infinite",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+        <Mail
+          style={{
+            width: "13px",
+            height: "13px",
+            color: hovered ? "#d4a017" : "rgba(212,160,23,0.55)",
+            transition: "color 0.2s ease",
+            display: "block",
+          }}
+        />
+      </span>
+
+      {/* Label */}
+      <span
+        style={{
+          flex: 1,
+          fontSize: "10px",
+          fontWeight: 700,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: hovered ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)",
+          transition: "color 0.2s ease",
+          textAlign: "left",
+          fontFamily: "var(--font-heading, inherit)",
+        }}
+      >
+        Dispatch Check Link
+      </span>
+
+      {/* Signal bars — animated on hover */}
+      <span style={{ display: "flex", alignItems: "flex-end", gap: "2px", height: "12px", flexShrink: 0 }}>
+        {[4, 7, 10].map((h, i) => (
+          <span
+            key={i}
+            style={{
+              width: "2.5px",
+              height: `${h}px`,
+              borderRadius: "1px",
+              background: hovered ? "#d4a017" : "rgba(255,255,255,0.15)",
+              transition: `background 0.2s ease ${i * 0.06}s`,
+              animation: hovered ? `fdcheck-signal 0.8s ease-in-out ${i * 0.15}s infinite` : "none",
+            }}
+          />
+        ))}
+      </span>
+    </button>
   )
 }
 
