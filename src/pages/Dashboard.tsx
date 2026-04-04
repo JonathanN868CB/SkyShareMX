@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Shield, BookOpen, Bell, MapPin, ExternalLink, X, Radio, BarChart3, FileText, ClipboardList, AlertOctagon, Award, Wrench, Scale, Clock } from "lucide-react"
+import { Shield, BookOpen, Bell, MapPin, Phone, ExternalLink, X, FileText, AlertOctagon } from "lucide-react"
 import { useAuth } from "@/features/auth"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { PongGame } from "@/components/PongGame"
@@ -43,45 +43,14 @@ const bulletinItems = [
   { date: "Mar 28", text: "User management and invite system are fully operational." },
 ]
 
-// ── Safety Newswire ──────────────────────────────────────────────
-// Director of Safety: update these items to push new safety news to the team.
-// Future: these will be stored in the database and editable from the portal.
-const safetyNewswire = [
-  { date: "Mar 30", text: "Reminder: All FOD walks must be logged in PRISM prior to aircraft departure." },
-  { date: "Mar 28", text: "Updated SMS manual effective April 1 — review Section 4 on hazard reporting procedures." },
-  { date: "Mar 15", text: "Q1 Safety Stand-Down scheduled for April 3 at 0700 in Hangar 4. Attendance required." },
-]
-
-// Safety metrics — placeholder values; will pull from PRISM/ERP when API access is established.
-const safetyMetrics = [
-  { label: "Reports This Month", value: "—" },
-  { label: "Open Hazards",       value: "—" },
-  { label: "Days Since Event",   value: "—" },
-]
-
-// ── Company Documents ────────────────────────────────────────────
-const docCategories = [
-  { label: "SOPs",         icon: ClipboardList,  desc: "Standard operating procedures" },
-  { label: "MELs",         icon: AlertOctagon,   desc: "Minimum equipment lists"       },
-  { label: "Certificates", icon: Award,          desc: "Operating & airworthiness certs" },
-  { label: "Maint. Manuals", icon: Wrench,       desc: "AMMs, CMMs & task cards"       },
-  { label: "Reg. References", icon: Scale,       desc: "FAR/AIM & advisory circulars"  },
-]
-
-// Recently updated docs — hardcoded for now; update as revisions are issued.
-const recentDocs = [
-  { date: "Mar 29", text: "MEL Rev 15 issued — review updated items for B737 fleet." },
-  { date: "Mar 22", text: "SOP-042 (Ground Power Ops) revised. All technicians must re-read." },
-  { date: "Mar 10", text: "FAA AC 43.13-1B addendum posted to Reg. References." },
-]
 
 const departments = [
-  { name: "Line Maintenance",        location: "KPHX — Hangar 4",    email: "linemx@skyshare.com" },
-  { name: "Avionics",                location: "KPHX — Hangar 4",    email: "avionics@skyshare.com" },
-  { name: "Planning & Scheduling",   location: "Main Office",         email: "planning@skyshare.com" },
-  { name: "Quality Assurance",       location: "KPHX — Main Office", email: "qa@skyshare.com" },
-  { name: "Parts & Supply",          location: "KPHX — Stores",       email: "parts@skyshare.com" },
-  { name: "Director of Maintenance", location: "KPHX — Main Office", email: "dom@skyshare.com" },
+  { name: "SkyShare Maintenance",  location: "OGD · SLC",   email: "cbmx@skyshare.com",       phone: "385-294-0969" },
+  { name: "HR & Recruiting",       location: "OGD",         email: "recruiting@skyshare.com",  phone: null          },
+  { name: "General Information",   location: null,          email: "info@skyshare.com",        phone: null          },
+  { name: "SkyOps",                location: "SLC",         email: "skyops@skyshare.com",      phone: "801-516-9189" },
+  { name: "Charter Sales",         location: null,          email: "charter@skyshare.com",     phone: null          },
+  { name: "Accounts Payable",      location: "OGD",         email: "payables@skyshare.com",    phone: null          },
 ]
 
 /* ─── Core Value Modal ──────────────────────────────────────────── */
@@ -346,7 +315,7 @@ export default function Dashboard() {
         <div className="grid md:grid-cols-2 gap-6 mt-8" style={{ alignItems: "stretch" }}>
 
           {/* Safety Dashboard */}
-          <Card className="card-elevated border-0 flex flex-col" style={{ borderLeft: "3px solid #10b981", minHeight: "22rem" }}>
+          <Card className="card-elevated border-0" style={{ borderLeft: "3px solid #10b981" }}>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2.5">
                 <div
@@ -370,180 +339,69 @@ export default function Dashboard() {
               </div>
             </CardHeader>
 
-            <CardContent className="flex flex-col gap-5 pt-0 flex-1 pb-5">
-
-              {/* Safety Newswire */}
-              <div>
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <Radio className="h-3 w-3" style={{ color: "#10b981" }} />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "9px",
-                      fontWeight: 700,
-                      letterSpacing: "0.25em",
-                      textTransform: "uppercase",
-                      color: "rgba(16,185,129,0.7)",
-                    }}
-                  >
-                    Safety Newswire
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {safetyNewswire.map((item, i) => (
-                    <div key={i} className="flex gap-4 items-start">
-                      <span
-                        style={{
-                          fontFamily: "var(--font-heading)",
-                          fontSize: "9px",
-                          letterSpacing: "0.1em",
-                          color: "rgba(16,185,129,0.45)",
-                          whiteSpace: "nowrap",
-                          paddingTop: "3px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {item.date}
-                      </span>
-                      <span className="text-xs text-muted-foreground" style={{ lineHeight: 1.6 }}>
-                        {item.text}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+            <CardContent className="pt-0 pb-5">
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href="https://prismsms.argus.aero/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
+                  style={{
+                    fontFamily: "var(--font-heading)",
+                    fontSize: "10px",
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "#10b981",
+                    background: "rgba(16,185,129,0.08)",
+                    border: "1px solid rgba(16,185,129,0.2)",
+                  }}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  PRISM SMS
+                </a>
+                {/* Replace href="#" with ERP URL when available */}
+                <a
+                  href="#"
+                  className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
+                  style={{
+                    fontFamily: "var(--font-heading)",
+                    fontSize: "10px",
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "var(--muted-foreground)",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  ERP System
+                </a>
+                {/* Replace href="#" with SMS Manual URL when available */}
+                <a
+                  href="#"
+                  className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
+                  style={{
+                    fontFamily: "var(--font-heading)",
+                    fontSize: "10px",
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "var(--muted-foreground)",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <FileText className="h-3 w-3" />
+                  SMS Manual
+                </a>
               </div>
-
-              {/* Safety Metrics */}
-              <div>
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <BarChart3 className="h-3 w-3" style={{ color: "#10b981" }} />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "9px",
-                      fontWeight: 700,
-                      letterSpacing: "0.25em",
-                      textTransform: "uppercase",
-                      color: "rgba(16,185,129,0.7)",
-                    }}
-                  >
-                    Safety Metrics
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {safetyMetrics.map((m) => (
-                    <div
-                      key={m.label}
-                      className="rounded p-2.5 text-center"
-                      style={{
-                        background: "rgba(16,185,129,0.06)",
-                        border: "1px solid rgba(16,185,129,0.14)",
-                      }}
-                    >
-                      <p
-                        className="text-xl font-bold"
-                        style={{ fontFamily: "var(--font-display)", color: "#10b981", opacity: 0.7 }}
-                      >
-                        {m.value}
-                      </p>
-                      <p
-                        className="mt-0.5"
-                        style={{
-                          fontFamily: "var(--font-heading)",
-                          fontSize: "8px",
-                          letterSpacing: "0.1em",
-                          textTransform: "uppercase",
-                          color: "var(--muted-foreground)",
-                        }}
-                      >
-                        {m.label}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Quick Links */}
-              <div>
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <FileText className="h-3 w-3" style={{ color: "#10b981" }} />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "9px",
-                      fontWeight: 700,
-                      letterSpacing: "0.25em",
-                      textTransform: "uppercase",
-                      color: "rgba(16,185,129,0.7)",
-                    }}
-                  >
-                    Quick Links
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <a
-                    href="https://prismsms.argus.aero/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "10px",
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      color: "#10b981",
-                      background: "rgba(16,185,129,0.08)",
-                      border: "1px solid rgba(16,185,129,0.2)",
-                    }}
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    PRISM SMS
-                  </a>
-                  {/* Replace href="#" with ERP URL when available */}
-                  <a
-                    href="#"
-                    className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "10px",
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      color: "var(--muted-foreground)",
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                    }}
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    ERP System
-                  </a>
-                  {/* Replace href="#" with SMS Manual URL when available */}
-                  <a
-                    href="#"
-                    className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 transition-opacity hover:opacity-75"
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "10px",
-                      fontWeight: 600,
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      color: "var(--muted-foreground)",
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                    }}
-                  >
-                    <FileText className="h-3 w-3" />
-                    SMS Manual
-                  </a>
-                </div>
-              </div>
-
             </CardContent>
           </Card>
 
           {/* Company Documents */}
-          <Card className="card-elevated border-0 flex flex-col" style={{ borderLeft: "3px solid #60a5fa", minHeight: "22rem" }}>
+          <Card className="card-elevated border-0" style={{ borderLeft: "3px solid #60a5fa" }}>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2.5">
                 <div
@@ -567,115 +425,7 @@ export default function Dashboard() {
               </div>
             </CardHeader>
 
-            <CardContent className="flex flex-col gap-5 pt-0 flex-1 pb-5">
-
-              {/* Document Categories */}
-              <div>
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <FileText className="h-3 w-3" style={{ color: "#60a5fa" }} />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "9px",
-                      fontWeight: 700,
-                      letterSpacing: "0.25em",
-                      textTransform: "uppercase",
-                      color: "rgba(96,165,250,0.7)",
-                    }}
-                  >
-                    Document Library
-                  </span>
-                </div>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {docCategories.map((cat) => (
-                    <a
-                      key={cat.label}
-                      href="#"
-                      className="group flex flex-col items-center gap-1.5 rounded p-2 text-center transition-all hover:opacity-90"
-                      style={{
-                        background: "rgba(96,165,250,0.05)",
-                        border: "1px solid rgba(96,165,250,0.12)",
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(96,165,250,0.1)")}
-                      onMouseLeave={e => (e.currentTarget.style.background = "rgba(96,165,250,0.05)")}
-                    >
-                      <cat.icon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: "#60a5fa" }} />
-                      <span
-                        style={{
-                          fontFamily: "var(--font-heading)",
-                          fontSize: "8px",
-                          fontWeight: 600,
-                          letterSpacing: "0.06em",
-                          textTransform: "uppercase",
-                          color: "rgba(96,165,250,0.85)",
-                          lineHeight: 1.2,
-                        }}
-                      >
-                        {cat.label}
-                      </span>
-                    </a>
-                  ))}
-                </div>
-              </div>
-
-              {/* Recently Updated */}
-              <div>
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <Clock className="h-3 w-3" style={{ color: "#60a5fa" }} />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "9px",
-                      fontWeight: 700,
-                      letterSpacing: "0.25em",
-                      textTransform: "uppercase",
-                      color: "rgba(96,165,250,0.7)",
-                    }}
-                  >
-                    Recently Updated
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {recentDocs.map((item, i) => (
-                    <div key={i} className="flex gap-4 items-start">
-                      <span
-                        style={{
-                          fontFamily: "var(--font-heading)",
-                          fontSize: "9px",
-                          letterSpacing: "0.1em",
-                          color: "rgba(96,165,250,0.4)",
-                          whiteSpace: "nowrap",
-                          paddingTop: "3px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {item.date}
-                      </span>
-                      <span className="text-xs text-muted-foreground" style={{ lineHeight: 1.6 }}>
-                        {item.text}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Quick Access */}
-              <div>
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <ExternalLink className="h-3 w-3" style={{ color: "#60a5fa" }} />
-                  <span
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      fontSize: "9px",
-                      fontWeight: 700,
-                      letterSpacing: "0.25em",
-                      textTransform: "uppercase",
-                      color: "rgba(96,165,250,0.7)",
-                    }}
-                  >
-                    Quick Access
-                  </span>
-                </div>
+            <CardContent className="pt-0 pb-5">
                 <div className="flex flex-wrap gap-2">
                   <a
                     href="https://portal.jetinsight.com"
@@ -760,8 +510,6 @@ export default function Dashboard() {
                 >
                   Authoritative source — always check before starting any task.
                 </p>
-              </div>
-
             </CardContent>
           </Card>
         </div>
@@ -843,10 +591,12 @@ export default function Dashboard() {
                 >
                   {dept.name}
                 </p>
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">{dept.location}</span>
-                </div>
+                {dept.location && (
+                  <div className="flex items-center gap-1.5">
+                    <MapPin className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">{dept.location}</span>
+                  </div>
+                )}
                 <a
                   href={`mailto:${dept.email}`}
                   className="block text-xs transition-opacity hover:opacity-75"
@@ -858,6 +608,18 @@ export default function Dashboard() {
                 >
                   {dept.email}
                 </a>
+                {dept.phone && (
+                  <div className="flex items-center gap-1.5">
+                    <Phone className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                    <a
+                      href={`tel:${dept.phone}`}
+                      className="text-xs text-muted-foreground transition-opacity hover:opacity-75"
+                      style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+                    >
+                      {dept.phone}
+                    </a>
+                  </div>
+                )}
               </div>
             ))}
           </div>

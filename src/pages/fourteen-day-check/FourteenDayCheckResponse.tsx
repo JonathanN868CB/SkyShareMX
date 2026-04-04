@@ -24,6 +24,44 @@ type FieldValue = string | boolean | null
 
 type PageState = "loading" | "form" | "submitting" | "submitted" | "not_found" | "error"
 
+// ─── Draft persistence ────────────────────────────────────────────────────────
+// Saves form progress to localStorage keyed by token, TTL 1 hour.
+// Survives iOS Safari tab backgrounding without any server traffic.
+
+const DRAFT_TTL_MS = 60 * 60 * 1000 // 1 hour
+
+type Draft = {
+  savedAt: number
+  submitterName: string
+  values: Record<string, FieldValue>
+  uploads: Record<string, { fileName: string; storagePath: string; mimeType: string; fileSizeBytes: number }>
+}
+
+function draftKey(token: string) { return `fdcheck_draft_${token}` }
+
+function readDraft(token: string): Draft | null {
+  try {
+    const raw = localStorage.getItem(draftKey(token))
+    if (!raw) return null
+    const draft = JSON.parse(raw) as Draft
+    if (Date.now() - draft.savedAt > DRAFT_TTL_MS) {
+      localStorage.removeItem(draftKey(token))
+      return null
+    }
+    return draft
+  } catch { return null }
+}
+
+function writeDraft(token: string, data: Omit<Draft, "savedAt">) {
+  try {
+    localStorage.setItem(draftKey(token), JSON.stringify({ ...data, savedAt: Date.now() }))
+  } catch { /* localStorage blocked (private mode, etc.) — fail silently */ }
+}
+
+function clearDraft(token: string) {
+  try { localStorage.removeItem(draftKey(token)) } catch {}
+}
+
 const BASE = "/.netlify/functions"
 
 export default function FourteenDayCheckResponse() {
@@ -36,6 +74,26 @@ export default function FourteenDayCheckResponse() {
   const [values, setValues] = useState<Record<string, FieldValue>>({})
   const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [draftRestored, setDraftRestored] = useState(false)
+
+  // Save draft to localStorage whenever form state changes
+  useEffect(() => {
+    if (pageState !== "form" || !token || !check) return
+    const uploads: Draft["uploads"] = {}
+    for (const [fieldId, us] of Object.entries(uploadStates)) {
+      if (us.status === "done") {
+        uploads[fieldId] = { fileName: us.fileName, storagePath: us.storagePath, mimeType: us.mimeType, fileSizeBytes: us.fileSizeBytes }
+      }
+    }
+    writeDraft(token, { submitterName, values, uploads })
+  }, [values, uploadStates, submitterName, pageState, token, check])
+
+  // Auto-dismiss the "Draft restored" banner after 4 seconds
+  useEffect(() => {
+    if (!draftRestored) return
+    const timerId = setTimeout(() => setDraftRestored(false), 4000)
+    return () => clearTimeout(timerId)
+  }, [draftRestored])
 
   useEffect(() => {
     if (!token) { setPageState("not_found"); return }
@@ -48,6 +106,26 @@ export default function FourteenDayCheckResponse() {
       const data = await res.json()
       if (!res.ok) { setPageState("not_found"); return }
       setCheck(data)
+
+      // Restore draft if one exists and hasn't expired
+      const draft = readDraft(t)
+      if (draft) {
+        if (!prefilledName && draft.submitterName) setSubmitterName(draft.submitterName)
+        if (Object.keys(draft.values).length > 0) setValues(draft.values)
+        if (Object.keys(draft.uploads).length > 0) {
+          setUploadStates(
+            Object.fromEntries(
+              Object.entries(draft.uploads).map(([fieldId, u]) => [
+                fieldId,
+                { status: "done" as const, ...u },
+              ])
+            )
+          )
+        }
+        const hasContent = draft.submitterName || Object.keys(draft.values).length > 0 || Object.keys(draft.uploads).length > 0
+        if (hasContent) setDraftRestored(true)
+      }
+
       setPageState("form")
     } catch {
       setPageState("error")
@@ -149,6 +227,7 @@ export default function FourteenDayCheckResponse() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Submission failed")
+      if (token) clearDraft(token)
       setPageState("submitted")
     } catch (err) {
       setSubmitError((err as Error).message)
@@ -236,6 +315,28 @@ export default function FourteenDayCheckResponse() {
               </span>
             </div>
           </div>
+
+          {/* Draft restored banner */}
+          {draftRestored && (
+            <div
+              className="flex items-center justify-between rounded-md px-3 py-2"
+              style={{
+                background: "rgba(212,160,23,0.08)",
+                border: "1px solid rgba(212,160,23,0.25)",
+              }}
+            >
+              <span className="text-xs" style={{ color: "rgba(212,160,23,0.85)" }}>
+                Draft restored — continued from where you left off.
+              </span>
+              <button
+                type="button"
+                onClick={() => setDraftRestored(false)}
+                style={{ color: "rgba(212,160,23,0.5)", marginLeft: "8px" }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* Submitter name */}
           <div className="space-y-1.5">
@@ -525,7 +626,6 @@ function CheckField({ field, value, uploadState, disabled, onValueChange, onFile
               ref={fileRef}
               type="file"
               accept="image/*"
-              capture="environment"
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (file) onFileSelect(file)

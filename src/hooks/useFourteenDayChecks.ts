@@ -23,7 +23,7 @@ export type AircraftCheckSummary = {
   status: CheckStatus
   hasPendingSubmission: boolean
   hasFlaggedSubmission: boolean
-  lastDispatch: { sentToName: string; sentToEmail: string; sentAt: string } | null
+  lastDispatch: { id: string; sentToName: string; sentToEmail: string; sentAt: string } | null
 }
 
 function computeStatus(daysSince: number | null): CheckStatus {
@@ -72,14 +72,15 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
   // Load latest dispatch per token
   const { data: allDispatches } = await db
     .from("fourteen_day_check_dispatches")
-    .select("token_id, sent_to_name, sent_to_email, sent_at")
+    .select("id, token_id, sent_to_name, sent_to_email, sent_at")
     .in("token_id", tokenIds)
     .order("sent_at", { ascending: false })
 
-  const latestDispatchByToken = new Map<string, { sentToName: string; sentToEmail: string; sentAt: string }>()
+  const latestDispatchByToken = new Map<string, { id: string; sentToName: string; sentToEmail: string; sentAt: string }>()
   for (const d of (allDispatches ?? [])) {
     if (!latestDispatchByToken.has(d.token_id)) {
       latestDispatchByToken.set(d.token_id, {
+        id:          d.id,
         sentToName:  d.sent_to_name,
         sentToEmail: d.sent_to_email,
         sentAt:      d.sent_at,
@@ -118,6 +119,13 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
     const daysSince = latest ? daysBetween(latest.submitted_at) : null
     const status = computeStatus(daysSince)
 
+    const dispatch = latestDispatchByToken.get(t.id) ?? null
+    // Only show the dispatch indicator if it was sent after the most recent submission.
+    // Once a submission comes in (or is archived/cleared), the dispatch is "answered".
+    const dispatchIsUnanswered =
+      dispatch !== null &&
+      (latest === null || dispatch.sentAt > latest.submitted_at)
+
     return {
       tokenId: t.id,
       encodedToken: encodeToken(t.token),
@@ -131,12 +139,8 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       status,
       hasPendingSubmission: pendingTokenIds.has(t.id),
       hasFlaggedSubmission: flaggedTokenIds.has(t.id),
-      lastDispatch: latestDispatchByToken.get(t.id) ?? null,
+      lastDispatch: dispatchIsUnanswered ? dispatch : null,
     }
-  }).sort((a: AircraftCheckSummary, b: AircraftCheckSummary) => {
-    // Sort: overdue first, then due_soon, then never, then ok
-    const order = { overdue: 0, never: 1, due_soon: 2, ok: 3 }
-    return order[a.status] - order[b.status]
   })
 }
 
@@ -307,6 +311,14 @@ export async function saveReviewNotes(id: string, notes: string): Promise<void> 
 export async function deleteSubmission(id: string): Promise<void> {
   const { error } = await db
     .from("fourteen_day_check_submissions")
+    .delete()
+    .eq("id", id)
+  if (error) throw error
+}
+
+export async function deleteDispatch(id: string): Promise<void> {
+  const { error } = await db
+    .from("fourteen_day_check_dispatches")
     .delete()
     .eq("id", id)
   if (error) throw error

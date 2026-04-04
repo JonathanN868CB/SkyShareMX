@@ -25,6 +25,7 @@ import {
   Package,
   Send,
 } from "lucide-react"
+import { BeetIcon } from "@/features/beet-box/shared/BeetIcon"
 import {
   Sidebar,
   SidebarContent,
@@ -76,6 +77,7 @@ const sidebarSections: SidebarSection[] = [
     title: "Operations",
     items: [
       { name: "Discrepancy Intelligence", path: "/app/discrepancy-intelligence", icon: Activity,      section: "Discrepancy Intelligence"  },
+      { name: "Beet Box",               path: "/app/beet-box",                 icon: BeetIcon,      section: "Beet Box"                  },
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
@@ -173,6 +175,20 @@ export function AppSidebar() {
               />
               {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
               {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
+              {!collapsed && item.name === "Beet Box" && (
+                <span
+                  className="flex-shrink-0 text-[8px] font-bold tracking-widest px-1 py-0.5 rounded"
+                  style={{
+                    fontFamily: "var(--font-heading)",
+                    background: "rgba(212,160,23,0.15)",
+                    color: "var(--skyshare-gold)",
+                    border: "1px solid rgba(212,160,23,0.3)",
+                    lineHeight: 1,
+                  }}
+                >
+                  BETA
+                </span>
+              )}
             </NavLink>
           ) : (
             <button

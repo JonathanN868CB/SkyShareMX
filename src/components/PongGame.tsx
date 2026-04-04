@@ -6,7 +6,7 @@ const PADDLE_H   = 44
 const BALL_R     = 7          // collision radius
 const S_SIZE     = 18         // drawn size of the S mark (px)
 const BALL_SPEED = 312        // px/s base speed
-const TOMMY_MAX  = 224        // px/s max Tommy speed (–20%)
+const TOMMY_MAX  = 179        // px/s max Tommy speed (–36%)
 // How far outside the banner the mouse can roam and still keep the game active.
 // Expressed as a fraction of the banner height (0.30 = 30 %).
 const HOVER_OVERRUN_FRAC = 0.30
