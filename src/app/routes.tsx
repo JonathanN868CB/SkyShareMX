@@ -53,6 +53,11 @@ const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/Exter
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
 const FourteenDayCheckResponse = lazy(() => import("@/pages/fourteen-day-check/FourteenDayCheckResponse"))
 const FourteenDayCheck = lazy(() => import("@/pages/FourteenDayCheck"))
+const RecordsVaultApp      = lazy(() => import("@/features/records-vault/RecordsVaultApp").then(m => ({ default: m.RecordsVaultApp })))
+const RecordsVaultRedirect = lazy(() => import("@/features/records-vault/RecordsVaultApp").then(m => ({ default: m.RecordsVaultRedirect })))
+const RecordsVaultSearch   = lazy(() => import("@/features/records-vault/pages/RecordsVaultSearchPage"))
+const RecordsVaultBrowse   = lazy(() => import("@/features/records-vault/pages/RecordsVaultBrowsePage"))
+const RecordsVaultPipeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultPipelinePage"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -184,6 +189,25 @@ const routes: RouteObject[] = [
       { path: "sop-library/:id",                  element: wrap(<SOPDetail />) },
       { path: "training",                         element: wrap(<TrainingDashboard />) },
       { path: "training/:id",                     element: wrap(<TrainingDetail />) },
+    ],
+  },
+  // ─── Records Vault — full-screen, outside Layout, protected ───────────────
+  {
+    path: "/app/records-vault",
+    element: (
+      <AppErrorBoundary>
+        <ProtectedRoute>
+          <Suspense fallback={fallback}>
+            <RecordsVaultApp />
+          </Suspense>
+        </ProtectedRoute>
+      </AppErrorBoundary>
+    ),
+    children: [
+      { index: true,           element: wrap(<RecordsVaultRedirect />) },
+      { path: "search",        element: wrap(<RecordsVaultSearch />) },
+      { path: "browse",        element: wrap(<RecordsVaultBrowse />) },
+      { path: "pipeline",      element: wrap(<RecordsVaultPipeline />) },
     ],
   },
   {

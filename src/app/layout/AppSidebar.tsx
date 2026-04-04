@@ -24,6 +24,7 @@ import {
   Activity,
   Package,
   Send,
+  BookOpen,
 } from "lucide-react"
 import { BeetIcon } from "@/features/beet-box/shared/BeetIcon"
 import {
@@ -77,6 +78,7 @@ const sidebarSections: SidebarSection[] = [
     title: "Operations",
     items: [
       { name: "Discrepancy Intelligence", path: "/app/discrepancy-intelligence", icon: Activity,      section: "Discrepancy Intelligence"  },
+      { name: "Records Vault",            path: "/app/records-vault",            icon: BookOpen,     section: "Records Vault"             },
       { name: "Beet Box",               path: "/app/beet-box",                 icon: BeetIcon,      section: "Beet Box"                  },
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
