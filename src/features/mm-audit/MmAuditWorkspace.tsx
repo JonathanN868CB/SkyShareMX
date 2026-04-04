@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { ArrowLeft, CheckCircle2, ChevronRight, AlertTriangle, History, Loader2, Filter, Pencil, Save, X, Undo2 } from "lucide-react"
+import { ArrowLeft, CheckCircle2, ChevronRight, AlertTriangle, ExternalLink, History, Loader2, Filter, Pencil, Save, X, Undo2 } from "lucide-react"
 import { useAuth } from "@/features/auth"
 import { useMmWorkspaceData, useStageRevisionChange, useRevertStagedRevision, type WorkspaceDocGroup, type WorkspaceItem } from "./useMmAuditData"
 import MmBatchReviewDialog from "./MmBatchReviewDialog"
@@ -143,7 +143,7 @@ export default function MmAuditWorkspace({ campaignId, campaignName, onClose }: 
       </div>
 
       {/* ── Content ────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-6 py-4">
         {isLoading && (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-5 w-5 animate-spin" style={{ color: C }} />
@@ -157,20 +157,24 @@ export default function MmAuditWorkspace({ campaignId, campaignName, onClose }: 
           </div>
         )}
 
-        {!isLoading && filteredGroups.map(group => (
-          <DocGroupCard
-            key={group.source_document_id}
-            group={group}
-            campaignId={campaignId}
-            expanded={expandedGroups.has(group.source_document_id)}
-            onToggle={() => toggleGroup(group.source_document_id)}
-            canEdit={canEdit}
-            isSuperAdmin={isSuperAdmin}
-            onBatchReview={() => setBatchGroups([group])}
-            onShowHistory={(item) => setHistoryItem({ id: item.aircraft_document_id, registration: item.registration, docName: group.document_name })}
-            onRevisionUpdated={refetch}
-          />
-        ))}
+        {!isLoading && (
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", alignItems: "start" }}>
+            {filteredGroups.map(group => (
+              <DocGroupCard
+                key={group.source_document_id}
+                group={group}
+                campaignId={campaignId}
+                expanded={expandedGroups.has(group.source_document_id)}
+                onToggle={() => toggleGroup(group.source_document_id)}
+                canEdit={canEdit}
+                isSuperAdmin={isSuperAdmin}
+                onBatchReview={() => setBatchGroups([group])}
+                onShowHistory={(item) => setHistoryItem({ id: item.aircraft_document_id, registration: item.registration, docName: group.document_name })}
+                onRevisionUpdated={refetch}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Batch Review Dialog ─────────────────────────────────────────── */}
@@ -328,6 +332,19 @@ function DocGroupCard({
               <span className="text-xs font-semibold truncate" style={{ color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-heading)" }}>
                 {group.document_name}
               </span>
+              {group.document_url && (
+                <a
+                  href={group.document_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  title="Open source document"
+                  className="flex items-center gap-1 flex-shrink-0 transition-opacity hover:opacity-80"
+                  style={{ color: C, fontSize: "10px", fontFamily: "var(--font-heading)" }}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
             </div>
             <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.35)" }}>
               {group.document_number} · {totalCount} aircraft

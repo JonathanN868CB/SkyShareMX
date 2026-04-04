@@ -401,6 +401,7 @@ export interface WorkspaceDocGroup {
   source_document_id: string
   document_number: string
   document_name: string
+  document_url: string | null
   current_revision: string
   current_rev_date: string | null
   items: WorkspaceItem[]
@@ -512,6 +513,7 @@ export function useMmWorkspaceData(campaignId: string | null) {
             source_document_id: r.source_document_id,
             document_number: sd.document_number,
             document_name: sd.document_name,
+            document_url: sd.document_url ?? null,
             current_revision: effectiveRevision,
             current_rev_date: sd.current_rev_date,
             items: [],

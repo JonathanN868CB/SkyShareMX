@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { AIRCRAFT_DETAILS } from "./aircraft/fleetData"
 import type { AircraftBase, ManufacturerGroup } from "./aircraft/fleetData"
 import AircraftDetailOverlay from "./aircraft/AircraftDetailOverlay"
@@ -153,6 +153,18 @@ export default function AircraftInfo() {
   const [selected, setSelected] = useState<AircraftBase | null>(null)
   const { data: fleet, isLoading, isError } = useFleet()
 
+  function openSelected(ac: AircraftBase) {
+    setSelected(ac)
+    window.history.pushState({ aircraftDetail: true }, "")
+  }
+
+  useEffect(() => {
+    if (!selected) return
+    const handlePop = () => setSelected(null)
+    window.addEventListener("popstate", handlePop)
+    return () => window.removeEventListener("popstate", handlePop)
+  }, [selected])
+
   const detail = selected ? AIRCRAFT_DETAILS[selected.tailNumber] : null
   const totalAircraft = fleet?.reduce((sum, g) => sum + g.families.reduce((s, f) => s + f.aircraft.length, 0), 0) ?? "—"
 
@@ -210,7 +222,7 @@ export default function AircraftInfo() {
           </p>
         )}
         {fleet?.map(group => (
-          <ManufacturerSection key={group.manufacturer} group={group} onOpen={setSelected} />
+          <ManufacturerSection key={group.manufacturer} group={group} onOpen={openSelected} />
         ))}
 
       </div>
