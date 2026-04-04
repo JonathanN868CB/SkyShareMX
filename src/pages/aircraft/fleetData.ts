@@ -156,9 +156,9 @@ export const FLEET: ManufacturerGroup[] = [
         ],
       },
       {
-        family: "PC-12 — NGX",
+        family: "PC-12/47E — NGX",
         aircraft: [
-          { tailNumber: "N511DR", year: 2024, model: "Pilatus PC-12 NGX", serialNumber: "2360" },
+          { tailNumber: "N511DR", year: 2024, model: "Pilatus PC-12/47E NGX", serialNumber: "2360" },
         ],
       },
     ],
@@ -595,7 +595,7 @@ export const AIRCRAFT_DETAILS: Record<string, AircraftDetailData> = {
     { label: "Propeller 1 Descriptor",   value: "5-blade composite Hartzell" },
   ]},
 
-  // ── Pilatus PC-12 NGX ────────────────────────────────────────────────────────
+  // ── Pilatus PC-12/47E NGX ────────────────────────────────────────────────────
   "N511DR": { ...makeDetail({ engineModel: "Pratt & Whitney Canada PT6E-67XP", isTwin: false, hasProp: true, hasAPU: false, documentation: [
     { label: "Digital AFM",                                       value: "None" },
     { label: "Pilatus PC-12/47E NGX Maintenance Manual",          value: "—", note: "PIL-02436 · Rev 13 · Jan 2025" },
