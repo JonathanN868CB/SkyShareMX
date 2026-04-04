@@ -26,6 +26,9 @@ const DiscrepancyIntelligence = lazy(() => import("@/pages/DiscrepancyIntelligen
 const Parts = lazy(() => import("@/pages/Parts"))
 const PartsNew = lazy(() => import("@/pages/PartsNew"))
 const PartsDetail = lazy(() => import("@/pages/PartsDetail"))
+const ExternalRequests = lazy(() => import("@/pages/external-requests/ExternalRequestsPage"))
+const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/ExternalRequestDetailPage"))
+const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -54,6 +57,11 @@ const routes: RouteObject[] = [
   {
     path: "/request-access",
     element: wrap(<RequestAccess />),
+  },
+  {
+    // Public response portal — no auth required
+    path: "/r/:token",
+    element: wrap(<ExternalResponse />),
   },
   {
     path: "/app",
@@ -88,6 +96,8 @@ const routes: RouteObject[] = [
       { path: "parts",        element: wrap(<Parts />) },
       { path: "parts/new",    element: wrap(<PartsNew />) },
       { path: "parts/:id",    element: wrap(<PartsDetail />) },
+      { path: "external-requests",     element: wrap(<ExternalRequests />) },
+      { path: "external-requests/:id", element: wrap(<ExternalRequestDetail />) },
       { path: "training",    element: wrap(<MyTraining />) },
       { path: "journey",     element: wrap(<MyJourney />) },
       { path: "docs",        element: wrap(<ComingSoon name="Docs & Links" />) },

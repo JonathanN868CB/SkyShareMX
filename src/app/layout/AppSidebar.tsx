@@ -23,6 +23,7 @@ import {
   ChevronRight,
   Activity,
   Package,
+  Send,
 } from "lucide-react"
 import {
   Sidebar,
@@ -79,6 +80,7 @@ const sidebarSections: SidebarSection[] = [
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
       { name: "Parts",                  path: "/app/parts",                    icon: Package,       section: "Parts"                     },
+      { name: "External Requests",        path: "/app/external-requests",        icon: Send,          section: "External Requests"         },
       { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
       { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],
