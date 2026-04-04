@@ -15,6 +15,7 @@ export type AircraftCheckSummary = {
   encodedToken: string           // base62 for URL
   aircraftId: string
   registration: string
+  model: string | null
   traxxallUrl: string | null
   lastSubmittedAt: string | null
   lastReviewStatus: FourteenDayCheckSubmission["review_status"] | null
@@ -48,6 +49,7 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       traxxall_url,
       aircraft:aircraft_id (
         id,
+        model_full,
         aircraft_registrations (registration, is_current)
       )
     `)
@@ -94,6 +96,7 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       encodedToken: encodeToken(t.token),
       aircraftId: t.aircraft_id,
       registration,
+      model: t.aircraft?.model_full ?? null,
       traxxallUrl: t.traxxall_url ?? null,
       lastSubmittedAt: latest?.submitted_at ?? null,
       lastReviewStatus: latest?.review_status ?? null,

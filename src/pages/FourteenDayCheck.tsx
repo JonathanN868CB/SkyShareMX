@@ -2,10 +2,12 @@
 // Fleet status grid + pending submissions review queue.
 
 import { useState, useEffect } from "react"
+import { Link } from "react-router-dom"
 import { formatDistanceToNow } from "date-fns"
 import {
   CalendarClock, ExternalLink, Clock, AlertTriangle,
-  ChevronRight, RefreshCw, QrCode, History, Plus,
+  ChevronRight, RefreshCw, QrCode, History, Plus, Mail,
+  Plane,
 } from "lucide-react"
 import {
   useFleetCheckSummaries,
@@ -20,6 +22,7 @@ import { SubmissionReviewPanel } from "@/features/fourteen-day-check/SubmissionR
 import { AircraftCheckQR } from "@/features/fourteen-day-check/AircraftCheckQR"
 import { CheckHistoryDrawer } from "@/features/fourteen-day-check/CheckHistoryDrawer"
 import { AddAircraftModal } from "@/features/fourteen-day-check/AddAircraftModal"
+import { SendCheckEmailModal } from "@/features/fourteen-day-check/SendCheckEmailModal"
 
 export default function FourteenDayCheck() {
   const { data: fleet = [], isLoading: fleetLoading, refetch } = useFleetCheckSummaries()
@@ -30,14 +33,15 @@ export default function FourteenDayCheck() {
 
   const [reviewSubmissionId, setReviewSubmissionId] = useState<string | null>(null)
   const [reviewRegistration, setReviewRegistration] = useState("")
-  const [qrAircraft, setQrAircraft] = useState<AircraftCheckSummary | null>(null)
+  const [qrAircraft, setQrAircraft]         = useState<AircraftCheckSummary | null>(null)
   const [historyAircraft, setHistoryAircraft] = useState<AircraftCheckSummary | null>(null)
-  const [showAddModal, setShowAddModal] = useState(false)
+  const [emailAircraft, setEmailAircraft]   = useState<AircraftCheckSummary | null>(null)
+  const [showAddModal, setShowAddModal]     = useState(false)
 
-  const ok       = fleet.filter(a => a.status === "ok").length
-  const dueSoon  = fleet.filter(a => a.status === "due_soon").length
-  const overdue  = fleet.filter(a => a.status === "overdue" || a.status === "never").length
-  const flagged  = pending.filter(s => s.review_status === "flagged").length
+  const ok      = fleet.filter(a => a.status === "ok").length
+  const dueSoon = fleet.filter(a => a.status === "due_soon").length
+  const overdue = fleet.filter(a => a.status === "overdue" || a.status === "never").length
+  const flagged = pending.filter(s => s.review_status === "flagged").length
 
   function openReview(submissionId: string, registration: string) {
     setReviewSubmissionId(submissionId)
@@ -108,10 +112,10 @@ export default function FourteenDayCheck() {
       {/* Summary bar */}
       {!isLoading && fleet.length > 0 && (
         <div className="grid grid-cols-4 gap-3">
-          <SummaryTile value={ok}       label="OK"        color="#4ade80" />
-          <SummaryTile value={dueSoon}  label="Due Soon"  color="#d4a017" />
-          <SummaryTile value={overdue}  label="Overdue"   color="#f87171" />
-          <SummaryTile value={flagged}  label="Flagged"   color="#fb923c" />
+          <SummaryTile value={ok}      label="OK"        color="#4ade80" />
+          <SummaryTile value={dueSoon} label="Due Soon"  color="#d4a017" />
+          <SummaryTile value={overdue} label="Overdue"   color="#f87171" />
+          <SummaryTile value={flagged} label="Flagged"   color="#fb923c" />
         </div>
       )}
 
@@ -161,12 +165,12 @@ export default function FourteenDayCheck() {
         </p>
 
         {isLoading && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => (
               <div
                 key={i}
                 className="rounded-lg animate-pulse"
-                style={{ height: "140px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}
+                style={{ height: "200px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}
               />
             ))}
           </div>
@@ -179,13 +183,13 @@ export default function FourteenDayCheck() {
           >
             <CalendarClock className="w-8 h-8" style={{ color: "rgba(212,160,23,0.4)" }} />
             <p className="text-sm" style={{ color: "rgba(255,255,255,0.4)" }}>
-              No aircraft enrolled yet. Apply the database migration to seed CJ2 aircraft.
+              No aircraft enrolled yet.
             </p>
           </div>
         )}
 
         {!isLoading && fleet.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {fleet.map(aircraft => (
               <AircraftCheckCard
                 key={aircraft.tokenId}
@@ -194,6 +198,7 @@ export default function FourteenDayCheck() {
                 onReview={(subId) => openReview(subId, aircraft.registration)}
                 onQR={() => setQrAircraft(aircraft)}
                 onHistory={() => setHistoryAircraft(aircraft)}
+                onEmail={() => setEmailAircraft(aircraft)}
               />
             ))}
           </div>
@@ -231,6 +236,15 @@ export default function FourteenDayCheck() {
         />
       )}
 
+      {/* Send email modal */}
+      {emailAircraft && (
+        <SendCheckEmailModal
+          registration={emailAircraft.registration}
+          encodedToken={emailAircraft.encodedToken}
+          onClose={() => setEmailAircraft(null)}
+        />
+      )}
+
       {/* Add aircraft modal */}
       {showAddModal && (
         <AddAircraftModal
@@ -256,7 +270,6 @@ function ReviewPanelLoader({
   const { data: submission, isLoading: subLoading } = useCheckSubmission(submissionId)
   const [fieldSchema, setFieldSchema] = useState<import("@/entities/supabase").FieldDef[]>([])
 
-  // Load token's field_schema once we have the submission's token_id
   useEffect(() => {
     if (!submission?.token_id) return
     import("@/lib/supabase").then(({ supabase }) => {
@@ -304,12 +317,14 @@ function AircraftCheckCard({
   onReview,
   onQR,
   onHistory,
+  onEmail,
 }: {
   aircraft: AircraftCheckSummary
   pendingSubmission: PendingSubmission | null
   onReview: (submissionId: string) => void
   onQR: () => void
   onHistory: () => void
+  onEmail: () => void
 }) {
   const statusConfig = {
     ok:       { label: "OK",        color: "#4ade80", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.2)"  },
@@ -322,7 +337,7 @@ function AircraftCheckCard({
 
   return (
     <div
-      className="rounded-lg p-4 flex flex-col gap-3 relative"
+      className="rounded-lg flex flex-col relative"
       style={{
         background: "#1a1a1a",
         border: `1px solid ${hasPending ? "rgba(212,160,23,0.35)" : "rgba(255,255,255,0.08)"}`,
@@ -338,94 +353,144 @@ function AircraftCheckCard({
         </span>
       )}
 
-      {/* Registration */}
-      <div>
-        <p
-          className="text-base font-bold tracking-widest"
-          style={{ fontFamily: "var(--font-heading)", color: "#fff" }}
-        >
-          {aircraft.registration}
+      {/* Top section */}
+      <div className="p-4 flex flex-col gap-2.5">
+        {/* Registration + model */}
+        <div>
+          <Link
+            to="/app/aircraft"
+            className="flex items-center gap-1.5 group w-fit"
+            title="View in Aircraft Info"
+          >
+            <p
+              className="text-lg font-bold tracking-widest group-hover:underline"
+              style={{ fontFamily: "var(--font-heading)", color: "#fff" }}
+            >
+              {aircraft.registration}
+            </p>
+            <Plane
+              className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity"
+              style={{ color: "#d4a017" }}
+            />
+          </Link>
+          {aircraft.model && (
+            <p className="text-[11px] mt-0.5 leading-tight" style={{ color: "rgba(255,255,255,0.3)" }}>
+              {aircraft.model}
+            </p>
+          )}
+        </div>
+
+        {/* Status + days */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+            style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}
+          >
+            {s.label}
+          </span>
+          {aircraft.daysSince !== null && (
+            <span className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>
+              {aircraft.daysSince}d ago
+            </span>
+          )}
+        </div>
+
+        {/* Last check detail */}
+        <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+          {aircraft.lastSubmittedAt
+            ? formatDistanceToNow(new Date(aircraft.lastSubmittedAt), { addSuffix: true })
+            : "Never checked"}
         </p>
       </div>
 
-      {/* Status */}
-      <div className="flex items-center gap-2">
-        <span
-          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
-          style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}
-        >
-          {s.label}
-        </span>
-        {aircraft.status === "never" || aircraft.daysSince === null ? null : (
-          <span className="text-xs" style={{ color: "rgba(255,255,255,0.35)" }}>
-            {aircraft.daysSince}d ago
-          </span>
-        )}
-      </div>
+      {/* Divider */}
+      <div style={{ height: "1px", background: "rgba(255,255,255,0.06)" }} />
 
-      {/* Days detail */}
-      <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.35)" }}>
-        {aircraft.lastSubmittedAt
-          ? formatDistanceToNow(new Date(aircraft.lastSubmittedAt), { addSuffix: true })
-          : "Never checked"}
-      </p>
-
-      {/* Primary action */}
-      {pendingSubmission ? (
-        <button
-          type="button"
-          onClick={() => onReview(pendingSubmission.id)}
-          className="flex items-center justify-center gap-1 w-full text-xs font-medium rounded px-2 py-1.5 transition-all mt-auto"
-          style={{
-            background: "rgba(212,160,23,0.15)",
-            border: "1px solid rgba(212,160,23,0.3)",
-            color: "#d4a017",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.25)")}
-          onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.15)")}
-        >
-          Review <ChevronRight className="w-3 h-3" />
-        </button>
-      ) : (
-        <div className="mt-auto" />
-      )}
-
-      {/* Icon row */}
-      <div className="flex items-center gap-1 pt-1">
-        <button
-          type="button"
-          onClick={onHistory}
-          className="p-1.5 rounded transition-colors"
-          style={{ color: "rgba(255,255,255,0.3)" }}
-          title="View history"
-          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
-          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
-        >
-          <History className="w-3.5 h-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={onQR}
-          className="p-1.5 rounded transition-colors"
-          style={{ color: "rgba(255,255,255,0.3)" }}
-          title="QR code"
-          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
-          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
-        >
-          <QrCode className="w-3.5 h-3.5" />
-        </button>
-        {aircraft.traxxallUrl && (
-          <a
-            href={aircraft.traxxallUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto p-1.5 rounded transition-opacity hover:opacity-80"
-            style={{ color: "rgba(255,255,255,0.3)" }}
-            title="View in Traxxall"
+      {/* Action row */}
+      <div className="p-3 flex flex-col gap-2">
+        {/* Primary action — review if pending */}
+        {pendingSubmission && (
+          <button
+            type="button"
+            onClick={() => onReview(pendingSubmission.id)}
+            className="flex items-center justify-center gap-1.5 w-full text-xs font-medium rounded-md px-3 py-2 transition-all"
+            style={{
+              background: "rgba(212,160,23,0.15)",
+              border: "1px solid rgba(212,160,23,0.3)",
+              color: "#d4a017",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.25)")}
+            onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.15)")}
           >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+            Review Submission <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         )}
+
+        {/* Secondary actions row */}
+        <div className="flex items-center gap-2">
+          {/* History — full labeled button */}
+          <button
+            type="button"
+            onClick={onHistory}
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs transition-all"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "rgba(255,255,255,0.5)",
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.08)"
+              e.currentTarget.style.color = "rgba(255,255,255,0.8)"
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.04)"
+              e.currentTarget.style.color = "rgba(255,255,255,0.5)"
+            }}
+          >
+            <History className="w-3.5 h-3.5" />
+            History
+          </button>
+
+          {/* QR */}
+          <button
+            type="button"
+            onClick={onQR}
+            className="p-1.5 rounded-md transition-colors"
+            style={{ color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.07)" }}
+            title="QR code"
+            onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+          >
+            <QrCode className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Send email */}
+          <button
+            type="button"
+            onClick={onEmail}
+            className="p-1.5 rounded-md transition-colors"
+            style={{ color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.07)" }}
+            title="Send check link by email"
+            onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+          >
+            <Mail className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Traxxall */}
+          {aircraft.traxxallUrl && (
+            <a
+              href={aircraft.traxxallUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 rounded-md transition-opacity hover:opacity-80"
+              style={{ color: "rgba(255,255,255,0.3)", border: "1px solid rgba(255,255,255,0.07)" }}
+              title="View in Traxxall"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
+        </div>
       </div>
     </div>
   )
