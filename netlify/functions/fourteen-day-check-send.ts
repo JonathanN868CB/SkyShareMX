@@ -255,6 +255,8 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const { data: tokenRow } = await adminClient
     .from("fourteen_day_check_tokens")
     .select(`
+      id,
+      aircraft_id,
       token,
       aircraft:aircraft_id (
         aircraft_registrations (registration, is_current)
@@ -289,6 +291,17 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     console.error("Resend error", emailError);
     return jsonResponse(500, { error: "Failed to send email" });
   }
+
+  // Record the dispatch so the MC dashboard can show it was sent
+  await adminClient
+    .from("fourteen_day_check_dispatches")
+    .insert({
+      token_id:      (tokenRow as any).id,
+      aircraft_id:   (tokenRow as any).aircraft_id,
+      sent_to_name:  recipientName,
+      sent_to_email: recipientEmail,
+      sent_by:       callerProfile.id,
+    });
 
   return jsonResponse(200, { success: true });
 };

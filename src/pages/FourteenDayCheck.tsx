@@ -413,6 +413,22 @@ function AircraftCheckCard({
             ? formatDistanceToNow(new Date(aircraft.lastSubmittedAt), { addSuffix: true })
             : "Never checked"}
         </p>
+
+        {/* Last dispatch indicator */}
+        {aircraft.lastDispatch && (
+          <div
+            className="flex items-center gap-1.5 rounded px-2 py-1 mt-0.5"
+            style={{ background: "rgba(212,160,23,0.06)", border: "1px solid rgba(212,160,23,0.14)" }}
+          >
+            <Mail className="w-3 h-3 flex-shrink-0" style={{ color: "rgba(212,160,23,0.6)" }} />
+            <span className="text-[11px] truncate" style={{ color: "rgba(212,160,23,0.7)" }}>
+              Sent to {aircraft.lastDispatch.sentToName}
+            </span>
+            <span className="text-[10px] flex-shrink-0" style={{ color: "rgba(255,255,255,0.2)" }}>
+              {formatDistanceToNow(new Date(aircraft.lastDispatch.sentAt), { addSuffix: true })}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Divider */}
