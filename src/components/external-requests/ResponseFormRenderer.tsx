@@ -201,7 +201,6 @@ function FileField({ type, uploadState, disabled, fileRef, onFileSelect, onFileC
         ref={fileRef}
         type="file"
         accept={type === "photo" ? "image/*" : undefined}
-        capture={type === "photo" ? "environment" : undefined}
         onChange={handleChange}
         disabled={disabled}
         className="hidden"

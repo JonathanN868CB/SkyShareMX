@@ -5,6 +5,28 @@ import { AppErrorBoundary } from "./ErrorBoundary"
 import ComingSoon from "@/pages/ComingSoon"
 import AccessDenied from "@/pages/AccessDenied"
 
+// ─── Beet Box (MX Suite Demo) — lazy-loaded, outside Layout wrapper ──────────
+const BeetBoxApp         = lazy(() => import("@/features/beet-box/BeetBoxApp").then(m => ({ default: m.BeetBoxApp })))
+const BeetBoxRedirect    = lazy(() => import("@/features/beet-box/BeetBoxApp").then(m => ({ default: m.BeetBoxRedirect })))
+const WorkOrderDashboard = lazy(() => import("@/features/beet-box/modules/work-orders/WorkOrderDashboard"))
+const WorkOrderDetail    = lazy(() => import("@/features/beet-box/modules/work-orders/WorkOrderDetail"))
+const WorkOrderCreate    = lazy(() => import("@/features/beet-box/modules/work-orders/WorkOrderCreate"))
+const InventoryDashboard = lazy(() => import("@/features/beet-box/modules/inventory/InventoryDashboard"))
+const InventoryDetail    = lazy(() => import("@/features/beet-box/modules/inventory/InventoryDetail"))
+const PODashboard        = lazy(() => import("@/features/beet-box/modules/purchase-orders/PODashboard"))
+const PODetail           = lazy(() => import("@/features/beet-box/modules/purchase-orders/PODetail"))
+const POCreate           = lazy(() => import("@/features/beet-box/modules/purchase-orders/POCreate"))
+const ToolDashboard      = lazy(() => import("@/features/beet-box/modules/tool-calibration/ToolDashboard"))
+const ToolDetail         = lazy(() => import("@/features/beet-box/modules/tool-calibration/ToolDetail"))
+const InvoiceDashboard   = lazy(() => import("@/features/beet-box/modules/invoicing/InvoiceDashboard"))
+const InvoiceDetail      = lazy(() => import("@/features/beet-box/modules/invoicing/InvoiceDetail"))
+const LogbookDashboard   = lazy(() => import("@/features/beet-box/modules/logbook/LogbookDashboard"))
+const LogbookDetail      = lazy(() => import("@/features/beet-box/modules/logbook/LogbookDetail"))
+const SOPDashboard       = lazy(() => import("@/features/beet-box/modules/sops/SOPDashboard"))
+const SOPDetail          = lazy(() => import("@/features/beet-box/modules/sops/SOPDetail"))
+const TrainingDashboard  = lazy(() => import("@/features/beet-box/modules/training/TrainingDashboard"))
+const TrainingDetail     = lazy(() => import("@/features/beet-box/modules/training/TrainingDetail"))
+
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
 const AuthCallback = lazy(() => import("@/pages/AuthCallback"))
@@ -128,6 +150,40 @@ const routes: RouteObject[] = [
         path: "*",
         element: wrap(<NotFound />),
       },
+    ],
+  },
+  // ─── Beet Box — full-screen, outside Layout, protected ─────────────────────
+  {
+    path: "/app/beet-box",
+    element: (
+      <AppErrorBoundary>
+        <ProtectedRoute>
+          <Suspense fallback={fallback}>
+            <BeetBoxApp />
+          </Suspense>
+        </ProtectedRoute>
+      </AppErrorBoundary>
+    ),
+    children: [
+      { index: true,                              element: wrap(<BeetBoxRedirect />) },
+      { path: "work-orders",                      element: wrap(<WorkOrderDashboard />) },
+      { path: "work-orders/new",                  element: wrap(<WorkOrderCreate />) },
+      { path: "work-orders/:id",                  element: wrap(<WorkOrderDetail />) },
+      { path: "inventory",                        element: wrap(<InventoryDashboard />) },
+      { path: "inventory/:id",                    element: wrap(<InventoryDetail />) },
+      { path: "purchase-orders",                  element: wrap(<PODashboard />) },
+      { path: "purchase-orders/new",              element: wrap(<POCreate />) },
+      { path: "purchase-orders/:id",              element: wrap(<PODetail />) },
+      { path: "tool-calibration",                 element: wrap(<ToolDashboard />) },
+      { path: "tool-calibration/:id",             element: wrap(<ToolDetail />) },
+      { path: "invoicing",                        element: wrap(<InvoiceDashboard />) },
+      { path: "invoicing/:id",                    element: wrap(<InvoiceDetail />) },
+      { path: "logbook",                          element: wrap(<LogbookDashboard />) },
+      { path: "logbook/:id",                      element: wrap(<LogbookDetail />) },
+      { path: "sop-library",                      element: wrap(<SOPDashboard />) },
+      { path: "sop-library/:id",                  element: wrap(<SOPDetail />) },
+      { path: "training",                         element: wrap(<TrainingDashboard />) },
+      { path: "training/:id",                     element: wrap(<TrainingDetail />) },
     ],
   },
   {

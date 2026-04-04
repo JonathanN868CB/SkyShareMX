@@ -6,17 +6,20 @@ import { Link } from "react-router-dom"
 import { formatDistanceToNow } from "date-fns"
 import {
   CalendarClock, ExternalLink, Clock, AlertTriangle,
-  ChevronRight, RefreshCw, QrCode, History, Plus, Mail,
-  Plane,
+  ChevronRight, ChevronDown, RefreshCw, QrCode, History, Plus, Mail,
+  Plane, X, LayoutGrid, LayoutList,
 } from "lucide-react"
 import {
   useFleetCheckSummaries,
   usePendingSubmissions,
   useCheckSubmission,
   useTokenFieldSchema,
+  useInvalidateChecks,
+  deleteDispatch,
   type AircraftCheckSummary,
   type PendingSubmission,
 } from "@/hooks/useFourteenDayChecks"
+import { FLEET } from "@/pages/aircraft/fleetData"
 import { useAuth } from "@/features/auth"
 import { SubmissionReviewPanel } from "@/features/fourteen-day-check/SubmissionReviewPanel"
 import { AircraftCheckQR } from "@/features/fourteen-day-check/AircraftCheckQR"
@@ -28,7 +31,14 @@ export default function FourteenDayCheck() {
   const { data: fleet = [], isLoading: fleetLoading, refetch } = useFleetCheckSummaries()
   const { data: pending = [], isLoading: pendingLoading } = usePendingSubmissions()
   const { profile } = useAuth()
-  const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
+  const isSuperAdmin = profile?.role === "Super Admin"
+  const isManagerOrAbove = profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager"
+  const invalidate = useInvalidateChecks()
+
+  async function handleClearDispatch(dispatchId: string) {
+    await deleteDispatch(dispatchId)
+    invalidate()
+  }
 
   const [reviewSubmissionId, setReviewSubmissionId] = useState<string | null>(null)
   const [reviewRegistration, setReviewRegistration] = useState("")
@@ -36,6 +46,23 @@ export default function FourteenDayCheck() {
   const [historyAircraft, setHistoryAircraft] = useState<AircraftCheckSummary | null>(null)
   const [emailAircraft, setEmailAircraft]   = useState<AircraftCheckSummary | null>(null)
   const [showAddModal, setShowAddModal]     = useState(false)
+
+  const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
+    return (localStorage.getItem("fdcheck_view") as "grid" | "list") ?? "grid"
+  })
+  function setView(mode: "grid" | "list") {
+    setViewMode(mode)
+    localStorage.setItem("fdcheck_view", mode)
+  }
+
+  const [collapsedMfrs, setCollapsedMfrs] = useState<Set<string>>(new Set())
+  function toggleMfr(name: string) {
+    setCollapsedMfrs(prev => {
+      const next = new Set(prev)
+      next.has(name) ? next.delete(name) : next.add(name)
+      return next
+    })
+  }
 
   const ok      = fleet.filter(a => a.status === "ok").length
   const dueSoon = fleet.filter(a => a.status === "due_soon").length
@@ -72,7 +99,7 @@ export default function FourteenDayCheck() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {isAdmin && (
+          {isSuperAdmin && (
             <button
               type="button"
               onClick={() => setShowAddModal(true)}
@@ -167,12 +194,46 @@ export default function FourteenDayCheck() {
 
       {/* Fleet grid */}
       <section>
-        <p
-          className="text-[10px] font-bold tracking-[0.2em] uppercase mb-3"
-          style={{ fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.3)" }}
-        >
-          Fleet Status
-        </p>
+        <div className="flex items-center justify-between mb-3">
+          <p
+            className="text-[10px] font-bold tracking-[0.2em] uppercase"
+            style={{ fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.3)" }}
+          >
+            Fleet Status
+          </p>
+          {!isLoading && fleet.length > 0 && (
+            <div
+              className="flex items-center overflow-hidden rounded-lg"
+              style={{ border: "1px solid rgba(255,255,255,0.12)" }}
+            >
+              <button
+                type="button"
+                onClick={() => setView("grid")}
+                title="Grid view"
+                className="px-2.5 py-2 transition-colors"
+                style={{
+                  background: viewMode === "grid" ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.04)",
+                  color:      viewMode === "grid" ? "#d4a017"               : "rgba(255,255,255,0.35)",
+                  borderRight: "1px solid rgba(255,255,255,0.12)",
+                }}
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                title="List view"
+                className="px-2.5 py-2 transition-colors"
+                style={{
+                  background: viewMode === "list" ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.04)",
+                  color:      viewMode === "list" ? "#d4a017"               : "rgba(255,255,255,0.35)",
+                }}
+              >
+                <LayoutList className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
 
         {isLoading && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -198,20 +259,83 @@ export default function FourteenDayCheck() {
           </div>
         )}
 
-        {!isLoading && fleet.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {fleet.map(aircraft => (
-              <AircraftCheckCard
-                key={aircraft.tokenId}
-                aircraft={aircraft}
-                pendingSubmission={pending.find(s => s.aircraft_id === aircraft.aircraftId) ?? null}
-                onQR={() => setQrAircraft(aircraft)}
-                onHistory={() => setHistoryAircraft(aircraft)}
-                onEmail={() => setEmailAircraft(aircraft)}
-              />
-            ))}
-          </div>
-        )}
+        {!isLoading && fleet.length > 0 && (() => {
+          const grouped = groupFleet(fleet)
+          const sharedProps = {
+            pending,
+            canDispatch: isManagerOrAbove,
+            onQR: setQrAircraft,
+            onHistory: setHistoryAircraft,
+            onEmail: setEmailAircraft,
+            onClearDispatch: handleClearDispatch,
+          }
+          return viewMode === "grid" ? (
+            <div className="space-y-6">
+              {grouped.map(mfr => {
+                const collapsed = collapsedMfrs.has(mfr.manufacturer)
+                const stats = getMfrStats(mfr.families)
+                return (
+                  <div key={mfr.manufacturer}>
+                    <button
+                      type="button"
+                      onClick={() => toggleMfr(mfr.manufacturer)}
+                      className="w-full flex items-center gap-3 group mb-4"
+                      style={{
+                        borderBottom: "1px solid rgba(212,160,23,0.12)",
+                        paddingBottom: "6px",
+                      }}
+                    >
+                      <span
+                        className="text-[10px] font-bold tracking-[0.2em] uppercase"
+                        style={{ fontFamily: "var(--font-heading)", color: "rgba(212,160,23,0.55)" }}
+                      >
+                        {mfr.manufacturer}
+                      </span>
+                      <MfrStats stats={stats} dim={!collapsed} />
+                      <ChevronDown
+                        className="w-3.5 h-3.5 transition-transform duration-200 flex-shrink-0 ml-auto"
+                        style={{
+                          color: "rgba(212,160,23,0.4)",
+                          transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                        }}
+                      />
+                    </button>
+                    {!collapsed && (
+                      <div className="space-y-5">
+                        {mfr.families.map(fam => (
+                          <div key={fam.family}>
+                            <p
+                              className="text-[9px] font-bold tracking-[0.18em] uppercase mb-3"
+                              style={{ fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.22)" }}
+                            >
+                              {fam.family}
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {fam.aircraft.map(aircraft => (
+                                <AircraftCheckCard
+                                  key={aircraft.tokenId}
+                                  aircraft={aircraft}
+                                  pendingSubmission={pending.find(s => s.aircraft_id === aircraft.aircraftId) ?? null}
+                                  canDispatch={isManagerOrAbove}
+                                  onQR={() => setQrAircraft(aircraft)}
+                                  onHistory={() => setHistoryAircraft(aircraft)}
+                                  onEmail={() => setEmailAircraft(aircraft)}
+                                  onClearDispatch={handleClearDispatch}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <FleetListView grouped={grouped} collapsedMfrs={collapsedMfrs} toggleMfr={toggleMfr} {...sharedProps} />
+          )
+        })()}
       </section>
 
       {/* Review panel */}
@@ -303,20 +427,423 @@ function ReviewPanelLoader({
   )
 }
 
+// ─── Fleet grouping helper ────────────────────────────────────────────────────
+
+// ─── Manufacturer header stats strip ─────────────────────────────────────────
+// Shown inline in collapsed (and expanded) manufacturer headers.
+
+type MfrStatsData = ReturnType<typeof getMfrStats>
+
+function MfrStats({ stats, dim }: { stats: MfrStatsData; dim: boolean }) {
+  const opacity = dim ? 0.45 : 1
+  return (
+    <div className="flex items-center gap-2" style={{ opacity, transition: "opacity 0.15s ease" }}>
+      {/* Aircraft count */}
+      <span
+        className="text-[9px] tabular-nums"
+        style={{ color: "rgba(255,255,255,0.35)", fontVariantNumeric: "tabular-nums" }}
+      >
+        {stats.total} ac
+      </span>
+      {/* Separator */}
+      <span style={{ width: "1px", height: "10px", background: "rgba(255,255,255,0.1)", display: "inline-block" }} />
+      {/* Status dots */}
+      {stats.ok > 0 && (
+        <span className="flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "#4ade80" }} />
+          <span className="text-[9px] tabular-nums" style={{ color: "#4ade80" }}>{stats.ok}</span>
+        </span>
+      )}
+      {stats.dueSoon > 0 && (
+        <span className="flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "#d4a017" }} />
+          <span className="text-[9px] tabular-nums" style={{ color: "#d4a017" }}>{stats.dueSoon}</span>
+        </span>
+      )}
+      {stats.overdue > 0 && (
+        <span className="flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: "#f87171" }} />
+          <span className="text-[9px] tabular-nums" style={{ color: "#f87171" }}>{stats.overdue}</span>
+        </span>
+      )}
+      {/* Pending badge */}
+      {stats.pending > 0 && (
+        <span
+          className="text-[8px] font-bold px-1.5 py-0.5 rounded"
+          style={{ background: "rgba(212,160,23,0.18)", color: "#d4a017" }}
+        >
+          {stats.pending} new
+        </span>
+      )}
+      {/* Flagged badge */}
+      {stats.flagged > 0 && (
+        <span
+          className="text-[8px] font-bold px-1.5 py-0.5 rounded"
+          style={{ background: "rgba(251,146,60,0.15)", color: "#fb923c" }}
+        >
+          {stats.flagged} flagged
+        </span>
+      )}
+    </div>
+  )
+}
+
+function getMfrStats(families: Array<{ aircraft: AircraftCheckSummary[] }>) {
+  const all = families.flatMap(f => f.aircraft)
+  return {
+    total:   all.length,
+    ok:      all.filter(a => a.status === "ok").length,
+    dueSoon: all.filter(a => a.status === "due_soon").length,
+    overdue: all.filter(a => a.status === "overdue" || a.status === "never").length,
+    pending: all.filter(a => a.hasPendingSubmission).length,
+    flagged: all.filter(a => a.hasFlaggedSubmission).length,
+  }
+}
+
+function groupFleet(fleet: AircraftCheckSummary[]) {
+  const byReg = new Map(fleet.map(a => [a.registration, a]))
+  return FLEET
+    .map(mfr => ({
+      manufacturer: mfr.manufacturer,
+      families: mfr.families
+        .map(fam => ({
+          family: fam.family,
+          aircraft: fam.aircraft.map(ac => byReg.get(ac.tailNumber)).filter(Boolean) as AircraftCheckSummary[],
+        }))
+        .filter(fam => fam.aircraft.length > 0),
+    }))
+    .filter(mfr => mfr.families.length > 0)
+}
+
+// ─── Fleet list view ──────────────────────────────────────────────────────────
+
+type FleetViewProps = {
+  pending: PendingSubmission[]
+  canDispatch: boolean
+  onQR: (a: AircraftCheckSummary) => void
+  onHistory: (a: AircraftCheckSummary) => void
+  onEmail: (a: AircraftCheckSummary) => void
+  onClearDispatch: (id: string) => void
+}
+
+function FleetListView({
+  grouped,
+  collapsedMfrs,
+  toggleMfr,
+  pending,
+  canDispatch,
+  onQR,
+  onHistory,
+  onEmail,
+  onClearDispatch,
+}: { grouped: ReturnType<typeof groupFleet>; collapsedMfrs: Set<string>; toggleMfr: (name: string) => void } & FleetViewProps) {
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.08)" }}
+    >
+      {grouped.map((mfr, mfrIdx) => {
+        const collapsed = collapsedMfrs.has(mfr.manufacturer)
+        const stats = getMfrStats(mfr.families)
+        return (
+          <div key={mfr.manufacturer}>
+            {/* Manufacturer header row — clickable */}
+            <button
+              type="button"
+              onClick={() => toggleMfr(mfr.manufacturer)}
+              className="w-full flex items-center gap-3 px-4 py-2.5 group transition-colors"
+              style={{
+                background: collapsed ? "rgba(212,160,23,0.03)" : "rgba(212,160,23,0.05)",
+                borderTop: mfrIdx > 0 ? "1px solid rgba(212,160,23,0.15)" : undefined,
+                borderBottom: collapsed ? undefined : "1px solid rgba(212,160,23,0.12)",
+              }}
+            >
+              <p
+                className="text-[9px] font-bold tracking-[0.22em] uppercase"
+                style={{ fontFamily: "var(--font-heading)", color: "rgba(212,160,23,0.6)" }}
+              >
+                {mfr.manufacturer}
+              </p>
+              <MfrStats stats={stats} dim={!collapsed} />
+              <ChevronDown
+                className="w-3.5 h-3.5 transition-transform duration-200 flex-shrink-0 ml-auto"
+                style={{
+                  color: "rgba(212,160,23,0.4)",
+                  transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                }}
+              />
+            </button>
+
+            {!collapsed && mfr.families.map((fam, famIdx) => (
+              <div key={fam.family}>
+                {/* Family row */}
+                <div
+                  className="px-4 py-1.5"
+                  style={{
+                    borderTop: famIdx > 0 ? "1px solid rgba(255,255,255,0.05)" : undefined,
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    background: "rgba(255,255,255,0.015)",
+                  }}
+                >
+                  <p
+                    className="text-[8px] font-bold tracking-[0.2em] uppercase"
+                    style={{ fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.2)" }}
+                  >
+                    {fam.family}
+                  </p>
+                </div>
+
+                {/* Aircraft rows */}
+                {fam.aircraft.map((aircraft, idx) => (
+                  <div
+                    key={aircraft.tokenId}
+                    style={{ borderTop: idx === 0 ? undefined : "1px solid rgba(255,255,255,0.04)" }}
+                  >
+                    <AircraftCheckRow
+                      aircraft={aircraft}
+                      pendingSubmission={pending.find(s => s.aircraft_id === aircraft.aircraftId) ?? null}
+                      canDispatch={canDispatch}
+                      onQR={() => onQR(aircraft)}
+                      onHistory={() => onHistory(aircraft)}
+                      onEmail={() => onEmail(aircraft)}
+                      onClearDispatch={onClearDispatch}
+                    />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Aircraft check row (list view) ──────────────────────────────────────────
+
+function AircraftCheckRow({
+  aircraft,
+  pendingSubmission,
+  canDispatch,
+  onQR,
+  onHistory,
+  onEmail,
+  onClearDispatch,
+}: {
+  aircraft: AircraftCheckSummary
+  pendingSubmission: PendingSubmission | null
+  canDispatch: boolean
+  onQR: () => void
+  onHistory: () => void
+  onEmail: () => void
+  onClearDispatch: (dispatchId: string) => void
+}) {
+  const statusConfig = {
+    ok:       { label: "OK",        color: "#4ade80", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.2)"  },
+    due_soon: { label: "Due Soon",  color: "#d4a017", bg: "rgba(212,160,23,0.08)", border: "rgba(212,160,23,0.25)" },
+    overdue:  { label: "Overdue",   color: "#f87171", bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.2)"  },
+    never:    { label: "No Checks", color: "#f87171", bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.2)"  },
+  }
+  const s = statusConfig[aircraft.status]
+  const hasPending = !!pendingSubmission
+
+  return (
+    <div
+      className="flex items-center min-h-[54px] gap-3 pr-3 transition-colors"
+      style={{
+        borderLeft: `3px solid ${s.color}`,
+        paddingLeft: "14px",
+        background: hasPending ? "rgba(212,160,23,0.025)" : "transparent",
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.025)")}
+      onMouseLeave={e => (e.currentTarget.style.background = hasPending ? "rgba(212,160,23,0.025)" : "transparent")}
+    >
+      {/* Registration + model */}
+      <div className="w-28 flex-shrink-0">
+        <Link
+          to="/app/aircraft"
+          className="group flex items-center gap-1 w-fit"
+          title="View in Aircraft Info"
+        >
+          <p
+            className="text-sm font-bold tracking-widest leading-none group-hover:underline"
+            style={{ fontFamily: "var(--font-heading)", color: "#fff" }}
+          >
+            {aircraft.registration}
+          </p>
+          <Plane
+            className="w-2.5 h-2.5 opacity-0 group-hover:opacity-50 transition-opacity"
+            style={{ color: "#d4a017" }}
+          />
+        </Link>
+        {aircraft.model && (
+          <p className="text-[10px] mt-0.5 leading-tight truncate" style={{ color: "rgba(255,255,255,0.25)" }}>
+            {aircraft.model}
+          </p>
+        )}
+      </div>
+
+      {/* Status badge + days */}
+      <div className="flex items-center gap-2 w-32 flex-shrink-0">
+        <span
+          className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+          style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}
+        >
+          {s.label}
+        </span>
+        {aircraft.daysSince !== null && (
+          <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.3)" }}>
+            {aircraft.daysSince}d
+          </span>
+        )}
+      </div>
+
+      {/* Last check */}
+      <div className="flex-1 min-w-0 hidden sm:block">
+        <p className="text-[11px] truncate" style={{ color: "rgba(255,255,255,0.25)" }}>
+          {aircraft.lastSubmittedAt
+            ? formatDistanceToNow(new Date(aircraft.lastSubmittedAt), { addSuffix: true })
+            : "Never checked"}
+        </p>
+      </div>
+
+      {/* Right: inline badges + action icons */}
+      <div className="flex items-center gap-1 flex-shrink-0">
+
+        {/* New badge */}
+        {hasPending && (
+          <span
+            className="text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded mr-1"
+            style={{ background: "rgba(212,160,23,0.2)", color: "#d4a017" }}
+          >
+            New
+          </span>
+        )}
+
+        {/* Dispatch badge */}
+        {aircraft.lastDispatch && (
+          <div
+            className="group flex items-center gap-1 rounded px-1.5 py-0.5 mr-1"
+            style={{ background: "rgba(212,160,23,0.1)", border: "1px solid rgba(212,160,23,0.25)" }}
+          >
+            <Mail className="w-2.5 h-2.5 flex-shrink-0" style={{ color: "rgba(212,160,23,0.7)" }} />
+            <span
+              className="text-[9px] font-medium max-w-[56px] truncate"
+              style={{ color: "rgba(212,160,23,0.85)" }}
+            >
+              {aircraft.lastDispatch.sentToName.split(" ")[0]}
+            </span>
+            {canDispatch && (
+              <button
+                type="button"
+                onClick={() => onClearDispatch(aircraft.lastDispatch!.id)}
+                title="Clear dispatch notification"
+                className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ color: "rgba(212,160,23,0.5)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "rgba(212,160,23,0.9)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "rgba(212,160,23,0.5)")}
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Separator */}
+        <div style={{ width: "1px", height: "18px", background: "rgba(255,255,255,0.07)", margin: "0 3px" }} />
+
+        {/* History */}
+        <button
+          type="button"
+          onClick={onHistory}
+          title="History"
+          className="p-2 rounded transition-colors"
+          style={{ color: "rgba(255,255,255,0.3)" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+        >
+          <History className="w-4 h-4" />
+        </button>
+
+        {/* QR */}
+        <button
+          type="button"
+          onClick={onQR}
+          title="QR code"
+          className="p-2 rounded transition-colors"
+          style={{ color: "rgba(255,255,255,0.3)" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+        >
+          <QrCode className="w-4 h-4" />
+        </button>
+
+        {/* Traxxall */}
+        {aircraft.traxxallUrl && (
+          <a
+            href={aircraft.traxxallUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View in Traxxall"
+            className="p-2 rounded transition-opacity hover:opacity-80"
+            style={{ color: "rgba(255,255,255,0.3)" }}
+          >
+            <ExternalLink className="w-4 h-4" />
+          </a>
+        )}
+
+        {/* Dispatch — compact icon button */}
+        {canDispatch && (
+          <>
+            <div style={{ width: "1px", height: "20px", background: "rgba(255,255,255,0.07)", margin: "0 3px" }} />
+            <button
+              type="button"
+              onClick={onEmail}
+              title="Dispatch check link"
+              className="p-2 rounded transition-all"
+              style={{
+                color: "rgba(212,160,23,0.55)",
+                border: "1px solid rgba(212,160,23,0.2)",
+                background: "rgba(212,160,23,0.04)",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.color = "#d4a017"
+                e.currentTarget.style.background = "rgba(212,160,23,0.12)"
+                e.currentTarget.style.borderColor = "rgba(212,160,23,0.4)"
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.color = "rgba(212,160,23,0.55)"
+                e.currentTarget.style.background = "rgba(212,160,23,0.04)"
+                e.currentTarget.style.borderColor = "rgba(212,160,23,0.2)"
+              }}
+            >
+              <Mail className="w-4 h-4" />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Aircraft check card ──────────────────────────────────────────────────────
 
 function AircraftCheckCard({
   aircraft,
   pendingSubmission,
+  canDispatch,
   onQR,
   onHistory,
   onEmail,
+  onClearDispatch,
 }: {
   aircraft: AircraftCheckSummary
   pendingSubmission: PendingSubmission | null
+  canDispatch: boolean
   onQR: () => void
   onHistory: () => void
   onEmail: () => void
+  onClearDispatch: (dispatchId: string) => void
 }) {
   const statusConfig = {
     ok:       { label: "OK",        color: "#4ade80", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.2)"  },
@@ -335,14 +862,48 @@ function AircraftCheckCard({
         border: `1px solid ${hasPending ? "rgba(212,160,23,0.35)" : "rgba(255,255,255,0.08)"}`,
       }}
     >
-      {/* Pending badge */}
-      {hasPending && (
-        <span
-          className="absolute top-3 right-3 text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded"
-          style={{ background: "rgba(212,160,23,0.2)", color: "#d4a017" }}
-        >
-          New
-        </span>
+      {/* Corner badges — New + dispatch stacked top-right */}
+      {(hasPending || aircraft.lastDispatch) && (
+        <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5 z-10">
+          {hasPending && (
+            <span
+              className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded"
+              style={{ background: "rgba(212,160,23,0.2)", color: "#d4a017" }}
+            >
+              New
+            </span>
+          )}
+          {aircraft.lastDispatch && (
+            <div
+              className="group flex items-center gap-1 rounded px-1.5 py-0.5"
+              style={{
+                background: "rgba(212,160,23,0.1)",
+                border: "1px solid rgba(212,160,23,0.25)",
+              }}
+            >
+              <Mail className="w-2.5 h-2.5 flex-shrink-0" style={{ color: "rgba(212,160,23,0.7)" }} />
+              <span
+                className="text-[9px] font-medium max-w-[72px] truncate"
+                style={{ color: "rgba(212,160,23,0.85)" }}
+              >
+                {aircraft.lastDispatch.sentToName.split(" ")[0]}
+              </span>
+              {canDispatch && (
+                <button
+                  type="button"
+                  onClick={() => onClearDispatch(aircraft.lastDispatch!.id)}
+                  title="Clear dispatch notification"
+                  className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ color: "rgba(212,160,23,0.5)", marginLeft: "1px" }}
+                  onMouseEnter={e => (e.currentTarget.style.color = "rgba(212,160,23,0.9)")}
+                  onMouseLeave={e => (e.currentTarget.style.color = "rgba(212,160,23,0.5)")}
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Top section */}
@@ -394,21 +955,6 @@ function AircraftCheckCard({
             : "Never checked"}
         </p>
 
-        {/* Last dispatch indicator */}
-        {aircraft.lastDispatch && (
-          <div
-            className="flex items-center gap-1.5 rounded px-2 py-1 mt-0.5"
-            style={{ background: "rgba(212,160,23,0.06)", border: "1px solid rgba(212,160,23,0.14)" }}
-          >
-            <Mail className="w-3 h-3 flex-shrink-0" style={{ color: "rgba(212,160,23,0.6)" }} />
-            <span className="text-[11px] truncate" style={{ color: "rgba(212,160,23,0.7)" }}>
-              Sent to {aircraft.lastDispatch.sentToName}
-            </span>
-            <span className="text-[10px] flex-shrink-0" style={{ color: "rgba(255,255,255,0.2)" }}>
-              {formatDistanceToNow(new Date(aircraft.lastDispatch.sentAt), { addSuffix: true })}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Divider */}
@@ -469,8 +1015,8 @@ function AircraftCheckCard({
           )}
         </div>
 
-        {/* Dispatch button */}
-        <DispatchButton onClick={onEmail} />
+        {/* Dispatch button — Manager+ only */}
+        {canDispatch && <DispatchButton onClick={onEmail} />}
       </div>
     </div>
   )

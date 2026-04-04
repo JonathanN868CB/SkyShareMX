@@ -109,6 +109,7 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
     label: "Operations",
     items: [
       "Discrepancy Intelligence",
+      "Beet Box",
       "My Journey",
       "Training",
       "Parts",
