@@ -53,6 +53,7 @@ const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/Exter
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
 const FourteenDayCheckResponse = lazy(() => import("@/pages/fourteen-day-check/FourteenDayCheckResponse"))
 const FourteenDayCheck = lazy(() => import("@/pages/FourteenDayCheck"))
+const RecordsVault = lazy(() => import("@/pages/RecordsVault"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
 const fallback = (
@@ -122,6 +123,7 @@ const routes: RouteObject[] = [
       { path: "compliance",   element: wrap(<Compliance />) },
       { path: "safety",       element: wrap(<SafetyHouse />) },
       { path: "discrepancy-intelligence", element: wrap(<DiscrepancyIntelligence />) },
+      { path: "records-vault",            element: wrap(<RecordsVault />) },
       { path: "parts",        element: wrap(<Parts />) },
       { path: "parts/new",    element: wrap(<PartsNew />) },
       { path: "parts/:id",    element: wrap(<PartsDetail />) },
