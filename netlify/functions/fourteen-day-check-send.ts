@@ -271,7 +271,9 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   const regs = (tokenRow as any).aircraft?.aircraft_registrations ?? [];
   const registration = regs.find((r: any) => r.is_current)?.registration ?? "UNKNOWN";
-  const checkUrl = `${siteUrl}/check/${encodedToken}`;
+  // Embed recipient name so the form can pre-populate it when opened via email link.
+  // QR code links are plain /check/{token} — no ?for param — so name stays blank there.
+  const checkUrl = `${siteUrl}/check/${encodedToken}?for=${encodeURIComponent(recipientName)}`;
   const senderName = callerProfile.full_name || callerProfile.email || "SkyShare MX";
 
   const { html, text } = buildCheckEmail({ recipientName, senderName, registration, checkUrl, siteUrl });
