@@ -81,6 +81,7 @@ const sidebarSections: SidebarSection[] = [
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
       { name: "Parts",                  path: "/app/parts",                    icon: Package,       section: "Parts"                     },
       { name: "External Requests",        path: "/app/external-requests",        icon: Send,          section: "External Requests"         },
+      { name: "14-Day Check",           path: "/app/14-day-check",             icon: CalendarClock, section: "14-Day Check"              },
       { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
       { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],
@@ -90,7 +91,6 @@ const sidebarSections: SidebarSection[] = [
         icon: HardHat,
         items: [
           { name: "Aircraft Conformity",  path: "/app/conformity",   icon: CheckSquare,   section: "Aircraft Conformity"  },
-          { name: "14-Day Check",         path: "/app/14-day-check", icon: CalendarClock, section: "14-Day Check"         },
           { name: "Maintenance Planning", path: "/app/planning",     icon: ClipboardList, section: "Maintenance Planning" },
           { name: "Ten or More",          path: "/app/ten-or-more",  icon: ShieldCheck,   section: "Ten or More"          },
           { name: "Terminal-OGD",         path: "/app/terminal-ogd", icon: Building,      section: "Terminal-OGD"         },
