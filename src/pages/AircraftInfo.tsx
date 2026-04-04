@@ -28,7 +28,7 @@ function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftB
           to   { transform: scaleX(1); }
         }
         @keyframes ac-port {
-          0%, 100% { opacity: 1;   box-shadow: 0 0 5px 1px rgba(193,2,48,0.9); }
+          0%, 100% { opacity: 1;   box-shadow: 0 0 6px 2px rgba(240,0,55,0.95); }
           45%, 55% { opacity: 0.2; box-shadow: none; }
         }
         @keyframes ac-starboard {
@@ -79,7 +79,7 @@ function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftB
             title="Port"
             style={{
               width: "5px", height: "5px", borderRadius: "50%",
-              background: "#c10230",
+              background: "#f2003a",
               opacity: hovered ? 1 : 0,
               animation: hovered ? "ac-port 1.4s ease-in-out infinite" : "none",
               transition: "opacity 0.3s ease",
