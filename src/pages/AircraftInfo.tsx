@@ -7,127 +7,174 @@ import { useFleet } from "./aircraft/useFleet"
 // ─── Aircraft Card ─────────────────────────────────────────────────────────────
 function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftBase) => void }) {
   const [hovered, setHovered] = useState(false)
+  const [glintKey, setGlintKey] = useState(0) // increment to re-trigger glint
+
+  function handleEnter() {
+    setHovered(true)
+    setGlintKey(k => k + 1)
+  }
 
   return (
     <>
-      {/* Keyframes — injected once per page, React dedupes */}
       <style>{`
-        @keyframes ac-holo {
-          0%   { background-position: 0% 50%;   }
-          50%  { background-position: 100% 50%; }
-          100% { background-position: 0% 50%;   }
+        @keyframes ac-glint {
+          0%   { transform: translateX(-180%) skewX(-18deg); opacity: 0;    }
+          12%  {                                              opacity: 1;    }
+          88%  {                                              opacity: 0.85; }
+          100% { transform: translateX(280%)  skewX(-18deg); opacity: 0;    }
         }
-        @keyframes ac-chroma {
-          0%, 100% { text-shadow: -1.5px 0 rgba(193,2,48,0.55), 1.5px 0 rgba(0,180,255,0.45); }
-          50%       { text-shadow:  1.5px 0 rgba(193,2,48,0.55), -1.5px 0 rgba(0,180,255,0.45); }
+        @keyframes ac-runway {
+          from { transform: scaleX(0); }
+          to   { transform: scaleX(1); }
         }
-        @keyframes ac-scan {
-          0%   { transform: translateY(-100%); opacity: 0;    }
-          10%  {                               opacity: 0.55;  }
-          90%  {                               opacity: 0.55;  }
-          100% { transform: translateY(200%); opacity: 0;    }
+        @keyframes ac-port {
+          0%, 100% { opacity: 1;   box-shadow: 0 0 5px 1px rgba(193,2,48,0.9); }
+          45%, 55% { opacity: 0.2; box-shadow: none; }
+        }
+        @keyframes ac-starboard {
+          0%, 40%  { opacity: 0.2; box-shadow: none; }
+          50%, 100%{ opacity: 1;   box-shadow: 0 0 5px 1px rgba(0,210,90,0.9); }
         }
       `}</style>
 
       <div
-        className="card-elevated rounded-md px-4 py-3 flex flex-col gap-1"
+        className="card-elevated rounded-md flex flex-col"
         style={{
           cursor: "pointer",
           position: "relative",
           overflow: "hidden",
-          transition: "transform 0.18s ease, box-shadow 0.2s ease, border-color 0.2s ease",
-          transform: hovered ? "translateY(-2px) scale(1.015)" : "translateY(0) scale(1)",
+          padding: "10px 14px 12px",
+          gap: 0,
+          border: `1px solid ${hovered ? "rgba(212,160,23,0.55)" : "rgba(255,255,255,0.08)"}`,
+          transition: "transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease",
+          transform: hovered ? "translateY(-5px)" : "translateY(0)",
           boxShadow: hovered
-            ? "0 8px 28px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,160,23,0.35), 0 0 18px rgba(193,2,48,0.12)"
-            : "0 2px 8px rgba(0,0,0,0.3)",
+            ? "0 16px 40px rgba(0,0,0,0.55), 0 4px 12px rgba(212,160,23,0.12), 0 0 0 1px rgba(212,160,23,0.12)"
+            : "0 2px 6px rgba(0,0,0,0.25)",
         }}
-        onMouseEnter={() => setHovered(true)}
+        onMouseEnter={handleEnter}
         onMouseLeave={() => setHovered(false)}
         onClick={() => onOpen(ac)}
       >
-        {/* Holographic shimmer layer */}
-        {hovered && (
-          <span
-            style={{
-              position: "absolute",
-              inset: 0,
-              background: "linear-gradient(125deg, transparent 20%, rgba(193,2,48,0.07) 30%, rgba(212,160,23,0.09) 42%, rgba(0,180,255,0.07) 54%, rgba(1,46,69,0.06) 64%, transparent 74%)",
-              backgroundSize: "300% 300%",
-              animation: "ac-holo 2s ease infinite",
-              pointerEvents: "none",
-              borderRadius: "inherit",
-            }}
-          />
-        )}
 
-        {/* Scan line */}
-        {hovered && (
-          <span
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              height: "1px",
-              background: "linear-gradient(90deg, transparent, rgba(212,160,23,0.5), transparent)",
-              animation: "ac-scan 1.6s ease-in-out infinite",
-              pointerEvents: "none",
-            }}
-          />
-        )}
-
-        {/* Tail number with chromatic aberration on hover */}
-        <div
+        {/* ── Single-shot aluminum glint — fires once on each hover entry ── */}
+        <span
+          key={glintKey}
           style={{
-            fontFamily: "var(--font-heading)",
-            fontSize: "1.05rem",
-            color: "var(--skyshare-gold)",
-            letterSpacing: "0.12em",
-            fontWeight: 600,
-            position: "relative",
-            zIndex: 1,
-            animation: hovered ? "ac-chroma 1.4s ease-in-out infinite" : "none",
-            transition: "letter-spacing 0.2s ease",
+            position: "absolute",
+            top: 0, bottom: 0,
+            left: 0,
+            width: "35%",
+            background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.07), rgba(255,255,255,0.11), rgba(255,255,255,0.07), transparent)",
+            animation: hovered ? "ac-glint 0.5s ease-out forwards" : "none",
+            pointerEvents: "none",
+            zIndex: 2,
           }}
-        >
-          {ac.tailNumber}
+        />
+
+        {/* ── Navigation lights — port (red) left, starboard (green) right ── */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+          {/* Port — red, left wing */}
+          <span
+            title="Port"
+            style={{
+              width: "5px", height: "5px", borderRadius: "50%",
+              background: "#c10230",
+              opacity: hovered ? 1 : 0,
+              animation: hovered ? "ac-port 1.4s ease-in-out infinite" : "none",
+              transition: "opacity 0.3s ease",
+              flexShrink: 0,
+            }}
+          />
+
+          {/* Tail number — expands confidently, no distortion */}
+          <div
+            style={{
+              fontFamily: "var(--font-heading)",
+              fontSize: "1.05rem",
+              fontWeight: 600,
+              color: hovered ? "#f2c040" : "var(--skyshare-gold)",
+              letterSpacing: hovered ? "0.2em" : "0.12em",
+              transition: "letter-spacing 0.3s ease, color 0.2s ease",
+              position: "relative",
+              zIndex: 1,
+              flex: 1,
+              textAlign: "center",
+            }}
+          >
+            {ac.tailNumber}
+          </div>
+
+          {/* Starboard — green, right wing */}
+          <span
+            title="Starboard"
+            style={{
+              width: "5px", height: "5px", borderRadius: "50%",
+              background: "#00d25a",
+              opacity: hovered ? 1 : 0,
+              animation: hovered ? "ac-starboard 1.4s ease-in-out infinite" : "none",
+              transition: "opacity 0.3s ease",
+              flexShrink: 0,
+            }}
+          />
         </div>
 
+        {/* S/N */}
         <div
           className="text-xs"
           style={{
-            color: hovered ? "rgba(255,255,255,0.55)" : "hsl(var(--muted-foreground))",
+            color: hovered ? "rgba(255,255,255,0.6)" : "hsl(var(--muted-foreground))",
             fontFamily: "'Courier Prime','Courier New',monospace",
             position: "relative",
             zIndex: 1,
             transition: "color 0.2s ease",
+            textAlign: "center",
           }}
         >
-          S/N &nbsp;{ac.serialNumber}
+          S/N&nbsp;{ac.serialNumber}
         </div>
 
+        {/* Divider */}
         <div
           style={{
             height: "0.5px",
-            background: hovered ? "rgba(212,160,23,0.5)" : "rgba(212,160,23,0.2)",
-            margin: "2px 0",
-            transition: "background 0.2s ease",
+            background: hovered ? "rgba(212,160,23,0.6)" : "rgba(212,160,23,0.2)",
+            margin: "5px 0",
+            transition: "background 0.25s ease",
             position: "relative",
             zIndex: 1,
           }}
         />
 
+        {/* Year */}
         <div
           className="text-xs"
           style={{
-            color: hovered ? "rgba(255,255,255,0.5)" : "hsl(var(--muted-foreground))",
+            color: hovered ? "rgba(255,255,255,0.55)" : "hsl(var(--muted-foreground))",
             letterSpacing: "0.04em",
             position: "relative",
             zIndex: 1,
             transition: "color 0.2s ease",
+            textAlign: "center",
           }}
         >
           {ac.year}
         </div>
+
+        {/* ── Runway bar — brand gradient slides in from left at card bottom ── */}
+        {hovered && (
+          <span
+            style={{
+              position: "absolute",
+              bottom: 0, left: 0, right: 0,
+              height: "2px",
+              background: "linear-gradient(90deg, #c10230 0%, #d4a017 50%, #012e45 100%)",
+              animation: "ac-runway 0.28s ease-out forwards",
+              transformOrigin: "left center",
+              zIndex: 3,
+            }}
+          />
+        )}
       </div>
     </>
   )
