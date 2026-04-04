@@ -28,9 +28,11 @@ const BASE = "/.netlify/functions"
 
 export default function FourteenDayCheckResponse() {
   const { token } = useParams<{ token: string }>()
+  // ?for=Name pre-populated when dispatched via email. Blank when opened from QR.
+  const prefilledName = new URLSearchParams(window.location.search).get("for") ?? ""
   const [pageState, setPageState] = useState<PageState>("loading")
   const [check, setCheck] = useState<CheckData | null>(null)
-  const [submitterName, setSubmitterName] = useState("")
+  const [submitterName, setSubmitterName] = useState(prefilledName)
   const [values, setValues] = useState<Record<string, FieldValue>>({})
   const [uploadStates, setUploadStates] = useState<Record<string, UploadState>>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -237,9 +239,16 @@ export default function FourteenDayCheckResponse() {
 
           {/* Submitter name */}
           <div className="space-y-1.5">
-            <label className="block text-sm font-medium" style={{ color: "rgba(255,255,255,0.9)" }}>
-              Your name <span style={{ color: "#d4a017" }}>*</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium" style={{ color: "rgba(255,255,255,0.9)" }}>
+                Your name <span style={{ color: "#d4a017" }}>*</span>
+              </label>
+              {prefilledName && (
+                <span className="text-[10px]" style={{ color: "rgba(212,160,23,0.55)" }}>
+                  pre-filled from dispatch
+                </span>
+              )}
+            </div>
             <input
               type="text"
               value={submitterName}
@@ -248,8 +257,8 @@ export default function FourteenDayCheckResponse() {
               placeholder="First and last name"
               className="w-full rounded-md px-3 py-2.5 text-sm outline-none disabled:opacity-50"
               style={{
-                background: "rgba(255,255,255,0.06)",
-                border: "1px solid rgba(255,255,255,0.15)",
+                background: prefilledName ? "rgba(212,160,23,0.06)" : "rgba(255,255,255,0.06)",
+                border: prefilledName ? "1px solid rgba(212,160,23,0.25)" : "1px solid rgba(255,255,255,0.15)",
                 color: "rgba(255,255,255,0.9)",
               }}
             />

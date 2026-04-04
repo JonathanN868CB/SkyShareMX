@@ -6,43 +6,130 @@ import { useFleet } from "./aircraft/useFleet"
 
 // ─── Aircraft Card ─────────────────────────────────────────────────────────────
 function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftBase) => void }) {
+  const [hovered, setHovered] = useState(false)
+
   return (
-    <div
-      className="card-elevated card-hoverable rounded-md px-4 py-3 flex flex-col gap-1"
-      style={{ cursor: "pointer" }}
-      onClick={() => onOpen(ac)}
-    >
+    <>
+      {/* Keyframes — injected once per page, React dedupes */}
+      <style>{`
+        @keyframes ac-holo {
+          0%   { background-position: 0% 50%;   }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%;   }
+        }
+        @keyframes ac-chroma {
+          0%, 100% { text-shadow: -1.5px 0 rgba(193,2,48,0.55), 1.5px 0 rgba(0,180,255,0.45); }
+          50%       { text-shadow:  1.5px 0 rgba(193,2,48,0.55), -1.5px 0 rgba(0,180,255,0.45); }
+        }
+        @keyframes ac-scan {
+          0%   { transform: translateY(-100%); opacity: 0;    }
+          10%  {                               opacity: 0.55;  }
+          90%  {                               opacity: 0.55;  }
+          100% { transform: translateY(200%); opacity: 0;    }
+        }
+      `}</style>
+
       <div
+        className="card-elevated rounded-md px-4 py-3 flex flex-col gap-1"
         style={{
-          fontFamily: "var(--font-heading)",
-          fontSize: "1.05rem",
-          color: "var(--skyshare-gold)",
-          letterSpacing: "0.12em",
-          fontWeight: 600,
+          cursor: "pointer",
+          position: "relative",
+          overflow: "hidden",
+          transition: "transform 0.18s ease, box-shadow 0.2s ease, border-color 0.2s ease",
+          transform: hovered ? "translateY(-2px) scale(1.015)" : "translateY(0) scale(1)",
+          boxShadow: hovered
+            ? "0 8px 28px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,160,23,0.35), 0 0 18px rgba(193,2,48,0.12)"
+            : "0 2px 8px rgba(0,0,0,0.3)",
         }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={() => onOpen(ac)}
       >
-        {ac.tailNumber}
-      </div>
+        {/* Holographic shimmer layer */}
+        {hovered && (
+          <span
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "linear-gradient(125deg, transparent 20%, rgba(193,2,48,0.07) 30%, rgba(212,160,23,0.09) 42%, rgba(0,180,255,0.07) 54%, rgba(1,46,69,0.06) 64%, transparent 74%)",
+              backgroundSize: "300% 300%",
+              animation: "ac-holo 2s ease infinite",
+              pointerEvents: "none",
+              borderRadius: "inherit",
+            }}
+          />
+        )}
 
-      <div
-        className="text-xs"
-        style={{
-          color: "hsl(var(--muted-foreground))",
-          fontFamily: "'Courier Prime','Courier New',monospace",
-        }}
-      >
-        S/N &nbsp;{ac.serialNumber}
-      </div>
+        {/* Scan line */}
+        {hovered && (
+          <span
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              height: "1px",
+              background: "linear-gradient(90deg, transparent, rgba(212,160,23,0.5), transparent)",
+              animation: "ac-scan 1.6s ease-in-out infinite",
+              pointerEvents: "none",
+            }}
+          />
+        )}
 
-      <div style={{ height: "0.5px", background: "rgba(212,160,23,0.2)", margin: "2px 0" }} />
+        {/* Tail number with chromatic aberration on hover */}
+        <div
+          style={{
+            fontFamily: "var(--font-heading)",
+            fontSize: "1.05rem",
+            color: "var(--skyshare-gold)",
+            letterSpacing: "0.12em",
+            fontWeight: 600,
+            position: "relative",
+            zIndex: 1,
+            animation: hovered ? "ac-chroma 1.4s ease-in-out infinite" : "none",
+            transition: "letter-spacing 0.2s ease",
+          }}
+        >
+          {ac.tailNumber}
+        </div>
 
-      <div
-        className="text-xs"
-        style={{ color: "hsl(var(--muted-foreground))", letterSpacing: "0.04em" }}
-      >
-        {ac.year}
+        <div
+          className="text-xs"
+          style={{
+            color: hovered ? "rgba(255,255,255,0.55)" : "hsl(var(--muted-foreground))",
+            fontFamily: "'Courier Prime','Courier New',monospace",
+            position: "relative",
+            zIndex: 1,
+            transition: "color 0.2s ease",
+          }}
+        >
+          S/N &nbsp;{ac.serialNumber}
+        </div>
+
+        <div
+          style={{
+            height: "0.5px",
+            background: hovered ? "rgba(212,160,23,0.5)" : "rgba(212,160,23,0.2)",
+            margin: "2px 0",
+            transition: "background 0.2s ease",
+            position: "relative",
+            zIndex: 1,
+          }}
+        />
+
+        <div
+          className="text-xs"
+          style={{
+            color: hovered ? "rgba(255,255,255,0.5)" : "hsl(var(--muted-foreground))",
+            letterSpacing: "0.04em",
+            position: "relative",
+            zIndex: 1,
+            transition: "color 0.2s ease",
+          }}
+        >
+          {ac.year}
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 
