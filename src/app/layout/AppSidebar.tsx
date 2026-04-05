@@ -14,6 +14,7 @@ import {
   FileText,
   Kanban,
   MessageSquare,
+  MessageSquarePlus,
   Building,
   ShieldCheck,
   GraduationCap,
@@ -117,7 +118,8 @@ const sidebarSections: SidebarSection[] = [
       { name: "Team Training & Journey", path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
       { name: "Alerts & Notifications",  path: "/app/admin/alerts",      icon: Bell,          section: "Dashboard"                   },
       { name: "Settings",                path: "/app/admin/settings",    icon: Settings,      section: "Dashboard"                   },
-      { name: "Permissions Index",       path: "/app/admin/permissions", icon: ShieldCheck,   section: "Dashboard", superAdminOnly: true },
+      { name: "Permissions Index",       path: "/app/admin/permissions", icon: ShieldCheck,      section: "Dashboard", superAdminOnly: true },
+      { name: "Site Suggestions",        path: "/app/admin/suggestions", icon: MessageSquarePlus, section: "Dashboard", superAdminOnly: true },
     ],
   },
 ]
