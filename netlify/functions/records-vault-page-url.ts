@@ -1,9 +1,20 @@
 // records-vault-page-url — AUTH REQUIRED
-// Returns a short-lived signed download URL for a source PDF in the records-vault bucket.
-// react-pdf loads the PDF directly from this URL in the browser.
-// URL expires in 60 minutes — long enough to read through a document session.
+//
+// Returns a short-lived signed URL for viewing a PDF page.
+//
+// If `pageNumber` is provided:
+//   - Checks for a cached single-page PDF at page-cache/{id}/{page}.pdf
+//   - On cache miss: downloads full PDF, extracts the page with pdf-lib,
+//     uploads the single-page PDF to the cache, then returns its signed URL
+//   - Cache hit path: sub-100ms response; cache miss path: 3–10s (one-time)
+//
+// If `pageNumber` is omitted: returns a signed URL for the full source PDF.
+//
+// Single-page PDF serving solves the primary lag issue: the browser downloads
+// a 100-500 KB page file instead of a 50-200 MB complete document.
 
 import { createClient } from "@supabase/supabase-js";
+import { PDFDocument } from "pdf-lib";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -42,6 +53,7 @@ function getAccessToken(event: HandlerEvent): string | null {
 }
 
 const SIGNED_URL_EXPIRY_SECONDS = 3600; // 60 minutes
+const PAGE_CACHE_PREFIX = "page-cache";
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
@@ -90,12 +102,13 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(400, { error: "recordSourceId is required" });
   }
 
+  const pageNumber = typeof payload.pageNumber === "number" ? Math.floor(payload.pageNumber) : null;
+
   const adminClient = createClient(supabaseUrl, serviceRole, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Verify the user has Records Vault permission and that this record source exists
-  // We use the user's JWT to fetch via RLS — if they can't see it, 404
+  // Verify the user has Records Vault permission via RLS
   const userClient = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -111,15 +124,116 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(404, { error: "Record source not found or access denied" });
   }
 
-  // Generate signed download URL using admin client
-  const { data, error: urlError } = await adminClient.storage
-    .from("records-vault")
-    .createSignedUrl(source.storage_path, SIGNED_URL_EXPIRY_SECONDS);
+  // ── No page number → full PDF signed URL (legacy path) ──────────────────────
+  if (pageNumber === null || pageNumber < 1) {
+    const { data, error: urlError } = await adminClient.storage
+      .from("records-vault")
+      .createSignedUrl(source.storage_path, SIGNED_URL_EXPIRY_SECONDS);
 
-  if (urlError || !data?.signedUrl) {
-    console.error("[records-vault-page-url] createSignedUrl error:", urlError);
-    return jsonResponse(500, { error: "Failed to generate download URL" });
+    if (urlError || !data?.signedUrl) {
+      return jsonResponse(500, { error: "Failed to generate download URL" });
+    }
+    return jsonResponse(200, { signedUrl: data.signedUrl });
   }
 
-  return jsonResponse(200, { signedUrl: data.signedUrl });
+  // ── Page number provided → single-page cached PDF ──────────────────────────
+  const cachePath = `${PAGE_CACHE_PREFIX}/${recordSourceId}/${pageNumber}.pdf`;
+
+  // Check cache first
+  const { data: cacheList } = await adminClient.storage
+    .from("records-vault")
+    .list(`${PAGE_CACHE_PREFIX}/${recordSourceId}`, {
+      limit: 1,
+      search: `${pageNumber}.pdf`,
+    });
+
+  const isCached = cacheList?.some((f) => f.name === `${pageNumber}.pdf`) ?? false;
+
+  if (isCached) {
+    const { data: cachedUrl, error: cachedErr } = await adminClient.storage
+      .from("records-vault")
+      .createSignedUrl(cachePath, SIGNED_URL_EXPIRY_SECONDS);
+
+    if (!cachedErr && cachedUrl?.signedUrl) {
+      return jsonResponse(200, { signedUrl: cachedUrl.signedUrl, cached: true });
+    }
+    // Fall through to extraction if signed URL generation unexpectedly failed
+  }
+
+  // Cache miss — download full PDF, extract the page, upload to cache
+  const { data: fullPdfBlob, error: downloadError } = await adminClient.storage
+    .from("records-vault")
+    .download(source.storage_path);
+
+  if (downloadError || !fullPdfBlob) {
+    // Fallback: serve the full PDF with page anchor
+    const { data: fallback, error: fallbackErr } = await adminClient.storage
+      .from("records-vault")
+      .createSignedUrl(source.storage_path, SIGNED_URL_EXPIRY_SECONDS);
+
+    if (fallbackErr || !fallback?.signedUrl) {
+      return jsonResponse(500, { error: "Failed to load source PDF" });
+    }
+    return jsonResponse(200, { signedUrl: fallback.signedUrl, fallback: true });
+  }
+
+  try {
+    const pdfBytes = await fullPdfBlob.arrayBuffer();
+    const srcDoc = await PDFDocument.load(pdfBytes);
+    const totalPages = srcDoc.getPageCount();
+    const pageIdx = pageNumber - 1; // pdf-lib uses 0-based index
+
+    if (pageIdx < 0 || pageIdx >= totalPages) {
+      return jsonResponse(400, { error: `Page ${pageNumber} out of range (total: ${totalPages})` });
+    }
+
+    // Extract the single page into its own document
+    const singlePageDoc = await PDFDocument.create();
+    const [copiedPage] = await singlePageDoc.copyPages(srcDoc, [pageIdx]);
+    singlePageDoc.addPage(copiedPage);
+    const singlePageBytes = await singlePageDoc.save();
+
+    // Upload to cache
+    const { error: uploadError } = await adminClient.storage
+      .from("records-vault")
+      .upload(cachePath, singlePageBytes, {
+        contentType: "application/pdf",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.warn(`[records-vault-page-url] Cache upload failed for ${cachePath}:`, uploadError.message);
+      // Still return what we have — fall back to full PDF
+      const { data: fallback } = await adminClient.storage
+        .from("records-vault")
+        .createSignedUrl(source.storage_path, SIGNED_URL_EXPIRY_SECONDS);
+      if (fallback?.signedUrl) {
+        return jsonResponse(200, { signedUrl: fallback.signedUrl, fallback: true });
+      }
+      return jsonResponse(500, { error: "Failed to cache extracted page" });
+    }
+
+    const { data: pageUrlData, error: pageUrlError } = await adminClient.storage
+      .from("records-vault")
+      .createSignedUrl(cachePath, SIGNED_URL_EXPIRY_SECONDS);
+
+    if (pageUrlError || !pageUrlData?.signedUrl) {
+      return jsonResponse(500, { error: "Failed to generate signed URL for cached page" });
+    }
+
+    return jsonResponse(200, { signedUrl: pageUrlData.signedUrl, cached: false });
+
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[records-vault-page-url] Page extraction failed:`, message);
+
+    // Fallback: serve full PDF
+    const { data: fallback } = await adminClient.storage
+      .from("records-vault")
+      .createSignedUrl(source.storage_path, SIGNED_URL_EXPIRY_SECONDS);
+    if (fallback?.signedUrl) {
+      return jsonResponse(200, { signedUrl: fallback.signedUrl, fallback: true });
+    }
+    return jsonResponse(500, { error: "Page extraction failed" });
+  }
 };

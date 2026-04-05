@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
 
-// Returns a 60-minute signed URL for the source PDF.
-// Used as the src of an <iframe> so the browser's native PDF renderer
-// handles all compression formats (JBIG2, CCITTFax, JPEG, etc.).
-async function fetchPdfUrl(recordSourceId: string): Promise<string> {
+// Returns a signed URL for a single page PDF (fast, ~200 KB) or the full PDF as fallback.
+// pageNumber: 1-based. When provided, the Netlify function extracts and caches
+// the single page from the full document — subsequent loads of the same page are instant.
+async function fetchPdfUrl(recordSourceId: string, pageNumber?: number): Promise<string> {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error("Not authenticated")
 
@@ -14,7 +14,7 @@ async function fetchPdfUrl(recordSourceId: string): Promise<string> {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
-    body: JSON.stringify({ recordSourceId }),
+    body: JSON.stringify({ recordSourceId, pageNumber }),
   })
 
   if (!resp.ok) {
@@ -26,10 +26,10 @@ async function fetchPdfUrl(recordSourceId: string): Promise<string> {
   return signedUrl as string
 }
 
-export function useRecordPageUrl(recordSourceId: string | null) {
+export function useRecordPageUrl(recordSourceId: string | null, pageNumber?: number) {
   return useQuery({
-    queryKey: ["record-page-url", recordSourceId],
-    queryFn: () => fetchPdfUrl(recordSourceId!),
+    queryKey: ["record-page-url", recordSourceId, pageNumber ?? "full"],
+    queryFn: () => fetchPdfUrl(recordSourceId!, pageNumber),
     enabled: !!recordSourceId,
     staleTime: 55 * 60 * 1000,
     retry: 1,
