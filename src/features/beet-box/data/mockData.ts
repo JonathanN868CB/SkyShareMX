@@ -287,7 +287,7 @@ export const WORK_ORDERS: WorkOrder[] = [
     id: "wo-001",
     woNumber: "WO-2025-0041",
     aircraftId: "ac-001",
-    status: "completed",
+    status: "open",
     woType: "100-Hour Inspection",
     description: "Scheduled 100-hour inspection per Beechcraft KA350 maintenance manual. Includes engine run-up, control surface check, avionics functional test.",
     priority: "routine",
@@ -1482,3 +1482,157 @@ export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   paid:  "Paid",
   void:  "Void",
 }
+
+// ─── Permissions & Roles ──────────────────────────────────────────────────────
+
+export type Permission =
+  | "wo.view" | "wo.create" | "wo.edit_items" | "wo.delete" | "wo.advance_status" | "wo.void" | "wo.assign_mechanics"
+  | "labor.log_own" | "labor.log_others" | "labor.delete"
+  | "parts.add" | "parts.remove" | "parts.order"
+  | "signoff.perform" | "signoff.undo"
+  | "logbook.view" | "logbook.create" | "logbook.sign_lock" | "logbook.edit_locked"
+  | "invoicing.view" | "invoicing.create" | "invoicing.edit" | "invoicing.void"
+  | "inventory.view" | "inventory.adjust_qty" | "inventory.add_items"
+  | "po.view" | "po.create" | "po.receive"
+  | "tools.view" | "tools.edit"
+  | "settings.view" | "settings.edit"
+
+export const ALL_PERMISSIONS: Permission[] = [
+  "wo.view","wo.create","wo.edit_items","wo.delete","wo.advance_status","wo.void","wo.assign_mechanics",
+  "labor.log_own","labor.log_others","labor.delete",
+  "parts.add","parts.remove","parts.order",
+  "signoff.perform","signoff.undo",
+  "logbook.view","logbook.create","logbook.sign_lock","logbook.edit_locked",
+  "invoicing.view","invoicing.create","invoicing.edit","invoicing.void",
+  "inventory.view","inventory.adjust_qty","inventory.add_items",
+  "po.view","po.create","po.receive",
+  "tools.view","tools.edit",
+  "settings.view","settings.edit",
+]
+
+export interface MXRole {
+  id: string
+  name: string
+  description: string
+  color: string
+  isSystem: boolean
+  permissions: Permission[]
+}
+
+export interface SystemUser {
+  id: string
+  name: string
+  email: string
+  roleId: string
+  status: "active" | "inactive"
+  lastActive?: string
+  certType?: string
+  certNumber?: string
+}
+
+export const ROLES: MXRole[] = [
+  {
+    id: "role-admin",
+    name: "System Admin",
+    description: "Full unrestricted access to all modules and settings. Assign with care.",
+    color: "#e11d48",
+    isSystem: true,
+    permissions: [...ALL_PERMISSIONS],
+  },
+  {
+    id: "role-ia",
+    name: "IA — Inspection Authorization",
+    description: "Licensed to sign off annual inspections and major repairs. Full technical access plus logbook signing.",
+    color: "#d4a017",
+    isSystem: true,
+    permissions: [
+      "wo.view","wo.create","wo.edit_items","wo.advance_status","wo.assign_mechanics",
+      "labor.log_own","labor.log_others","labor.delete",
+      "parts.add","parts.remove","parts.order",
+      "signoff.perform","signoff.undo",
+      "logbook.view","logbook.create","logbook.sign_lock","logbook.edit_locked",
+      "invoicing.view",
+      "inventory.view","inventory.adjust_qty",
+      "po.view","po.create","po.receive",
+      "tools.view","tools.edit",
+      "settings.view",
+    ],
+  },
+  {
+    id: "role-ap",
+    name: "A&P Mechanic",
+    description: "Certified airframe and powerplant mechanic. Can perform work and sign off routine maintenance.",
+    color: "#3b82f6",
+    isSystem: true,
+    permissions: [
+      "wo.view","wo.create","wo.edit_items","wo.advance_status","wo.assign_mechanics",
+      "labor.log_own","labor.log_others",
+      "parts.add","parts.remove","parts.order",
+      "signoff.perform",
+      "logbook.view","logbook.create",
+      "invoicing.view",
+      "inventory.view","inventory.adjust_qty",
+      "po.view","po.create","po.receive",
+      "tools.view",
+      "settings.view",
+    ],
+  },
+  {
+    id: "role-service-writer",
+    name: "Service Writer",
+    description: "Opens work orders, communicates with customers, manages scheduling. No technical sign-off authority.",
+    color: "#8b5cf6",
+    isSystem: false,
+    permissions: [
+      "wo.view","wo.create","wo.advance_status","wo.assign_mechanics",
+      "logbook.view",
+      "invoicing.view","invoicing.create","invoicing.edit",
+      "inventory.view",
+      "po.view","po.create",
+      "tools.view",
+      "settings.view",
+    ],
+  },
+  {
+    id: "role-billing",
+    name: "Billing & Accounting",
+    description: "Invoicing and financial records only. Read-only access to work orders for reference.",
+    color: "#10b981",
+    isSystem: false,
+    permissions: [
+      "wo.view",
+      "logbook.view",
+      "invoicing.view","invoicing.create","invoicing.edit","invoicing.void",
+      "po.view",
+      "settings.view",
+    ],
+  },
+  {
+    id: "role-apprentice",
+    name: "Apprentice / Student",
+    description: "Under supervision. Can log their own time and view work orders. Cannot sign off or modify records.",
+    color: "#6b7280",
+    isSystem: false,
+    permissions: [
+      "wo.view",
+      "labor.log_own",
+      "logbook.view",
+      "invoicing.view",
+      "inventory.view",
+      "po.view",
+      "tools.view",
+      "settings.view",
+    ],
+  },
+]
+
+export const SYSTEM_USERS: SystemUser[] = [
+  { id: "usr-001", name: "Jonathan B.",   email: "jonathan@cbaviation.com",   roleId: "role-admin",          status: "active",   lastActive: "2025-04-04T08:30:00Z" },
+  { id: "usr-002", name: "R. Thompson",   email: "r.thompson@cbaviation.com", roleId: "role-ia",             status: "active",   lastActive: "2025-04-04T07:15:00Z", certType: "A&P/IA", certNumber: "3468291" },
+  { id: "usr-003", name: "D. Wilson",     email: "d.wilson@cbaviation.com",   roleId: "role-ap",             status: "active",   lastActive: "2025-04-04T06:45:00Z", certType: "A&P",    certNumber: "2914782" },
+  { id: "usr-004", name: "J. Martinez",   email: "j.martinez@cbaviation.com", roleId: "role-ap",             status: "active",   lastActive: "2025-04-03T16:20:00Z", certType: "A&P",    certNumber: "3012847" },
+  { id: "usr-005", name: "K. Rodriguez",  email: "k.rodriguez@cbaviation.com",roleId: "role-service-writer", status: "active",   lastActive: "2025-04-04T08:00:00Z" },
+  { id: "usr-006", name: "M. Chen",       email: "m.chen@cbaviation.com",     roleId: "role-billing",        status: "active",   lastActive: "2025-04-03T14:10:00Z" },
+  { id: "usr-007", name: "T. Owens",      email: "t.owens@cbaviation.com",    roleId: "role-apprentice",     status: "active",   lastActive: "2025-04-02T15:00:00Z", certType: "Student" },
+  { id: "usr-008", name: "B. Garrett",    email: "b.garrett@cbaviation.com",  roleId: "role-ap",             status: "inactive", lastActive: "2025-03-15T09:00:00Z", certType: "A&P",    certNumber: "2788341" },
+]
