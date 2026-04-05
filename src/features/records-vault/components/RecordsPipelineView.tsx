@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Trash2,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { useToast } from "@/hooks/use-toast"
@@ -105,16 +106,21 @@ function StatusIndicator({ source }: { source: PipelineSource }) {
 function SourceRow({
   source,
   onRetry,
+  onDelete,
   retrying,
+  deleting,
 }: {
   source: PipelineSource
   onRetry: (id: string) => void
+  onDelete: (id: string, filename: string) => void
   retrying: boolean
+  deleting: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
 
   const canRetry =
     source.ingestion_status === "failed" ||
+    source.ingestion_status === "pending" ||
     source.verification_status === "partial" ||
     source.ingestion_status === "indexed"
 
@@ -163,12 +169,25 @@ function SourceRow({
               variant="outline"
               className="h-7 text-xs gap-1.5"
               onClick={() => onRetry(source.id)}
-              disabled={retrying || source.ingestion_status === "extracting"}
+              disabled={retrying || deleting || source.ingestion_status === "extracting"}
             >
               <RefreshCw className={`h-3 w-3 ${retrying ? "animate-spin" : ""}`} />
               {source.verification_status === "partial" ? "Re-process" : "Retry"}
             </Button>
           )}
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+            onClick={() => onDelete(source.id, source.original_filename)}
+            disabled={retrying || deleting || source.ingestion_status === "extracting"}
+            title="Delete record"
+          >
+            {deleting
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <Trash2 className="h-3.5 w-3.5" />}
+          </Button>
 
           {source.log.length > 0 && (
             <button
@@ -223,12 +242,16 @@ function BatchGroup({
   label,
   sources,
   onRetry,
+  onDelete,
   retryingId,
+  deletingId,
 }: {
   label: string
   sources: PipelineSource[]
   onRetry: (id: string) => void
+  onDelete: (id: string, filename: string) => void
   retryingId: string | null
+  deletingId: string | null
 }) {
   const verified  = sources.filter((s) => s.verification_status === "verified").length
   const failed    = sources.filter((s) => s.ingestion_status === "failed").length
@@ -269,7 +292,9 @@ function BatchGroup({
             key={s.id}
             source={s}
             onRetry={onRetry}
+            onDelete={onDelete}
             retrying={retryingId === s.id}
+            deleting={deletingId === s.id}
           />
         ))}
       </div>
@@ -287,6 +312,7 @@ export function RecordsPipelineView({ aircraftId }: Props) {
   const { sources, loading, reload } = useRecordsPipeline(aircraftId)
   const { toast } = useToast()
   const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterMode>("all")
 
   async function handleRetry(recordSourceId: string) {
@@ -315,6 +341,28 @@ export function RecordsPipelineView({ aircraftId }: Props) {
       })
     } finally {
       setRetryingId(null)
+    }
+  }
+
+  async function handleDelete(recordSourceId: string, filename: string) {
+    if (!window.confirm(`Delete "${filename}"? This will permanently remove the file and all indexed pages.`)) return
+    setDeletingId(recordSourceId)
+    try {
+      const { error } = await supabase
+        .from("rv_record_sources")
+        .delete()
+        .eq("id", recordSourceId)
+      if (error) throw error
+      toast({ title: "Deleted", description: `${filename} removed.` })
+      reload()
+    } catch (err) {
+      toast({
+        title: "Delete failed",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      })
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -422,7 +470,9 @@ export function RecordsPipelineView({ aircraftId }: Props) {
               label={batchKey === "__individual__" ? "Individual uploads" : batchKey}
               sources={batchSources}
               onRetry={handleRetry}
+              onDelete={handleDelete}
               retryingId={retryingId}
+              deletingId={deletingId}
             />
           ))}
         </div>

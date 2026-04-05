@@ -38,7 +38,9 @@ export type SearchHit = {
   original_filename: string
   source_category: SourceCategory
   observed_registration: string | null
-  ocr_excerpt: string   // contains [[highlighted]] markers
+  date_range_start: string | null   // ISO date string from rv_record_sources
+  date_range_end: string | null     // ISO date string from rv_record_sources
+  ocr_excerpt: string               // contains [[highlighted]] markers
   rank: number
 }
 

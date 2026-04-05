@@ -2,17 +2,20 @@ import { useQuery } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
 import type { SearchHit, SourceCategory } from "../types"
 
+export type SortBy = "relevance" | "date_desc"
+
 export type RecordsSearchParams = {
   query: string
   aircraftId: string | null   // null = fleet-wide
   category: SourceCategory | null
   sourceId: string | null
+  sortBy: SortBy
   page: number
   pageSize: number
 }
 
 async function searchPages(params: RecordsSearchParams): Promise<SearchHit[]> {
-  const { query, aircraftId, category, sourceId, page, pageSize } = params
+  const { query, aircraftId, category, sourceId, sortBy, page, pageSize } = params
   const offset = (page - 1) * pageSize
 
   const { data, error } = await supabase.rpc("rv_search_pages", {
@@ -20,6 +23,7 @@ async function searchPages(params: RecordsSearchParams): Promise<SearchHit[]> {
     p_aircraft_id: aircraftId ?? undefined,
     p_category:    category ?? undefined,
     p_source_id:   sourceId ?? undefined,
+    p_sort_by:     sortBy,
     p_limit:       pageSize,
     p_offset:      offset,
   })
