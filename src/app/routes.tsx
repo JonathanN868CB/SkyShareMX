@@ -26,6 +26,7 @@ const SOPDashboard       = lazy(() => import("@/features/beet-box/modules/sops/S
 const SOPDetail          = lazy(() => import("@/features/beet-box/modules/sops/SOPDetail"))
 const TrainingDashboard  = lazy(() => import("@/features/beet-box/modules/training/TrainingDashboard"))
 const TrainingDetail     = lazy(() => import("@/features/beet-box/modules/training/TrainingDetail"))
+const SettingsDashboard  = lazy(() => import("@/features/beet-box/modules/settings/SettingsDashboard"))
 
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
@@ -189,6 +190,7 @@ const routes: RouteObject[] = [
       { path: "sop-library/:id",                  element: wrap(<SOPDetail />) },
       { path: "training",                         element: wrap(<TrainingDashboard />) },
       { path: "training/:id",                     element: wrap(<TrainingDetail />) },
+      { path: "settings",                         element: wrap(<SettingsDashboard />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────
