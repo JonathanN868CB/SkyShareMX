@@ -1,15 +1,14 @@
 import { useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
-import { Search, FolderOpen, Activity, Archive, Upload } from "lucide-react"
+import { FileText, Activity, Archive, Upload } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { useAuth } from "@/features/auth"
 import { useRecordsVaultCtx } from "./RecordsVaultApp"
 import { MANAGER_ROLES } from "./constants"
 
 const NAV_ITEMS = [
-  { label: "Search",         path: "/app/records-vault/search",   icon: Search     },
-  { label: "Browse",         path: "/app/records-vault/browse",   icon: FolderOpen },
-  { label: "Pipeline",       path: "/app/records-vault/pipeline", icon: Activity   },
+  { label: "Records",  path: "/app/records-vault/search",   icon: FileText   },
+  { label: "Pipeline", path: "/app/records-vault/pipeline", icon: Activity   },
 ]
 
 export function RecordsVaultSidebar() {
