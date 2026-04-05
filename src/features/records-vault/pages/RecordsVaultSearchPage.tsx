@@ -9,7 +9,7 @@ import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { useRecordSources } from "../hooks/useRecordSources"
 import { useRecordsSearch } from "../hooks/useRecordsSearch"
 import { RecordsResultsList } from "../components/RecordsResultsList"
-import { RecordsPageViewer } from "../components/RecordsPageViewer"
+import { RecordsVaultViewer } from "../components/RecordsVaultViewer"
 import { SOURCE_CATEGORY_LABELS } from "../constants"
 import type { SourceCategory, SearchHit, RecordSource } from "../types"
 import type { SortBy } from "../hooks/useRecordsSearch"
@@ -261,10 +261,11 @@ export default function RecordsVaultSearchPage() {
   const [selectedCategory, setSelectedCategory] = useState<SourceCategory | null>(null)
   const [sortBy, setSortBy]             = useState<SortBy>("relevance")
 
-  const [viewerOpen, setViewerOpen]   = useState(false)
-  const [viewerHits, setViewerHits]   = useState<SearchHit[]>([])
-  const [viewerIndex, setViewerIndex] = useState(0)
-  const [viewerQuery, setViewerQuery] = useState("")
+  const [viewerOpen, setViewerOpen]       = useState(false)
+  const [viewerHits, setViewerHits]       = useState<SearchHit[]>([])
+  const [viewerIndex, setViewerIndex]     = useState(0)
+  const [viewerQuery, setViewerQuery]     = useState("")
+  const [viewerTotalPages, setViewerTotalPages] = useState(1)
 
   const { data: sources = [], isLoading: sourcesLoading } = useRecordSources(selectedAircraftId)
 
@@ -301,11 +302,13 @@ export default function RecordsVaultSearchPage() {
 
   // Open viewer from a search hit — passes all sibling hits for prev/next navigation
   function handleViewHit(hit: SearchHit) {
-    const docHits = hits.filter((h) => h.record_source_id === hit.record_source_id)
-    const index   = docHits.findIndex((h) => h.page_id === hit.page_id)
+    const docHits  = hits.filter((h) => h.record_source_id === hit.record_source_id)
+    const index    = docHits.findIndex((h) => h.page_id === hit.page_id)
+    const source   = sources.find((s) => s.id === hit.record_source_id)
     setViewerHits(docHits)
     setViewerIndex(Math.max(0, index))
     setViewerQuery(query)
+    setViewerTotalPages(source?.page_count ?? 1)
     setViewerOpen(true)
   }
 
@@ -327,6 +330,7 @@ export default function RecordsVaultSearchPage() {
     setViewerHits([syntheticHit])
     setViewerIndex(0)
     setViewerQuery("")
+    setViewerTotalPages(source.page_count ?? 1)
     setViewerOpen(true)
   }
 
@@ -431,12 +435,13 @@ export default function RecordsVaultSearchPage() {
         )}
       </main>
 
-      <RecordsPageViewer
+      <RecordsVaultViewer
         open={viewerOpen}
         onClose={() => setViewerOpen(false)}
         hits={viewerHits}
         hitIndex={viewerIndex}
         query={viewerQuery}
+        totalPages={viewerTotalPages}
       />
     </div>
   )
