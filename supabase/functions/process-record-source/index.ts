@@ -35,11 +35,21 @@ interface ProcessRequest {
   record_source_id: string;
 }
 
+interface MistralOcrImage {
+  id?: string;
+  top_left_x?: number;
+  top_left_y?: number;
+  bottom_right_x?: number;
+  bottom_right_y?: number;
+  image_base64?: string; // stripped before DB storage; used only for thumbnail upload
+}
+
 interface MistralOcrPage {
   index: number;
   markdown?: string;
   text?: string;
   confidence?: number;
+  images?: MistralOcrImage[];
 }
 
 interface MistralOcrResponse {
@@ -240,7 +250,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           type: "document_url",
           document_url: signedData.signedUrl,
         },
-        include_image_base64: false,
+        include_image_base64: true,
       }),
     });
 
@@ -308,9 +318,54 @@ Deno.serve(async (req: Request): Promise<Response> => {
     for (let i = 0; i < pages.length; i += PAGE_INSERT_CHUNK) {
       const chunk = pages.slice(i, i + PAGE_INSERT_CHUNK);
 
+      // Upload any embedded page images to Storage for use as thumbnails.
+      // Images are uploaded concurrently per chunk; failures are non-fatal.
+      const imageUploadPromises = chunk.map(async (page) => {
+        if (!page.images || page.images.length === 0) return null;
+        // Take the first image on the page (typically the page render or primary figure)
+        const img = page.images[0];
+        if (!img.image_base64) return null;
+
+        try {
+          // Decode base64 — strip data URI prefix if present
+          const b64 = img.image_base64.replace(/^data:[^;]+;base64,/, "");
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const storagePath = `${source.id}/pages/${page.index + 1}.jpg`;
+
+          const { error: uploadErr } = await supabase.storage
+            .from("records-vault")
+            .upload(storagePath, bytes, {
+              contentType:  "image/jpeg",
+              upsert:       true,
+            });
+
+          if (uploadErr) {
+            console.warn(`[process-record-source] Image upload failed for page ${page.index + 1}:`, uploadErr.message);
+            return null;
+          }
+
+          return { pageIndex: page.index, storagePath };
+        } catch {
+          return null;
+        }
+      });
+
+      const imageResults = await Promise.all(imageUploadPromises);
+      const imagePathByIndex = new Map(
+        imageResults
+          .filter((r): r is { pageIndex: number; storagePath: string } => r !== null)
+          .map((r) => [r.pageIndex, r.storagePath])
+      );
+
       const rows = chunk.map((page) => {
         const conf = page.confidence ?? null;
         if (conf !== null) { totalConfidence += conf; confidenceCount++; }
+
+        // Store bbox coordinates without base64 data (images live in Storage)
+        const bboxData = page.images && page.images.length > 0
+          ? page.images.map(({ image_base64: _drop, ...coords }) => coords)
+          : null;
+
         return {
           record_source_id: source.id,
           aircraft_id:      source.aircraft_id,
@@ -318,6 +373,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           raw_ocr_text:     page.markdown ?? page.text ?? "",
           ocr_confidence:   conf,
           ocr_status:       "extracted" as const,
+          page_image_path:  imagePathByIndex.get(page.index) ?? null,
+          ocr_bbox_data:    bboxData,
         };
       });
 

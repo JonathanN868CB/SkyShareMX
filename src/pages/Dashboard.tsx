@@ -30,6 +30,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Apr 4", text: "Records Vault (aircraft records intelligence layer) and Beet Box (full MRO suite) are now in active development." },
   { date: "Apr 3", text: "14-Day Check is live — standing inspection links for each aircraft, mobile photo capture, and a full MC review dashboard with fleet status at a glance." },
   { date: "Apr 3", text: "External Requests is live. Send structured requests to anyone outside the platform and collect responses through a secure, no-login portal." },
   { date: "Apr 3", text: "MM Revision & Audit Tracking is now live under Compliance. Quarterly audit campaigns replace the spreadsheet — review the entire fleet by type group, track revision changes, and generate PDF reports ready for the FSDO." },

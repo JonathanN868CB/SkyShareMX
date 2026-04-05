@@ -40,8 +40,10 @@ function getAccessToken(event: HandlerEvent): string | null {
   return token.length > 0 ? token : null;
 }
 
-const SUPABASE_PROJECT_URL = "https://xzcrkzvonjyznzxdbpjj.supabase.co";
-const EDGE_FUNCTION_URL = `${SUPABASE_PROJECT_URL}/functions/v1/process-record-source`;
+const SUPABASE_PROJECT_URL  = "https://xzcrkzvonjyznzxdbpjj.supabase.co";
+const EDGE_FUNCTION_URL     = `${SUPABASE_PROJECT_URL}/functions/v1/process-record-source`;
+const EXTRACT_FUNCTION_URL  = `${SUPABASE_PROJECT_URL}/functions/v1/extract-record-events`;
+const EMBED_FUNCTION_URL    = `${SUPABASE_PROJECT_URL}/functions/v1/generate-page-embeddings`;
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
@@ -150,18 +152,42 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(500, { error: "Failed to register record source" });
   }
 
-  // Fire-and-forget: trigger Edge Function to begin OCR ingestion
-  // We don't await this — the client polls ingestion_status via Supabase Realtime
-  fetch(EDGE_FUNCTION_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${serviceRole}`,
-    },
-    body: JSON.stringify({ record_source_id: newSource.id }),
-  }).catch((err) => {
-    console.error("[records-vault-register] Edge Function trigger failed:", err);
-  });
+  // Fire-and-forget: trigger OCR ingestion, then chain event extraction.
+  // We don't await — the client polls ingestion_status via Supabase Realtime.
+  (async () => {
+    try {
+      // Step 1 — OCR ingestion (process-record-source)
+      const ocrResp = await fetch(EDGE_FUNCTION_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` },
+        body: JSON.stringify({ record_source_id: newSource.id }),
+      });
+
+      if (!ocrResp.ok) {
+        console.error("[records-vault-register] OCR Edge Function failed:", await ocrResp.text());
+        return;
+      }
+
+      // Step 2 — Intelligence extraction + RAG embeddings fire in parallel.
+      // Both are independent consumers of rv_pages; neither blocks the other.
+      const postOcrBody = JSON.stringify({ record_source_id: newSource.id });
+      const postOcrHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
+
+      Promise.allSettled([
+        fetch(EXTRACT_FUNCTION_URL, { method: "POST", headers: postOcrHeaders, body: postOcrBody }),
+        fetch(EMBED_FUNCTION_URL,   { method: "POST", headers: postOcrHeaders, body: postOcrBody }),
+      ]).then((results) => {
+        results.forEach((r, i) => {
+          if (r.status === "rejected") {
+            console.error(`[records-vault-register] Post-OCR function ${i === 0 ? "extract" : "embed"} failed:`, r.reason);
+          }
+        });
+      });
+
+    } catch (err) {
+      console.error("[records-vault-register] Pipeline trigger failed:", err);
+    }
+  })();
 
   return jsonResponse(200, { recordSourceId: newSource.id });
 };
