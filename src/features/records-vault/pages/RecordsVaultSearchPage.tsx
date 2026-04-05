@@ -6,7 +6,6 @@ import { useRecordSources } from "../hooks/useRecordSources"
 import { useRecordsSearch } from "../hooks/useRecordsSearch"
 import { RecordsResultsList } from "../components/RecordsResultsList"
 import { RecordsPageViewer } from "../components/RecordsPageViewer"
-import { SOURCE_CATEGORY_LABELS } from "../constants"
 import type { SourceCategory, SearchHit } from "../types"
 import type { SortBy } from "../hooks/useRecordsSearch"
 
@@ -31,8 +30,9 @@ export default function RecordsVaultSearchPage() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const [sortBy, setSortBy]             = useState<SortBy>("relevance")
 
-  const [viewerOpen, setViewerOpen] = useState(false)
-  const [viewerHit, setViewerHit]   = useState<SearchHit | null>(null)
+  const [viewerOpen, setViewerOpen]   = useState(false)
+  const [viewerHits, setViewerHits]   = useState<SearchHit[]>([])
+  const [viewerIndex, setViewerIndex] = useState(0)
 
   const { data: sources = [] } = useRecordSources(selectedAircraftId)
 
@@ -63,6 +63,15 @@ export default function RecordsVaultSearchPage() {
   function handleSortChange(s: SortBy) {
     setSortBy(s)
     setSearchPage(1)
+  }
+
+  function handleViewPage(hit: SearchHit) {
+    // Collect all hits for this document and open the viewer at the clicked hit
+    const docHits = hits.filter((h) => h.record_source_id === hit.record_source_id)
+    const index = docHits.findIndex((h) => h.page_id === hit.page_id)
+    setViewerHits(docHits)
+    setViewerIndex(Math.max(0, index))
+    setViewerOpen(true)
   }
 
   return (
@@ -164,14 +173,16 @@ export default function RecordsVaultSearchPage() {
           pageSize={PAGE_SIZE}
           sortBy={sortBy}
           onPageChange={setSearchPage}
-          onViewPage={(hit) => { setViewerHit(hit); setViewerOpen(true) }}
+          onViewPage={handleViewPage}
         />
       </main>
 
       <RecordsPageViewer
         open={viewerOpen}
         onClose={() => setViewerOpen(false)}
-        hit={viewerHit}
+        hits={viewerHits}
+        hitIndex={viewerIndex}
+        query={query}
       />
     </div>
   )
