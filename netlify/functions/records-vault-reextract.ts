@@ -92,23 +92,24 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   if (sourceIds.length === 0) return json(200, { queued: 0, message: "No indexed sources found" });
 
-  // Fire extraction + embedding re-generation for each source (both in parallel per source)
+  // Fire extraction + embedding re-generation for each source.
+  // Fire-and-forget: don't await the edge functions — they run independently
+  // on Supabase and report progress via rv_ingestion_log + Realtime.
+  // Awaiting them here caused Netlify function timeouts on larger documents.
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
-  const results = await Promise.allSettled(
-    sourceIds.flatMap((id) => {
-      const body = JSON.stringify({ record_source_id: id });
-      return [
-        fetch(edgeFnUrl,  { method: "POST", headers, body }),
-        fetch(embedFnUrl, { method: "POST", headers, body }),
-      ];
-    })
-  );
-
-  const succeeded = results.filter((r) => r.status === "fulfilled").length;
+  for (const id of sourceIds) {
+    const body = JSON.stringify({ record_source_id: id });
+    // Reset statuses so the Pipeline UI shows them as running
+    await adminClient
+      .from("rv_record_sources")
+      .update({ extraction_status: "extracting", chunk_status: "chunking" })
+      .eq("id", id);
+    fetch(edgeFnUrl,  { method: "POST", headers, body }).catch(() => {});
+    fetch(embedFnUrl, { method: "POST", headers, body }).catch(() => {});
+  }
 
   return json(200, {
     queued:    sourceIds.length,
-    succeeded: Math.floor(succeeded / 2), // pairs of calls per source
     message:   `Triggered extraction + embedding for ${sourceIds.length} document(s)`,
   });
 };

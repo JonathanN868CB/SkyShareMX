@@ -50,6 +50,8 @@ export type RecordSource = {
   // Phase 3 fields
   chunk_status: ChunkStatus
   chunks_generated: number | null
+  // Rendering
+  page_images_stored: number | null
   created_at: string
   updated_at: string
 }

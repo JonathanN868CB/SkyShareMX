@@ -106,6 +106,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     auth: { persistSession: false },
   });
 
+  async function log(step: string, message: string): Promise<void> {
+    await supabase.from("rv_ingestion_log").insert({ record_source_id, step, message });
+  }
+
   // Mark as chunking
   await supabase
     .from("rv_record_sources")
@@ -164,8 +168,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .from("rv_record_sources")
         .update({ chunk_status: "chunked", chunks_generated: 0 })
         .eq("id", record_source_id);
+      await log("embeddings_complete", "No text to embed — 0 chunks generated");
       return jsonResp(200, { success: true, chunks_generated: 0, note: "No text to embed" });
     }
+
+    await log("embeddings_chunking", `Splitting ${pages.length} pages into ${pendingChunks.length} chunks for Voyage AI embedding`);
 
     // ── 3. Delete existing chunks for idempotency ──────────────────────────
     await supabase
@@ -209,6 +216,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .update({ chunk_status: "chunked", chunks_generated: totalInserted })
       .eq("id", record_source_id);
 
+    await log("embeddings_complete", `✓ Generated ${totalInserted} vector embedding${totalInserted !== 1 ? "s" : ""} from ${pages.length} pages`);
+
     console.log(`[generate-page-embeddings] ${record_source_id}: ${totalInserted} chunks from ${pages.length} pages`);
 
     return jsonResp(200, {
@@ -220,6 +229,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[generate-page-embeddings] Failed for ${record_source_id}:`, message);
+
+    await log("embeddings_failed", `Vector embedding failed: ${message}`);
 
     await supabase
       .from("rv_record_sources")
