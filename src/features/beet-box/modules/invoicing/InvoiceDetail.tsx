@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { ArrowLeft, AlertTriangle, Download, Loader2 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { INVOICES, WORK_ORDERS, AIRCRAFT } from "../../data/mockData"
@@ -18,6 +18,8 @@ const SHOP_SUPPLIES_RATE = 0.05
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const fromWO = searchParams.get("from")
   const captureRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
 
@@ -35,8 +37,8 @@ export default function InvoiceDetail() {
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <AlertTriangle className="w-10 h-10 text-white/20" />
         <p className="text-white/40 text-sm">Invoice not found.</p>
-        <Button variant="ghost" size="sm" onClick={() => navigate("/app/beet-box/invoicing")} className="text-white/50">
-          ← Back to Invoicing
+        <Button variant="ghost" size="sm" onClick={() => navigate(fromWO ?? "/app/beet-box/invoicing")} className="text-white/50">
+          {fromWO ? "← Back to Work Order" : "← Back to Invoicing"}
         </Button>
       </div>
     )
@@ -78,10 +80,10 @@ export default function InvoiceDetail() {
       {/* Beet Box page chrome — stays dark */}
       <div className="hero-area px-8 py-5 flex items-center justify-between">
         <button
-          onClick={() => navigate("/app/beet-box/invoicing")}
+          onClick={() => navigate(fromWO ?? "/app/beet-box/invoicing")}
           className="flex items-center gap-2 text-white/40 hover:text-white/70 text-sm transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" /> Invoicing
+          <ArrowLeft className="w-4 h-4" /> {fromWO ? "Back to Work Order" : "Invoicing"}
         </button>
         <Button
           size="sm"
