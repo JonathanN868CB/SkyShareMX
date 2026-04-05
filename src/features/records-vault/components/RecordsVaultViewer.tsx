@@ -12,17 +12,21 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   X, ChevronLeft, ChevronRight, FileText, ChevronDown,
-  ChevronUp, Loader2, AlertTriangle, Search,
+  ChevronUp, Loader2, AlertTriangle, Search, Download, AlertCircle, Trash2,
 } from "lucide-react"
 import { Dialog, DialogContent } from "@/shared/ui/dialog"
 import { supabase } from "@/lib/supabase"
+import { useAuth } from "@/features/auth"
 import { useRecordPageUrl } from "../hooks/useRecordPageUrl"
+import { usePageImage } from "../hooks/usePageImage"
 import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { SOURCE_CATEGORY_LABELS } from "../constants"
 import type { SearchHit, RecordSource, SourceCategory } from "../types"
+
+const MANAGER_ROLES = ["Manager", "Director of Maintenance", "DPE", "Admin", "Super Admin"]
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,19 +76,83 @@ const CAT_COLOUR: Record<SourceCategory | string, string> = {
   other:        "text-muted-foreground",
 }
 
+// ─── Page confidence map hook ─────────────────────────────────────────────────
+// Fetches ocr_confidence for all pages in a document in a single query.
+// Used to show low-confidence warnings in the page strip.
+
+const OCR_CONFIDENCE_WARN = 0.7
+
+function usePageConfidenceMap(recordSourceId: string | null) {
+  return useQuery({
+    queryKey: ["rv-page-confidence", recordSourceId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("rv_pages")
+        .select("page_number, ocr_confidence, page_image_path")
+        .eq("record_source_id", recordSourceId!)
+        .order("page_number", { ascending: true })
+      if (error) throw error
+      const map = new Map<number, { confidence: number | null; imagePath: string | null }>()
+      for (const row of data ?? []) {
+        map.set(row.page_number, {
+          confidence: row.ocr_confidence,
+          imagePath:  row.page_image_path,
+        })
+      }
+      return map
+    },
+    enabled: !!recordSourceId,
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
 // ─── Page strip item ──────────────────────────────────────────────────────────
 
+function PageThumbnail({
+  recordSourceId,
+  pageNumber,
+  imagePath,
+}: {
+  recordSourceId: string
+  pageNumber: number
+  imagePath: string | null
+}) {
+  // Try DB-stored image path first; fall back to Netlify signed URL
+  const { data: signedUrl } = usePageImage(
+    imagePath ? recordSourceId : null,
+    pageNumber,
+  )
+
+  if (!signedUrl) return null
+
+  return (
+    <img
+      src={signedUrl}
+      alt={`Page ${pageNumber}`}
+      className="w-full rounded-sm object-cover border border-border/40"
+      style={{ aspectRatio: "8.5 / 11", minHeight: "60px" }}
+      loading="lazy"
+    />
+  )
+}
+
 function PageStripItem({
+  recordSourceId,
   pageNumber,
   isActive,
   isMatch,
   matchIndex,
+  lowConfidence,
+  imagePath,
   onClick,
 }: {
+  recordSourceId: string
   pageNumber: number
   isActive: boolean
   isMatch: boolean
   matchIndex: number | null
+  lowConfidence: boolean
+  imagePath: string | null
   onClick: () => void
 }) {
   const ref = useRef<HTMLButtonElement>(null)
@@ -99,20 +167,38 @@ function PageStripItem({
     <button
       ref={ref}
       onClick={onClick}
-      className={`w-full text-left px-2 py-1.5 rounded-sm flex items-center gap-2 transition-all duration-100 ${
+      className={`w-full text-left px-1.5 py-1.5 rounded-sm flex flex-col gap-1 transition-all duration-100 ${
         isActive
           ? "bg-primary/10 border border-primary/30"
           : "hover:bg-muted/50 border border-transparent"
       }`}
     >
-      <span className={`tabular-nums text-xs min-w-[28px] ${isActive ? "text-foreground font-medium" : "text-muted-foreground"}`}>
-        {pageNumber}
-      </span>
-      {isMatch && (
-        <span className="text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-yellow-400/20 text-yellow-700 dark:text-yellow-400 shrink-0">
-          {matchIndex !== null ? `#${matchIndex + 1}` : "match"}
-        </span>
+      {/* Thumbnail image if available */}
+      {imagePath && (
+        <PageThumbnail
+          recordSourceId={recordSourceId}
+          pageNumber={pageNumber}
+          imagePath={imagePath}
+        />
       )}
+
+      {/* Page number row */}
+      <div className="flex items-center gap-1 px-0.5">
+        <span className={`tabular-nums text-xs min-w-[24px] ${isActive ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+          {pageNumber}
+        </span>
+        {isMatch && (
+          <span className="text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-yellow-400/20 text-yellow-700 dark:text-yellow-400 shrink-0">
+            {matchIndex !== null ? `#${matchIndex + 1}` : "match"}
+          </span>
+        )}
+        {lowConfidence && (
+          <AlertCircle
+            className="h-3 w-3 text-amber-500 shrink-0 ml-auto"
+            title="Low OCR confidence — text may be inaccurate"
+          />
+        )}
+      </div>
     </button>
   )
 }
@@ -140,14 +226,26 @@ function PdfPane({
   pageNumber,
   filename,
   totalPages,
+  onNavigate,
 }: {
   recordSourceId: string
   pageNumber: number
   filename: string
   totalPages: number
+  onNavigate: (delta: number) => void
 }) {
   const { data: pdfUrl, isLoading, error } = useRecordPageUrl(recordSourceId, pageNumber)
   usePreloadAdjacentPages(recordSourceId, pageNumber, totalPages)
+
+  // Throttle wheel navigation so rapid scrolls don't skip multiple pages
+  const lastWheelTime = useRef(0)
+  function handleWheel(e: React.WheelEvent) {
+    e.preventDefault()
+    const now = Date.now()
+    if (now - lastWheelTime.current < 120) return // 120ms throttle ≈ max 8 pages/sec
+    lastWheelTime.current = now
+    onNavigate(e.deltaY > 0 ? 1 : -1)
+  }
 
   return (
     <div className="relative w-full h-full">
@@ -164,13 +262,26 @@ function PdfPane({
         </div>
       )}
       {pdfUrl && (
-        <iframe
-          key={`${recordSourceId}-${pageNumber}`}
-          src={pdfUrl}
-          className="w-full h-full border-0"
-          title={`${filename} — page ${pageNumber}`}
-          scrolling="no"
-        />
+        <>
+          <iframe
+            key={`${recordSourceId}-${pageNumber}`}
+            // #toolbar=0&navpanes=0 hides the browser's native PDF UI (download btn, zoom, X)
+            src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+            className="w-full h-full border-0"
+            title={`${filename} — page ${pageNumber}`}
+            scrolling="no"
+          />
+          {/*
+            Transparent overlay captures scroll wheel events for page navigation.
+            Iframes swallow all scroll events and never propagate them up.
+            Scanned PDFs have no selectable text, so blocking pointer-events is fine.
+          */}
+          <div
+            className="absolute inset-0"
+            onWheel={handleWheel}
+            style={{ cursor: "default", background: "transparent" }}
+          />
+        </>
       )}
     </div>
   )
@@ -184,12 +295,16 @@ function PropertiesPanel({
   tailNumber,
   panelOpen,
   onToggle,
+  onDelete,
+  isManager,
 }: {
   hit: SearchHit
   source: RecordSource | undefined | null
   tailNumber: string | undefined
   panelOpen: boolean
   onToggle: () => void
+  onDelete?: () => void
+  isManager?: boolean
 }) {
   function fmtDate(iso: string | null | undefined) {
     if (!iso) return "—"
@@ -257,14 +372,106 @@ function PropertiesPanel({
               <p className="text-xs text-foreground">{source.events_extracted} maintenance events</p>
             </div>
           )}
+          {source?.chunks_generated != null && source.chunks_generated > 0 && (
+            <div>
+              <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Vector Chunks</p>
+              <p className="text-xs text-foreground">{source.chunks_generated} indexed</p>
+            </div>
+          )}
           {source?.notes && (
             <div>
               <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Notes</p>
               <p className="text-xs text-foreground leading-snug">{source.notes}</p>
             </div>
           )}
+
+          {isManager && onDelete && (
+            <div className="pt-2 mt-2 border-t border-border">
+              <button
+                onClick={onDelete}
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete document
+              </button>
+            </div>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Delete confirm dialog ────────────────────────────────────────────────────
+
+function DeleteConfirmDialog({
+  open,
+  filename,
+  pageCount,
+  onCancel,
+  onConfirm,
+  isDeleting,
+}: {
+  open: boolean
+  filename: string
+  pageCount: number | null | undefined
+  onCancel: () => void
+  onConfirm: () => void
+  isDeleting: boolean
+}) {
+  const [step, setStep] = useState<1 | 2>(1)
+
+  useEffect(() => {
+    if (open) setStep(1)
+  }, [open])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+      <div className="bg-background border border-border rounded-lg shadow-xl w-[400px] p-6 space-y-4">
+        {step === 1 ? (
+          <>
+            <p className="text-sm font-semibold text-foreground">Delete this document?</p>
+            <p className="text-xs text-muted-foreground font-medium break-all">{filename}</p>
+            <p className="text-xs text-muted-foreground">This will permanently remove:</p>
+            <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+              <li>{pageCount ?? "all"} indexed pages</li>
+              <li>All extracted maintenance events</li>
+              <li>All vector search chunks</li>
+              <li>Original PDF and cached files from storage</li>
+            </ul>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded border border-border hover:bg-muted transition-colors">
+                Cancel
+              </button>
+              <button onClick={() => setStep(2)} className="px-3 py-1.5 text-xs rounded bg-muted hover:bg-muted/80 text-foreground transition-colors">
+                Continue →
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-semibold text-destructive">This cannot be undone</p>
+            <p className="text-xs text-muted-foreground">
+              All pages, events, and storage files for <span className="font-medium text-foreground break-all">{filename}</span> will be permanently deleted.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={onCancel} disabled={isDeleting} className="px-3 py-1.5 text-xs rounded border border-border hover:bg-muted transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                disabled={isDeleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+              >
+                {isDeleting && <Loader2 className="h-3 w-3 animate-spin" />}
+                Permanently Delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -278,13 +485,22 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   const [propsPanelOpen, setPropsPanelOpen] = useState(true)
   const [pageJumpValue, setPageJumpValue] = useState("")
   const [showJumpInput, setShowJumpInput] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const jumpInputRef = useRef<HTMLInputElement>(null)
 
   const { allAircraft } = useRecordsVaultCtx()
+  const queryClient = useQueryClient()
 
   const currentHit = hits[currentHitIdx] ?? hits[0]
   const recordSourceId = currentHit?.record_source_id ?? null
   const aircraft = allAircraft.find((a) => a.id === currentHit?.aircraft_id)
+
+  // Page metadata: confidence scores + image paths
+  const { data: pageMetaMap } = usePageConfidenceMap(open ? recordSourceId : null)
+
+  // Current page PDF URL — used for download
+  const { data: currentPageUrl } = useRecordPageUrl(recordSourceId, currentPage)
 
   // Build a Set of match page numbers for the strip
   const matchPages = new Set(hits.map((h) => h.page_number))
@@ -349,6 +565,34 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     staleTime: 5 * 60 * 1000,
   })
 
+  const { profile } = useAuth()
+  const isManager = !!profile && MANAGER_ROLES.includes(profile.role as string)
+
+  async function handleDeleteConfirm() {
+    if (!recordSourceId) return
+    setIsDeleting(true)
+    try {
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      const resp = await fetch("/.netlify/functions/records-vault-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ recordSourceId }),
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: "Unknown error" }))
+        console.error("[delete]", err)
+      } else {
+        setDeleteOpen(false)
+        queryClient.invalidateQueries({ queryKey: ["record-sources"] })
+        queryClient.invalidateQueries({ queryKey: ["rv-source-detail", recordSourceId] })
+        onClose()
+      }
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const hasPrevHit  = currentHitIdx > 0
   const hasNextHit  = currentHitIdx < hits.length - 1
   const hasExcerpt  = !!currentHit?.ocr_excerpt?.trim() && query
@@ -390,7 +634,7 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="max-w-none w-screen h-screen p-0 gap-0 rounded-none flex flex-col">
+      <DialogContent hideCloseButton className="max-w-none w-screen h-screen p-0 gap-0 rounded-none flex flex-col">
 
         {/* ── Top bar ────────────────────────────────────────────────────────── */}
         <div className="flex-none flex items-center gap-3 px-4 py-2 border-b border-border bg-background">
@@ -483,6 +727,20 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
             </button>
           </div>
 
+          {/* Download current page */}
+          {currentPageUrl && (
+            <a
+              href={currentPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0 border-l border-border pl-3"
+              title={`Download page ${currentPage}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Download className="h-4 w-4" />
+            </a>
+          )}
+
           {/* Close */}
           <button
             onClick={onClose}
@@ -497,18 +755,27 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
         <div className="flex-1 flex min-h-0 overflow-hidden">
 
           {/* LEFT — page strip */}
-          <div className="w-[72px] shrink-0 flex flex-col border-r border-border bg-muted/5 overflow-y-auto">
+          <div className="w-[96px] shrink-0 flex flex-col border-r border-border bg-muted/5 overflow-y-auto">
             <div className="px-1 pt-1 space-y-0.5">
-              {stripPages.map((pageNum) => (
-                <PageStripItem
-                  key={pageNum}
-                  pageNumber={pageNum}
-                  isActive={pageNum === currentPage}
-                  isMatch={matchPages.has(pageNum)}
-                  matchIndex={matchPages.has(pageNum) ? (pageToHitIndex.get(pageNum) ?? null) : null}
-                  onClick={() => setCurrentPage(pageNum)}
-                />
-              ))}
+              {stripPages.map((pageNum) => {
+                const pageMeta = pageMetaMap?.get(pageNum)
+                return (
+                  <PageStripItem
+                    key={pageNum}
+                    recordSourceId={recordSourceId ?? ""}
+                    pageNumber={pageNum}
+                    isActive={pageNum === currentPage}
+                    isMatch={matchPages.has(pageNum)}
+                    matchIndex={matchPages.has(pageNum) ? (pageToHitIndex.get(pageNum) ?? null) : null}
+                    lowConfidence={
+                      pageMeta?.confidence != null &&
+                      pageMeta.confidence < OCR_CONFIDENCE_WARN
+                    }
+                    imagePath={pageMeta?.imagePath ?? null}
+                    onClick={() => setCurrentPage(pageNum)}
+                  />
+                )
+              })}
             </div>
           </div>
 
@@ -523,6 +790,7 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
                   pageNumber={currentPage}
                   filename={currentHit?.original_filename ?? ""}
                   totalPages={effectiveTotalPages}
+                  onNavigate={navigate}
                 />
               )}
             </div>
@@ -558,9 +826,20 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
             tailNumber={aircraft?.tailNumber}
             panelOpen={propsPanelOpen}
             onToggle={() => setPropsPanelOpen((v) => !v)}
+            isManager={isManager}
+            onDelete={() => setDeleteOpen(true)}
           />
         </div>
       </DialogContent>
+
+      <DeleteConfirmDialog
+        open={deleteOpen}
+        filename={currentHit?.original_filename ?? ""}
+        pageCount={source?.page_count}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        isDeleting={isDeleting}
+      />
     </Dialog>
   )
 }

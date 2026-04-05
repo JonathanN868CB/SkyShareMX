@@ -102,7 +102,7 @@ export function PartsApprovalPanel({ requestId, requestStatus, requestedBy, jobL
         decision === "approved" ? "parts_approved" : "parts_denied",
         decision === "approved" ? `Parts request approved` : `Parts request denied`,
         `${approverName} ${decision} your parts request for ${jobLabel}${comment.trim() ? ` — "${comment.trim()}"` : ""}`,
-        { request_id: requestId, path: `/app/parts/${requestId}` }
+        { request_id: requestId, path: `/app/beet-box/parts/${requestId}` }
       )
 
       toast.success(decision === "approved" ? "Request approved" : "Request denied")

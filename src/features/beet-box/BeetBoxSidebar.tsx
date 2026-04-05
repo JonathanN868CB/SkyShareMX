@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useLocation } from "react-router-dom"
 import {
   ClipboardList, Package, ShoppingCart, Wrench,
   FileText, BookOpen, BookMarked, GraduationCap,
-  PanelLeftOpen, PanelLeftClose, Settings,
+  PanelLeftOpen, PanelLeftClose, Settings, Boxes,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { BeetIcon } from "./shared/BeetIcon"
@@ -12,8 +12,9 @@ const OPS_ITEMS = [
   { label: "Work Orders",      path: "/app/beet-box/work-orders",     icon: ClipboardList },
   { label: "Logbook",          path: "/app/beet-box/logbook",          icon: BookOpen      },
   { label: "Invoicing",        path: "/app/beet-box/invoicing",        icon: FileText      },
-  { label: "Purchase Orders",  path: "/app/beet-box/purchase-orders",  icon: ShoppingCart  },
   { label: "Inventory",        path: "/app/beet-box/inventory",        icon: Package       },
+  { label: "Parts",            path: "/app/beet-box/parts",            icon: Boxes         },
+  { label: "Purchase Orders",  path: "/app/beet-box/purchase-orders",  icon: ShoppingCart  },
   { label: "Tool Calibration", path: "/app/beet-box/tool-calibration", icon: Wrench        },
   { label: "Settings",         path: "/app/beet-box/settings",         icon: Settings      },
 ]

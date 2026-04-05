@@ -27,7 +27,7 @@ const SUPABASE_URL     = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANTHROPIC_KEY    = Deno.env.get("ANTHROPIC_API_KEY")!;
 
-const ANTHROPIC_URL    = "https://api.anthropic.ai/v1/messages";
+const ANTHROPIC_URL    = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL     = "claude-haiku-4-5-20251001";
 const PAGE_BATCH_SIZE  = 8;   // pages per Claude call
 const MAX_CHARS_PAGE   = 3000; // truncate long pages to control token cost

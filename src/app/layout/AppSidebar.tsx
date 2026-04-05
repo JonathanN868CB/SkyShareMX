@@ -22,9 +22,9 @@ import {
   HardHat,
   ChevronRight,
   Activity,
-  Package,
   Send,
   BookOpen,
+  Gamepad2,
 } from "lucide-react"
 import { BeetIcon } from "@/features/beet-box/shared/BeetIcon"
 import {
@@ -83,13 +83,18 @@ const sidebarSections: SidebarSection[] = [
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
-      { name: "Parts",                  path: "/app/parts",                    icon: Package,       section: "Parts"                     },
-      { name: "External Requests",        path: "/app/external-requests",        icon: Send,          section: "External Requests"         },
       { name: "14-Day Check",           path: "/app/14-day-check",             icon: CalendarClock, section: "14-Day Check"              },
       { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
       { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],
     groups: [
+      {
+        label: "Island of Misfit Toys",
+        icon: Gamepad2,
+        items: [
+          { name: "External Requests", path: "/app/external-requests", icon: Send, section: "External Requests" },
+        ],
+      },
       {
         label: "Pending Cert.",
         icon: HardHat,
@@ -177,7 +182,7 @@ export function AppSidebar() {
               />
               {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
               {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
-              {!collapsed && item.name === "Beet Box" && (
+              {!collapsed && (item.name === "Beet Box" || item.name === "Records Vault") && (
                 <span
                   className="flex-shrink-0 text-[8px] font-bold tracking-widest px-1 py-0.5 rounded"
                   style={{

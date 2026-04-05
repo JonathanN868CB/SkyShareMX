@@ -6,11 +6,16 @@ import {
   ChevronDown,
   ChevronUp,
   FolderOpen,
+  Trash2,
 } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
 import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { useRecordSources } from "../hooks/useRecordSources"
 import { useRecordPageUrl } from "../hooks/useRecordPageUrl"
+import { useAuth } from "@/features/auth"
+import { supabase } from "@/lib/supabase"
 import { SOURCE_CATEGORY_LABELS } from "../constants"
+import { MANAGER_ROLES } from "../constants"
 import type { RecordSource, SourceCategory } from "../types"
 
 // ─── Category filter pills ────────────────────────────────────────────────────
@@ -97,9 +102,137 @@ function SourceCard({
   )
 }
 
+// ─── Delete confirmation dialog ───────────────────────────────────────────────
+
+function DeleteConfirmDialog({
+  source,
+  onConfirm,
+  onCancel,
+  isDeleting,
+}: {
+  source: RecordSource
+  onConfirm: () => void
+  onCancel: () => void
+  isDeleting: boolean
+}) {
+  const [step, setStep] = useState<1 | 2>(1)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-background border border-border rounded-lg shadow-xl w-full max-w-md mx-4 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {step === 1 ? (
+          <>
+            <div className="flex items-start gap-3 p-5 border-b border-border">
+              <div className="p-2 rounded-full bg-destructive/10 shrink-0">
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">Delete Document?</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                  This will permanently remove <span className="font-medium text-foreground">"{source.original_filename}"</span> and all of its indexed data.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 bg-destructive/5 border-b border-border">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-2">
+                What will be deleted
+              </p>
+              <ul className="space-y-1">
+                <li className="text-xs text-foreground flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
+                  Original PDF file from storage
+                </li>
+                <li className="text-xs text-foreground flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
+                  {source.page_count ?? "All"} indexed pages and OCR text
+                </li>
+                {source.events_extracted != null && source.events_extracted > 0 && (
+                  <li className="text-xs text-foreground flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
+                    {source.events_extracted} extracted maintenance events
+                  </li>
+                )}
+                {source.chunks_generated != null && source.chunks_generated > 0 && (
+                  <li className="text-xs text-foreground flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
+                    {source.chunks_generated} vector embeddings (RAG index)
+                  </li>
+                )}
+                <li className="text-xs text-foreground flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
+                  All cached page thumbnails and previews
+                </li>
+              </ul>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 px-5 py-4">
+              <button
+                onClick={onCancel}
+                className="px-3.5 py-1.5 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => setStep(2)}
+                className="px-3.5 py-1.5 text-sm rounded-md bg-destructive/10 border border-destructive/30 text-destructive hover:bg-destructive/20 font-medium transition-colors"
+              >
+                Continue →
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="p-5 border-b border-border">
+              <p className="text-sm font-semibold text-destructive mb-1">Final confirmation</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                This action <span className="font-semibold text-foreground">cannot be undone.</span> The original file and all indexed data will be permanently destroyed. You will need to re-upload and re-scan to recover it.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 px-5 py-4">
+              <button
+                onClick={onCancel}
+                disabled={isDeleting}
+                className="px-3.5 py-1.5 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                disabled={isDeleting}
+                className="px-3.5 py-1.5 text-sm rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 font-medium transition-colors disabled:opacity-60 flex items-center gap-2"
+              >
+                {isDeleting
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deleting…</>
+                  : <><Trash2 className="h-3.5 w-3.5" /> Permanently Delete</>
+                }
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Metadata panel ───────────────────────────────────────────────────────────
 
-function MetadataPanel({ source }: { source: RecordSource }) {
+function MetadataPanel({
+  source,
+  onDelete,
+  isManager,
+}: {
+  source: RecordSource
+  onDelete: () => void
+  isManager: boolean
+}) {
   const [expanded, setExpanded] = useState(true)
   const v = (source as RecordSource & {
     verification_status?: string
@@ -184,6 +317,19 @@ function MetadataPanel({ source }: { source: RecordSource }) {
           </div>
         )}
       </div>
+
+      {/* Delete — Manager+ only */}
+      {isManager && (
+        <div className="px-4 pb-4 pt-1">
+          <button
+            onClick={onDelete}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-destructive transition-colors group"
+          >
+            <Trash2 className="h-3 w-3 group-hover:text-destructive transition-colors" />
+            Delete document
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -193,7 +339,15 @@ function MetadataPanel({ source }: { source: RecordSource }) {
 // Handles all compression formats (JBIG2, CCITTFax, JPEG, etc.) without
 // react-pdf codec limitations.
 
-function InlineViewer({ source }: { source: RecordSource }) {
+function InlineViewer({
+  source,
+  onDelete,
+  isManager,
+}: {
+  source: RecordSource
+  onDelete: () => void
+  isManager: boolean
+}) {
   const { data: pdfUrl, isLoading, error } = useRecordPageUrl(source.id)
 
   return (
@@ -236,7 +390,7 @@ function InlineViewer({ source }: { source: RecordSource }) {
       </div>
 
       {/* Metadata panel */}
-      <MetadataPanel source={source} />
+      <MetadataPanel source={source} onDelete={onDelete} isManager={isManager} />
     </div>
   )
 }
@@ -245,10 +399,53 @@ function InlineViewer({ source }: { source: RecordSource }) {
 
 export default function RecordsVaultBrowsePage() {
   const { selectedAircraftId } = useRecordsVaultCtx()
+  const { profile } = useAuth()
+  const queryClient = useQueryClient()
+
   const [categoryFilter, setCategoryFilter] = useState<SourceCategory | "all">("all")
   const [selectedSource, setSelectedSource] = useState<RecordSource | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<RecordSource | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const isManager = MANAGER_ROLES.includes(profile?.role as typeof MANAGER_ROLES[number])
 
   const { data: sources = [], isLoading } = useRecordSources(selectedAircraftId)
+
+  async function handleDeleteConfirm() {
+    if (!deleteTarget) return
+    setIsDeleting(true)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error("Not authenticated")
+
+      const resp = await fetch("/.netlify/functions/records-vault-delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ recordSourceId: deleteTarget.id }),
+      })
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error((err as { error?: string }).error ?? "Delete failed")
+      }
+
+      // Clear selection if we just deleted the selected document
+      if (selectedSource?.id === deleteTarget.id) setSelectedSource(null)
+
+      // Refresh the sources list
+      queryClient.invalidateQueries({ queryKey: ["record-sources"] })
+      setDeleteTarget(null)
+    } catch (err) {
+      console.error("[records-vault-delete]", err)
+      alert(`Delete failed: ${err instanceof Error ? err.message : "Unknown error"}`)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   const filtered = categoryFilter === "all"
     ? sources
@@ -325,9 +522,24 @@ export default function RecordsVaultBrowsePage() {
             </p>
           </div>
         ) : (
-          <InlineViewer key={selectedSource.id} source={selectedSource} />
+          <InlineViewer
+            key={selectedSource.id}
+            source={selectedSource}
+            onDelete={() => setDeleteTarget(selectedSource)}
+            isManager={isManager}
+          />
         )}
       </div>
+
+      {/* Delete confirmation — two-step */}
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          source={deleteTarget}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => !isDeleting && setDeleteTarget(null)}
+          isDeleting={isDeleting}
+        />
+      )}
     </div>
   )
 }

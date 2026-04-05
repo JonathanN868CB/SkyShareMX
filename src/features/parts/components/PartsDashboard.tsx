@@ -277,7 +277,7 @@ export function PartsDashboard() {
     return (
       <tr
         key={r.id}
-        onClick={() => navigate(`/app/parts/${r.id}`)}
+        onClick={() => navigate(`/app/beet-box/parts/${r.id}`)}
         className="transition-colors cursor-pointer"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
         onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}

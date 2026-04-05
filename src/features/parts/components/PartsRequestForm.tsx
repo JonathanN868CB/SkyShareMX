@@ -226,7 +226,7 @@ export function PartsRequestForm() {
       })
 
       // 6. Notifications
-      const notifMeta = { request_id: request.id, path: `/app/parts/${request.id}` }
+      const notifMeta = { request_id: request.id, path: `/app/beet-box/parts/${request.id}` }
       const aogPrefix = aog ? "🔴 AOG: " : ""
 
       if (needsApproval) {
@@ -252,7 +252,7 @@ export function PartsRequestForm() {
       }
 
       toast.success(needsApproval ? "Parts request submitted — awaiting approval" : "Parts request submitted")
-      navigate("/app/parts")
+      navigate("/app/beet-box/parts")
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error"
       toast.error(`Failed to submit: ${msg}`)
@@ -658,7 +658,7 @@ export function PartsRequestForm() {
       <div className="flex items-center justify-end gap-4 pt-2">
         <button
           type="button"
-          onClick={() => navigate("/app/parts")}
+          onClick={() => navigate("/app/beet-box/parts")}
           className="px-4 py-2 rounded-md text-sm transition-colors"
           style={{ color: "rgba(255,255,255,0.5)" }}
         >

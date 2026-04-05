@@ -1,19 +1,29 @@
-import { useState, useRef, useMemo } from "react"
+import { useState, useRef, useMemo, useEffect, useCallback } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
   ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight,
   Plus, X, Clock, UserX, Package,
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
-  BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse,
+  BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download,
 } from "lucide-react"
+import jsPDF from "jspdf"
+import html2canvas from "html2canvas"
 import { Button } from "@/shared/ui/button"
 import { cn } from "@/shared/lib/utils"
 import {
-  WORK_ORDERS, AIRCRAFT, MECHANICS, LOGBOOK_ENTRIES, INVOICES, INVENTORY_PARTS,
-  WO_STATUS_LABELS, INVOICE_STATUS_LABELS,
-  type WorkOrder, type WOStatus, type WOItem, type WOItemPart,
-  type WOItemLaborEntry, type WOItemStatus, type LogbookSection,
-} from "../../data/mockData"
+  getWorkOrderById, updateWorkOrderStatus, updateWorkOrder,
+  upsertWOItem, updateItemStatus, updateWOItemFields, signOffItem, clearSignOff,
+  addItemPart, removeItemPart, clockLabor, deleteLabor,
+  getParts, getTechnicians, getMyProfileId,
+  getLogbookEntries, getOrCreateDraftLogbookEntry, upsertEntrySignatory, addSignatoryLine, updateLogbookEntry,
+} from "../../services"
+import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS } from "../../constants"
+import type {
+  WorkOrder, WOStatus, WOItem, WOItemPart,
+  WOItemLabor, WOItemStatus, LogbookSection,
+  InventoryPart, Mechanic, LogbookEntry,
+} from "../../types"
+import { supabase } from "@/lib/supabase"
 import { WOStatusBadge, PriorityBadge } from "../../shared/StatusBadge"
 
 // ─── Status pipeline ──────────────────────────────────────────────────────────
@@ -51,7 +61,7 @@ const ITEM_STATUS_CONFIG: Record<WOItemStatus, {
 }
 
 // ─── Financial helpers ────────────────────────────────────────────────────────
-function itemLaborTotal(item: WOItem)  { return item.hours * item.laborRate }
+function itemLaborTotal(item: WOItem)  { return item.estimatedHours * item.laborRate }
 function itemPartsTotal(item: WOItem)  { return item.parts.reduce((s, p) => s + p.qty * p.unitPrice, 0) }
 function itemSubtotal(item: WOItem)    { return itemLaborTotal(item) + itemPartsTotal(item) + item.shippingCost + item.outsideServicesCost }
 
@@ -59,6 +69,26 @@ const SHOP_SUPPLIES_RATE = 0.05
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+async function downloadPdf(el: HTMLElement, filename: string) {
+  const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: "#1a1a1a" })
+  const imgData = canvas.toDataURL("image/png")
+  const pdf = new jsPDF({ unit: "px", format: "a4", orientation: "portrait" })
+  const pdfW = pdf.internal.pageSize.getWidth()
+  const pdfH = pdf.internal.pageSize.getHeight()
+  const imgH = canvas.height * (pdfW / canvas.width)
+  let position = 0
+  let remaining = imgH
+  pdf.addImage(imgData, "PNG", 0, 0, pdfW, imgH)
+  remaining -= pdfH
+  while (remaining > 0) {
+    position += pdfH
+    pdf.addPage()
+    pdf.addImage(imgData, "PNG", 0, -position, pdfW, imgH)
+    remaining -= pdfH
+  }
+  pdf.save(filename)
 }
 
 // ─── Formatting toolbar ───────────────────────────────────────────────────────
@@ -112,8 +142,12 @@ interface ItemDetailPanelProps {
   isLocked: boolean
   sectionColor: string
   onPatch: (patch: Partial<WOItem>) => void
+  onPersist: (fields: Partial<WOItem>) => void
   onSignOff: () => void
-  assignedMechanics: string[]
+  onDeleteLabor: (id: string) => void
+  onDeletePart: (id: string) => void
+  mechanics: Mechanic[]
+  inventoryParts: InventoryPart[]
   onNavigatePO: () => void
   addingPartToItem: string | null
   setAddingPartToItem: (id: string | null) => void
@@ -128,7 +162,8 @@ interface ItemDetailPanelProps {
 }
 
 function ItemDetailPanel({
-  item, isLocked, sectionColor, onPatch, onSignOff, assignedMechanics, onNavigatePO,
+  item, isLocked, sectionColor, onPatch, onPersist, onSignOff, onDeleteLabor, onDeletePart,
+  mechanics, inventoryParts, onNavigatePO,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart,
   addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
 }: ItemDetailPanelProps) {
@@ -141,23 +176,23 @@ function ItemDetailPanel({
   const unloggedMentionedParts = useMemo(() => {
     if (!item.correctiveAction) return []
     const text = item.correctiveAction.toLowerCase()
-    return INVENTORY_PARTS.filter(inv =>
+    return inventoryParts.filter(inv =>
       text.includes(inv.partNumber.toLowerCase()) &&
       !item.parts.some(p => p.partNumber.toLowerCase() === inv.partNumber.toLowerCase())
     )
-  }, [item.correctiveAction, item.parts])
+  }, [item.correctiveAction, item.parts, inventoryParts])
 
   // ── Filtered inventory for picker ─────────────────────────────────────────────
   const filteredInventory = useMemo(() => {
     const q = invSearch.toLowerCase().trim()
-    if (!q) return INVENTORY_PARTS
-    return INVENTORY_PARTS.filter(p =>
+    if (!q) return inventoryParts
+    return inventoryParts.filter(p =>
       p.partNumber.toLowerCase().includes(q) ||
       p.description.toLowerCase().includes(q)
     )
-  }, [invSearch])
+  }, [invSearch, inventoryParts])
 
-  function addFromInventory(inv: typeof INVENTORY_PARTS[number]) {
+  function addFromInventory(inv: InventoryPart) {
     const part: WOItemPart = {
       id: `p-inv-${Date.now()}`,
       partNumber: inv.partNumber,
@@ -171,12 +206,12 @@ function ItemDetailPanel({
   }
 
   const itemStatus    = item.itemStatus ?? "pending"
-  const laborEntries  = item.itemLaborEntries ?? []
+  const laborEntries  = item.labor ?? []
   const clockedTotal  = laborEntries.reduce((s, e) => s + e.hours, 0)
   const noPartsRequired = item.noPartsRequired ?? false
 
-  const clockedNames  = new Set(laborEntries.map(e => e.mechName))
-  const allMechanics  = MECHANICS.filter(m => assignedMechanics.includes(m.id))
+  const clockedNames  = new Set(laborEntries.map(e => e.mechanicName))
+  const allMechanics  = mechanics
   const notClocked    = allMechanics.filter(m => !clockedNames.has(m.name))
 
   return (
@@ -231,7 +266,7 @@ function ItemDetailPanel({
             <button
               key={key}
               disabled={isLocked}
-              onClick={() => onPatch({ itemStatus: key })}
+              onClick={() => { onPatch({ itemStatus: key }); onPersist({ itemStatus: key }) }}
               className={cn(
                 "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all",
                 active
@@ -274,6 +309,7 @@ function ItemDetailPanel({
               ref={discRef}
               value={item.discrepancy}
               onChange={e => onPatch({ discrepancy: e.target.value })}
+              onBlur={e => onPersist({ discrepancy: e.target.value })}
               disabled={isLocked}
               rows={6}
               placeholder="Describe the discrepancy or task…"
@@ -315,6 +351,7 @@ function ItemDetailPanel({
               ref={corrRef}
               value={item.correctiveAction}
               onChange={e => onPatch({ correctiveAction: e.target.value })}
+              onBlur={e => onPersist({ correctiveAction: e.target.value })}
               disabled={isLocked}
               rows={6}
               placeholder={isLocked ? "No corrective action recorded." : "What was done to correct the discrepancy…"}
@@ -403,12 +440,12 @@ function ItemDetailPanel({
                   style={{ background: "hsl(220,15%,11%)", borderLeft: "3px solid rgba(96,165,250,0.5)" }}
                 >
                   <div className="w-2.5 h-2.5 rounded-full bg-blue-400 flex-shrink-0" />
-                  <span className="text-white text-sm flex-1">{e.mechName}</span>
+                  <span className="text-white text-sm flex-1">{e.mechanicName}</span>
                   <span className="text-white/70 text-sm font-mono">{e.hours.toFixed(1)} hrs</span>
-                  <span className="text-white/40 text-sm">{e.clockedAt}</span>
+                  <span className="text-white/40 text-sm">{new Date(e.clockedAt).toLocaleDateString()}</span>
                   {!isLocked && (
                     <button
-                      onClick={() => onPatch({ itemLaborEntries: laborEntries.filter(x => x.id !== e.id) })}
+                      onClick={() => onDeleteLabor(e.id)}
                       className="text-white/20 hover:text-red-400 transition-colors ml-1"
                     >
                       <X className="w-4 h-4" />
@@ -455,7 +492,7 @@ function ItemDetailPanel({
                     onChange={e => setNewLabor(n => ({ ...n, mechName: e.target.value }))}
                   >
                     <option value="">Select…</option>
-                    {MECHANICS.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                    {mechanics.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -548,7 +585,7 @@ function ItemDetailPanel({
                     ? "bg-emerald-700/40 border-emerald-600/50"
                     : "bg-transparent border-white/20 group-hover:border-white/40"
                 )}
-                onClick={() => onPatch({ noPartsRequired: !noPartsRequired })}
+                onClick={() => { onPatch({ noPartsRequired: !noPartsRequired }); onPersist({ noPartsRequired: !noPartsRequired }) }}
               >
                 {noPartsRequired && <Check className="w-3.5 h-3.5 text-emerald-400" />}
               </div>
@@ -570,7 +607,7 @@ function ItemDetailPanel({
                   <span className="text-white/60 flex-shrink-0 font-medium">Qty: {p.qty}</span>
                   {!isLocked && (
                     <button
-                      onClick={() => onPatch({ parts: item.parts.filter(x => x.id !== p.id) })}
+                      onClick={() => onDeletePart(p.id)}
                       className="text-white/20 hover:text-red-400 transition-colors ml-1"
                     >
                       <X className="w-4 h-4" />
@@ -833,7 +870,8 @@ export default function WorkOrderDetail() {
   // Handle Traxxall import: build a synthetic WO from navigate state
   const importState = location.state as {
     traxxallImport?: boolean
-    aircraftId?: string
+    aircraftId?: string | null
+    guestRegistration?: string | null
     aircraftReg?: string
     aircraftModel?: string
     woType?: string
@@ -842,46 +880,126 @@ export default function WorkOrderDetail() {
     meterAtOpen?: number
   } | null
 
-  const buildImportedWO = (): WorkOrder | null => {
-    if (!importState?.traxxallImport || !importState.items) return null
-    const sections = [...new Set(importState.items.map(i => i.logbookSection))] as LogbookSection[]
+  const buildImportedWO = (): WorkOrder => {
+    const items = importState?.items ?? []
     return {
-      id:               "wo-traxxall-import",
-      woNumber:         "WO-IMPORT",
-      aircraftId:       importState.aircraftId ?? AIRCRAFT[0].id,
-      status:           "draft",
-      woType:           importState.woType ?? "Scheduled Maintenance — Traxxall Import",
-      description:      importState.description ?? "",
-      priority:         "routine",
-      openedBy:         "You (Demo)",
-      openedAt:         new Date().toISOString(),
-      meterAtOpen:      importState.meterAtOpen ?? 0,
-      assignedMechanics: [],
-      notes:            "",
-      items:            importState.items,
-      laborEntries:     [],
-      statusHistory:    [{
-        id: "sh-import-0", fromStatus: null, toStatus: "draft",
-        changedBy: "Traxxall Import", changedAt: new Date().toISOString(),
-        notes: `Auto-created from Traxxall basket export — ${importState.items.length} tasks imported`,
+      id:                "wo-traxxall-import",
+      woNumber:          "WO-IMPORT",
+      aircraftId:        importState?.aircraftId ?? null,
+      guestRegistration: importState?.guestRegistration ?? importState?.aircraftReg ?? null,
+      guestSerial:       null,
+      aircraft:          null,
+      status:            "draft",
+      woType:            importState?.woType ?? "Scheduled Maintenance — Traxxall Import",
+      description:       importState?.description ?? null,
+      priority:          "routine",
+      openedBy:          null,
+      openedByName:      "Traxxall Import",
+      openedAt:          new Date().toISOString(),
+      closedAt:          null,
+      meterAtOpen:       importState?.meterAtOpen ?? null,
+      meterAtClose:      null,
+      discrepancyRef:    null,
+      notes:             null,
+      mechanics:         [],
+      items,
+      statusHistory:     [{
+        id: "sh-import-0", workOrderId: "wo-traxxall-import",
+        fromStatus: null, toStatus: "draft",
+        changedBy: null, changedAt: new Date().toISOString(),
+        notes: `Auto-created from Traxxall basket export — ${items.length} tasks imported`,
       }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }
   }
-
-  const original = id === "wo-traxxall-import" ? buildImportedWO() : WORK_ORDERS.find(w => w.id === id)
 
   const importedSections = importState?.items
     ? [...new Set(importState.items.map(i => i.logbookSection))] as LogbookSection[]
     : null
 
-  const [wo, setWO] = useState<WorkOrder | null>(original ?? null)
+  const [wo, setWO] = useState<WorkOrder | null>(
+    id === "wo-traxxall-import" ? buildImportedWO() : null
+  )
+  const [loading, setLoading] = useState(id !== "wo-traxxall-import")
+  const [inventoryParts, setInventoryParts] = useState<InventoryPart[]>([])
+  const [mechanics, setMechanics] = useState<Mechanic[]>([])
   const [showCompleteModal, setShowCompleteModal] = useState(false)
-  const [notes, setNotes] = useState(original?.notes ?? "")
+  const [notes, setNotes] = useState("")
   const [activeTab, setActiveTab] = useState<"items" | "history" | "notes" | "logbook" | "invoice">("items")
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(() => original?.items[0]?.id ?? null)
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [visibleSections, setVisibleSections] = useState<LogbookSection[]>(
     importedSections ?? ["Airframe", "Engine 1", "Propeller"]
   )
+  const [draftLogbookEntries, setDraftLogbookEntries] = useState<LogbookEntry[]>([])
+  const [logbookDraftError, setLogbookDraftError] = useState<string | null>(null)
+  // Editable fields for each draft logbook entry (keyed by entry id)
+  const [lbEdits, setLbEdits] = useState<Record<string, { returnToService: string; aircraftTime: string; hobbs: string; landings: string }>>({})
+  const logbookPrintRef = useRef<HTMLDivElement>(null)
+  const invoicePrintRef = useRef<HTMLDivElement>(null)
+  const [pdfExporting, setPdfExporting] = useState<"logbook" | "invoice" | null>(null)
+
+  async function handleDownloadPdf(type: "logbook" | "invoice", woNumber: string) {
+    const ref = type === "logbook" ? logbookPrintRef : invoicePrintRef
+    if (!ref.current) return
+    setPdfExporting(type)
+    try {
+      await downloadPdf(ref.current, `${woNumber}-${type}.pdf`)
+    } finally {
+      setPdfExporting(null)
+    }
+  }
+
+  const RTS_BOILERPLATE = "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed."
+
+  function lbEdit(entryId: string) {
+    return lbEdits[entryId] ?? { returnToService: RTS_BOILERPLATE, aircraftTime: "", hobbs: "", landings: "" }
+  }
+  function setLbField(entryId: string, field: "returnToService" | "aircraftTime" | "hobbs" | "landings", value: string) {
+    setLbEdits(prev => ({ ...prev, [entryId]: { ...lbEdit(entryId), [field]: value } }))
+  }
+
+  const loadWO = useCallback(async () => {
+    if (!id || id === "wo-traxxall-import") return
+    try {
+      const data = await getWorkOrderById(id)
+      setWO(data)
+      setNotes(data?.notes ?? "")
+      setSelectedItemId(s => s ?? data?.items[0]?.id ?? null)
+    } finally {
+      setLoading(false)
+    }
+  }, [id])
+
+  const loadDraftLogbookEntries = useCallback(async () => {
+    if (!id || id === "wo-traxxall-import") return
+    const entries = await getLogbookEntries({ workOrderId: id, status: "draft" })
+    setDraftLogbookEntries(entries)
+    // Seed editable fields from DB values (don't overwrite if user is mid-edit)
+    setLbEdits(prev => {
+      const next = { ...prev }
+      entries.forEach(e => {
+        if (!next[e.id]) {
+          next[e.id] = {
+            returnToService: e.returnToService || RTS_BOILERPLATE,
+            aircraftTime: e.totalAircraftTime?.toString() ?? "",
+            hobbs: e.hobbs?.toString() ?? "",
+            landings: e.landings?.toString() ?? "",
+          }
+        }
+      })
+      return next
+    })
+  }, [id])
+
+  useEffect(() => {
+    loadWO()
+    loadDraftLogbookEntries()
+    // Load supporting data in parallel
+    Promise.all([getParts(), getTechnicians()])
+      .then(([parts, techs]) => { setInventoryParts(parts); setMechanics(techs) })
+      .catch(() => {})
+  }, [loadWO, loadDraftLogbookEntries])
 
   const [addingToSection, setAddingToSection] = useState<LogbookSection | null>(null)
   const [newItem, setNewItem] = useState({
@@ -892,6 +1010,15 @@ export default function WorkOrderDetail() {
   const [newPart, setNewPart] = useState({ partNumber: "", description: "", qty: "1", unitPrice: "" })
   const [addingLaborToItem, setAddingLaborToItem] = useState<string | null>(null)
   const [newLabor, setNewLabor] = useState({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center gap-3">
+        <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+        <span className="text-white/40 text-sm">Loading work order…</span>
+      </div>
+    )
+  }
 
   if (!wo) {
     return (
@@ -905,10 +1032,8 @@ export default function WorkOrderDetail() {
     )
   }
 
-  const aircraft      = AIRCRAFT.find(a => a.id === wo.aircraftId)
+  const aircraft      = wo.aircraft
   const isLocked      = wo.status === "completed" || wo.status === "void"
-  const linkedLogbook = LOGBOOK_ENTRIES.find(e => e.woId === wo.id)
-  const linkedInvoice = INVOICES.find(i => i.woId === wo.id)
 
   const totalLabor    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0)
   const totalParts    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0)
@@ -916,7 +1041,7 @@ export default function WorkOrderDetail() {
   const totalOutside  = wo.items.reduce((s, i) => s + i.outsideServicesCost, 0)
   const shopSupplies  = totalLabor * SHOP_SUPPLIES_RATE
   const grandTotal    = totalLabor + totalParts + totalShipping + totalOutside + shopSupplies
-  const totalHours    = wo.items.reduce((s, i) => s + i.hours, 0)
+  const totalHours    = wo.items.reduce((s, i) => s + i.estimatedHours, 0)
 
   const itemsDone       = wo.items.filter(i => i.itemStatus === "done").length
   const itemsInProgress = wo.items.filter(i => i.itemStatus === "in_progress").length
@@ -925,117 +1050,178 @@ export default function WorkOrderDetail() {
   const selectedItem = wo.items.find(i => i.id === selectedItemId) ?? null
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  // Optimistic local patch (for UI responsiveness) — followed by a db call + reload
   function patchItem(itemId: string, patch: Partial<WOItem>) {
     if (isLocked) return
     setWO(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? { ...i, ...patch } : i) } : prev)
   }
 
-  function toggleSignOff(itemId: string) {
-    setWO(prev => {
-      if (!prev) return prev
-      return {
-        ...prev, items: prev.items.map(i => i.id === itemId
-          ? i.signedOffBy
-            ? { ...i, signedOffBy: undefined, signedOffAt: undefined }
-            : { ...i, signedOffBy: "You (Demo)", signedOffAt: new Date().toISOString() }
-          : i
-        ),
-      }
-    })
+  // Persist specific fields to DB without a full refetch (no loadWO → no data wipe)
+  async function persistItemFields(itemId: string, fields: Partial<WOItem>) {
+    if (isLocked) return
+    try {
+      await updateWOItemFields(itemId, {
+        ...(fields.discrepancy         !== undefined && { discrepancy: fields.discrepancy }),
+        ...(fields.correctiveAction    !== undefined && { correctiveAction: fields.correctiveAction }),
+        ...(fields.estimatedHours      !== undefined && { estimatedHours: fields.estimatedHours }),
+        ...(fields.laborRate           !== undefined && { laborRate: fields.laborRate }),
+        ...(fields.shippingCost        !== undefined && { shippingCost: fields.shippingCost }),
+        ...(fields.outsideServicesCost !== undefined && { outsideServicesCost: fields.outsideServicesCost }),
+        ...(fields.itemStatus          !== undefined && { itemStatus: fields.itemStatus }),
+        ...(fields.noPartsRequired     !== undefined && { noPartsRequired: fields.noPartsRequired }),
+        ...(fields.signOffRequired     !== undefined && { signOffRequired: fields.signOffRequired }),
+      })
+    } catch (err) {
+      console.error("Failed to save item fields:", err)
+    }
   }
 
-  function addItem(section: LogbookSection) {
-    if (!newItem.category) return
-    const item: WOItem = {
-      id: `i-demo-${Date.now()}`,
-      itemNumber: wo!.items.length + 1,
+  async function removeLaborEntry(itemId: string, laborId: string) {
+    if (isLocked) return
+    patchItem(itemId, { labor: (wo?.items.find(i => i.id === itemId)?.labor ?? []).filter(e => e.id !== laborId) })
+    await deleteLabor(laborId)
+  }
+
+  async function removePartEntry(itemId: string, partId: string) {
+    if (isLocked) return
+    patchItem(itemId, { parts: (wo?.items.find(i => i.id === itemId)?.parts ?? []).filter(p => p.id !== partId) })
+    await removeItemPart(partId)
+  }
+
+  async function toggleSignOff(itemId: string) {
+    if (isLocked || !wo) return
+    const item = wo.items.find(i => i.id === itemId)
+    if (!item) return
+    if (item.signedOffBy) {
+      // Unsign — only touch sign-off fields, never overwrite other item data
+      patchItem(itemId, { signedOffBy: null, signedOffAt: null, itemStatus: "done" })
+      await clearSignOff(itemId)
+    } else {
+      // Flush any unsaved text to DB before sign-off so loadWO() doesn't wipe it
+      await updateWOItemFields(itemId, {
+        discrepancy: item.discrepancy,
+        correctiveAction: item.correctiveAction,
+      })
+      const profileId = await getMyProfileId()
+      await signOffItem(itemId, profileId ?? "")
+      await loadWO()
+
+      // Auto-draft logbook entry for this section (one per section per WO)
+      if (profileId && id && id !== "wo-traxxall-import") {
+        try {
+          const tech = mechanics.find(m => m.id === profileId)
+          const entry = await getOrCreateDraftLogbookEntry(
+            { id: wo.id, woNumber: wo.woNumber, aircraftId: wo.aircraftId, guestRegistration: wo.guestRegistration, guestSerial: wo.guestSerial },
+            item.logbookSection
+          )
+          const signatory = await upsertEntrySignatory(entry.id, {
+            profileId,
+            mechanicName: tech?.name ?? "Unknown",
+            certType: tech?.certType ?? null,
+            certNumber: tech?.certNumber ?? null,
+          })
+          const lineText = [
+            item.taskNumber?.trim(),
+            item.correctiveAction?.trim() || item.category,
+          ].filter(Boolean).join(" ")
+          await addSignatoryLine(entry.id, lineText, signatory.id, item.id)
+          await loadDraftLogbookEntries()
+        } catch (err: any) {
+          console.error("Logbook draft creation failed:", err)
+          // Non-fatal — sign-off succeeded, logbook draft is best-effort
+          // Surface the error in the logbook tab so it's visible
+          setLogbookDraftError(err?.message ?? "Failed to create logbook draft")
+        }
+      }
+    }
+  }
+
+  async function addItem(section: LogbookSection) {
+    if (!newItem.category || !wo) return
+    const savedItem = await upsertWOItem({
+      workOrderId: wo.id,
+      itemNumber: wo.items.length + 1,
       category: newItem.category,
       logbookSection: section,
-      taskNumber: newItem.taskNumber || undefined,
+      taskNumber: newItem.taskNumber || null,
       discrepancy: newItem.discrepancy,
       correctiveAction: newItem.correctiveAction,
-      hours: parseFloat(newItem.hours) || 0,
+      estimatedHours: parseFloat(newItem.hours) || 0,
       laborRate: parseFloat(newItem.laborRate) || 125,
-      parts: [],
       shippingCost: parseFloat(newItem.shippingCost) || 0,
       outsideServicesCost: parseFloat(newItem.outsideServicesCost) || 0,
       signOffRequired: true,
       itemStatus: "pending",
-      itemLaborEntries: [],
-    }
-    setWO(prev => prev ? { ...prev, items: [...prev.items, item] } : prev)
-    setSelectedItemId(item.id)
+    })
+    setWO(prev => prev ? { ...prev, items: [...prev.items, savedItem] } : prev)
+    setSelectedItemId(savedItem.id)
     setNewItem({ category: "", taskNumber: "", discrepancy: "", correctiveAction: "", hours: "", laborRate: "125", shippingCost: "0", outsideServicesCost: "0" })
     setAddingToSection(null)
   }
 
-  function addPart(itemId: string) {
+  async function addPart(itemId: string) {
     if (!newPart.partNumber || !newPart.unitPrice) return
-    const part: WOItemPart = {
-      id: `p-demo-${Date.now()}`,
+    const saved = await addItemPart(itemId, {
       partNumber: newPart.partNumber,
       description: newPart.description,
       qty: parseFloat(newPart.qty) || 1,
       unitPrice: parseFloat(newPart.unitPrice) || 0,
-    }
-    patchItem(itemId, { parts: [...(wo.items.find(i => i.id === itemId)?.parts ?? []), part] })
+    })
+    patchItem(itemId, { parts: [...(wo.items.find(i => i.id === itemId)?.parts ?? []), saved] })
     setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" })
     setAddingPartToItem(null)
   }
 
-  function addLaborEntry(itemId: string) {
-    if (!newLabor.mechName || !newLabor.hours) return
-    const entry: WOItemLaborEntry = {
-      id: `ile-demo-${Date.now()}`,
-      mechName: newLabor.mechName,
+  async function addLaborEntry(itemId: string) {
+    if (!newLabor.mechName || !newLabor.hours || !wo) return
+    const profileId = await getMyProfileId()
+    const saved = await clockLabor({
+      itemId,
+      workOrderId: wo.id,
+      mechanicId: profileId ?? null,
+      mechanicName: newLabor.mechName,
       hours: parseFloat(newLabor.hours) || 0,
-      clockedAt: newLabor.date,
+      clockedAt: new Date(newLabor.date).toISOString(),
+      description: null,
+      billable: true,
+    })
+    const item = wo.items.find(i => i.id === itemId)
+    if (item) {
+      const newTotal = (item.labor ?? []).reduce((s, e) => s + e.hours, 0) + saved.hours
+      patchItem(itemId, { labor: [...(item.labor ?? []), saved], estimatedHours: newTotal })
     }
-    const existing = wo.items.find(i => i.id === itemId)?.itemLaborEntries ?? []
-    const totalHrs = existing.reduce((s, e) => s + e.hours, 0) + entry.hours
-    patchItem(itemId, { itemLaborEntries: [...existing, entry], hours: totalHrs })
     setNewLabor({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
     setAddingLaborToItem(null)
   }
 
-  function advanceStatus() {
-    const next = NEXT_STATUS[wo!.status]
+  async function advanceStatus() {
+    if (!wo) return
+    const next = NEXT_STATUS[wo.status]
     if (!next) return
     if (next === "completed") { setShowCompleteModal(true); return }
-    setWO(prev => prev ? {
-      ...prev, status: next,
-      statusHistory: [...prev.statusHistory, {
-        id: `sh-demo-${Date.now()}`, fromStatus: prev.status, toStatus: next,
-        changedBy: "You (Demo)", changedAt: new Date().toISOString(),
-        notes: `Advanced to ${WO_STATUS_LABELS[next]}`,
-      }],
-    } : prev)
+    const profileId = await getMyProfileId()
+    await updateWorkOrderStatus(wo.id, next, profileId ?? "", `Advanced to ${WO_STATUS_LABELS[next]}`)
+    await loadWO()
   }
 
-  function regressStatus() {
-    const prev = PREV_STATUS[wo!.status]
+  async function regressStatus() {
+    if (!wo) return
+    const prev = PREV_STATUS[wo.status]
     if (!prev) return
-    setWO(current => current ? {
-      ...current, status: prev,
-      statusHistory: [...current.statusHistory, {
-        id: `sh-demo-${Date.now()}`, fromStatus: current.status, toStatus: prev,
-        changedBy: "You (Demo)", changedAt: new Date().toISOString(),
-        notes: `Returned to ${WO_STATUS_LABELS[prev]}`,
-      }],
-    } : current)
+    const profileId = await getMyProfileId()
+    await updateWorkOrderStatus(wo.id, prev, profileId ?? "", `Returned to ${WO_STATUS_LABELS[prev]}`)
+    await loadWO()
   }
 
   function completeAndGenerate() { setShowCompleteModal(false); navigate("/app/beet-box/logbook/new?wo=" + wo!.id) }
-  function completeOnly() {
+
+  async function completeOnly() {
+    if (!wo) return
     setShowCompleteModal(false)
-    setWO(prev => prev ? {
-      ...prev, status: "completed", closedAt: new Date().toISOString(),
-      statusHistory: [...prev.statusHistory, {
-        id: `sh-demo-${Date.now()}`, fromStatus: "billing", toStatus: "completed",
-        changedBy: "You (Demo)", changedAt: new Date().toISOString(),
-        notes: "Work order completed and closed.",
-      }],
-    } : prev)
+    const profileId = await getMyProfileId()
+    await updateWorkOrderStatus(wo.id, "completed", profileId ?? "", "Work order completed and closed.")
+    await loadWO()
   }
 
   function showSection(s: LogbookSection) {
@@ -1080,7 +1266,7 @@ export default function WorkOrderDetail() {
         <div className="flex items-center gap-8">
           <div className="text-center">
             <div className="text-white/35 text-xs uppercase tracking-wider">Aircraft</div>
-            <div className="font-bold text-sm" style={{ color: "var(--skyshare-gold)" }}>{aircraft?.registration ?? "—"}</div>
+            <div className="font-bold text-sm" style={{ color: "var(--skyshare-gold)" }}>{aircraft?.registration ?? wo.guestRegistration ?? "—"}</div>
           </div>
           <div className="text-center">
             <div className="text-white/35 text-xs uppercase tracking-wider">Opened</div>
@@ -1136,6 +1322,14 @@ export default function WorkOrderDetail() {
             >
               <Icon className={cn("w-4 h-4", isActive && "text-[var(--skyshare-gold)]")} />
               {tab.label}
+              {tab.id === "logbook" && draftLogbookEntries.length > 0 && (
+                <span
+                  className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-bold leading-none"
+                  style={{ background: "rgba(52,211,153,0.2)", color: "#34d399" }}
+                >
+                  {draftLogbookEntries.length}
+                </span>
+              )}
             </button>
           )
         })}
@@ -1245,8 +1439,12 @@ export default function WorkOrderDetail() {
                   isLocked={isLocked}
                   sectionColor={SECTION_COLORS[selectedItem.logbookSection]}
                   onPatch={patch => patchItem(selectedItem.id, patch)}
+                  onPersist={fields => persistItemFields(selectedItem.id, fields)}
                   onSignOff={() => toggleSignOff(selectedItem.id)}
-                  assignedMechanics={wo.assignedMechanics}
+                  onDeleteLabor={id => removeLaborEntry(selectedItem.id, id)}
+                  onDeletePart={id => removePartEntry(selectedItem.id, id)}
+                  mechanics={mechanics}
+                  inventoryParts={inventoryParts}
                   onNavigatePO={() => navigate("/app/beet-box/purchase-orders")}
                   addingPartToItem={addingPartToItem}
                   setAddingPartToItem={setAddingPartToItem}
@@ -1418,181 +1616,398 @@ export default function WorkOrderDetail() {
 
         {/* ── LOGBOOK ENTRY TAB ──────────────────────────────────────────────── */}
         {activeTab === "logbook" && (
-          <div className="flex-1 overflow-y-auto p-8 max-w-3xl">
-            {linkedLogbook ? (
-              <div className="space-y-5">
-                {/* Header */}
-                <div className="flex items-center gap-4">
-                  <div>
-                    <h2 className="text-white text-xl font-bold">{linkedLogbook.entryNumber}</h2>
-                    <p className="text-white/40 text-sm mt-0.5">{linkedLogbook.aircraftReg} · {fmtDate(linkedLogbook.entryDate)}</p>
+          <div className="flex-1 overflow-y-auto" style={{ background: "hsl(0,0%,14%)" }}>
+            {/* Toolbar above paper */}
+            <div className="flex items-center justify-between px-6 py-3" style={{ borderBottom: "1px solid hsl(0,0%,20%)" }}>
+              <div className="flex items-center gap-3">
+                {logbookDraftError && (
+                  <div className="flex items-center gap-2 text-xs" style={{ color: "rgba(239,68,68,0.9)" }}>
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>{logbookDraftError}</span>
+                    <button onClick={() => setLogbookDraftError(null)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
                   </div>
-                  <span
-                    className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
-                    style={{
-                      background: linkedLogbook.status === "signed" ? "rgba(52,211,153,0.15)" : linkedLogbook.status === "exported" ? "rgba(96,165,250,0.15)" : "rgba(255,255,255,0.08)",
-                      color:      linkedLogbook.status === "signed" ? "#34d399" : linkedLogbook.status === "exported" ? "#60a5fa" : "rgba(255,255,255,0.5)",
-                    }}
-                  >
-                    {linkedLogbook.status}
-                  </span>
-                  <div className="flex-1" />
-                  <Button
-                    variant="ghost" size="sm"
-                    onClick={() => navigate(`/app/beet-box/logbook/${linkedLogbook.id}?from=/app/beet-box/work-orders/${wo.id}`)}
-                    className="text-white/50 hover:text-white border border-white/15 h-9 px-4 text-sm"
-                  >
-                    Open in Logbook →
-                  </Button>
-                </div>
-
-                {/* Aircraft time */}
-                <div className="flex gap-6 p-4 rounded-xl" style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}>
-                  <div>
-                    <p className="text-white/40 text-xs uppercase tracking-wider mb-1">Total Aircraft Time</p>
-                    <p className="text-white font-mono text-lg">{linkedLogbook.totalAircraftTimeNew?.toFixed(1) ?? linkedLogbook.totalAircraftTime.toFixed(1)} hrs</p>
-                  </div>
-                  {linkedLogbook.hobbs && (
-                    <div>
-                      <p className="text-white/40 text-xs uppercase tracking-wider mb-1">Hobbs</p>
-                      <p className="text-white font-mono text-lg">{linkedLogbook.hobbsNew?.toFixed(1) ?? linkedLogbook.hobbs.toFixed(1)} hrs</p>
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-white/40 text-xs uppercase tracking-wider mb-1">Section</p>
-                    <p className="text-white text-sm">{linkedLogbook.sectionTitle}</p>
-                  </div>
-                </div>
-
-                {/* Entry lines */}
-                <div className="rounded-xl overflow-hidden" style={{ border: "1px solid hsl(0,0%,24%)" }}>
-                  <div className="px-4 py-3" style={{ background: "hsl(0,0%,14%)", borderBottom: "1px solid hsl(0,0%,22%)" }}>
-                    <span className="text-white/80 text-sm font-bold uppercase tracking-widest">Maintenance Entries</span>
-                  </div>
-                  <div className="divide-y" style={{ divideColor: "hsl(0,0%,17%)" }}>
-                    {linkedLogbook.entries.map(e => (
-                      <div key={e.number} className="flex gap-4 px-5 py-4" style={{ background: "hsl(0,0%,11%)" }}>
-                        <span className="text-white/30 font-mono text-sm flex-shrink-0 w-5 pt-0.5">{e.number}.</span>
-                        <p className="text-white/80 text-sm leading-relaxed">{e.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Signature block */}
-                <div className="rounded-xl p-4 space-y-2" style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}>
-                  <p className="text-white/40 text-xs uppercase tracking-wider">Return to Service / Signature</p>
-                  <p className="text-white/60 text-xs leading-relaxed italic">{linkedLogbook.returnToService}</p>
-                  <div className="flex items-center gap-4 pt-2">
-                    <div>
-                      <p className="text-white/40 text-xs">Mechanic</p>
-                      <p className="text-white text-sm font-medium">{linkedLogbook.mechanicName}</p>
-                    </div>
-                    <div>
-                      <p className="text-white/40 text-xs">Certificate</p>
-                      <p className="text-white/70 text-sm font-mono">{linkedLogbook.certificateType} · {linkedLogbook.certificateNumber}</p>
-                    </div>
-                    {linkedLogbook.signedAt && (
-                      <div>
-                        <p className="text-white/40 text-xs">Signed</p>
-                        <p className="text-white/70 text-sm">{fmtDate(linkedLogbook.signedAt)}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
-            ) : (
+              {draftLogbookEntries.length > 0 && (
+                <Button
+                  size="sm" variant="ghost"
+                  disabled={pdfExporting === "logbook"}
+                  onClick={() => handleDownloadPdf("logbook", wo.woNumber)}
+                  className="flex items-center gap-2 text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 h-8 px-3 text-xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {pdfExporting === "logbook" ? "Exporting…" : "Download PDF"}
+                </Button>
+              )}
+            </div>
+
+            {draftLogbookEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 gap-3 text-white/25">
                 <BookOpen className="w-12 h-12" />
-                <p className="text-lg">No logbook entry yet</p>
-                <p className="text-sm text-center max-w-xs">A logbook entry will be generated when this work order is completed and closed out.</p>
+                <p className="text-lg">No logbook entries yet</p>
+                <p className="text-sm text-center max-w-xs">Draft entries appear automatically as items are signed off.</p>
+              </div>
+            ) : (
+              <div ref={logbookPrintRef} className="py-8 px-6 space-y-8" style={{ background: "hsl(0,0%,14%)" }}>
+                {draftLogbookEntries.map(entry => {
+                  const edits  = lbEdit(entry.id)
+                  const reg    = wo.aircraft?.registration ?? wo.guestRegistration ?? ""
+                  const make   = wo.aircraft?.make ?? ""
+                  const model  = wo.aircraft?.modelFull ?? ""
+                  const serial = wo.aircraft?.serialNumber ?? wo.guestSerial ?? ""
+                  const rts    = edits.returnToService || "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed."
+
+                  return (
+                    <div
+                      key={entry.id}
+                      className="mx-auto rounded shadow-2xl overflow-hidden"
+                      style={{ maxWidth: "720px", background: "#fff", color: "#111", fontFamily: "Arial, Helvetica, sans-serif" }}
+                    >
+                      {/* ── Top bar ── */}
+                      <div className="flex justify-between items-center px-4 py-1.5 text-xs border-b border-gray-300" style={{ borderTop: "2px solid #555" }}>
+                        <span style={{ fontWeight: 600 }}>{wo.woNumber} ({entry.entryDate})</span>
+                        <span>Page 1 / 1</span>
+                      </div>
+
+                      {/* ── Three-column header ── */}
+                      <div className="grid grid-cols-3 border-b border-gray-300" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                        {/* Left: aircraft */}
+                        <div className="px-4 py-3 text-xs border-r border-gray-300">
+                          {[
+                            { label: "MAKE",    value: make   || "—" },
+                            { label: "MODEL",   value: model  || "—" },
+                            { label: "S/N",     value: serial || "—" },
+                            { label: "REG. NO", value: reg    || "—" },
+                          ].map(r => (
+                            <div key={r.label} className="flex gap-1 leading-5">
+                              <span style={{ fontWeight: 700, minWidth: "52px" }}>{r.label}:</span>
+                              <span>{r.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Center: company */}
+                        <div className="px-4 py-3 flex flex-col items-center justify-center text-center border-r border-gray-300">
+                          <p className="text-sm font-bold leading-tight" style={{ color: "#111" }}>CB Aviation, Inc.</p>
+                          <p className="text-xs" style={{ color: "#555" }}>dba SkyShare</p>
+                          <p className="text-xs mt-1" style={{ color: "#555" }}>3715 Airport Rd.</p>
+                          <p className="text-xs" style={{ color: "#555" }}>Ogden, UT 84116</p>
+                        </div>
+                        {/* Right: WO info + editable times */}
+                        <div className="px-4 py-3 text-xs">
+                          {[
+                            { label: "W/O #",    value: wo.woNumber },
+                            { label: "DATE",     value: entry.entryDate },
+                          ].map(r => (
+                            <div key={r.label} className="flex gap-1 leading-5">
+                              <span style={{ fontWeight: 700, minWidth: "60px" }}>{r.label}:</span>
+                              <span>{r.value}</span>
+                            </div>
+                          ))}
+                          {/* Editable A/C TT, Landings, Hobbs — inline inputs styled to look like document fields */}
+                          {([
+                            { label: "A/C TT",   field: "aircraftTime" as const, dbField: "totalAircraftTime" as const, step: "0.1" },
+                            { label: "Landings", field: "landings"     as const, dbField: "landings"          as const, step: "1"   },
+                            { label: "Hobbs",    field: "hobbs"        as const, dbField: "hobbs"             as const, step: "0.1" },
+                          ]).map(f => (
+                            <div key={f.field} className="flex gap-1 items-center leading-5">
+                              <span style={{ fontWeight: 700, minWidth: "60px" }}>{f.label}:</span>
+                              <input
+                                type="number" step={f.step} placeholder="___"
+                                value={edits[f.field]}
+                                onChange={e => setLbField(entry.id, f.field, e.target.value)}
+                                onBlur={e => {
+                                  const v = e.target.value === "" ? undefined : parseFloat(e.target.value)
+                                  updateLogbookEntry(entry.id, { [f.dbField]: v }).catch(console.error)
+                                }}
+                                style={{
+                                  width: "72px", border: "none", borderBottom: "1px solid #aaa",
+                                  background: "transparent", fontSize: "12px", outline: "none",
+                                  color: "#111", padding: "0 2px",
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ── Section header ── */}
+                      <div className="px-4 pt-3 pb-1">
+                        <p className="text-sm font-bold underline" style={{ color: "#111" }}>
+                          {entry.sectionTitle || `${entry.logbookSection} Entries`}
+                        </p>
+                      </div>
+
+                      {/* ── Numbered entry lines ── */}
+                      <div className="px-4 pb-3">
+                        {entry.lines.length === 0 ? (
+                          <p className="text-xs italic mt-2" style={{ color: "#999" }}>
+                            No entries yet — sign off work order items to populate this logbook page.
+                          </p>
+                        ) : (
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                            <tbody>
+                              {entry.lines.map(line => (
+                                <tr key={line.id} style={{ verticalAlign: "top" }}>
+                                  <td style={{ paddingRight: "10px", paddingTop: "3px", width: "20px", textAlign: "right", color: "#555", whiteSpace: "nowrap", fontWeight: 600 }}>
+                                    {line.lineNumber}
+                                  </td>
+                                  <td style={{ paddingTop: "3px", lineHeight: "1.5", color: "#111" }}>
+                                    {line.text}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+
+                      {/* ── Return to service cert ── */}
+                      <div className="px-4 pb-3 pt-2">
+                        <p className="text-xs leading-relaxed" style={{ color: "#111" }}>{rts}</p>
+                      </div>
+
+                      {/* ── Signature blocks ── */}
+                      {(entry.signatories.length > 0 ? entry.signatories : [null]).map((sig, si) => (
+                        <div
+                          key={sig?.id ?? "blank"}
+                          className="px-4 pb-4 pt-1"
+                          style={{ borderTop: si > 0 ? "1px dashed #ccc" : "none" }}
+                        >
+                          <div className="flex items-end justify-between">
+                            <div className="flex items-end gap-6 text-xs">
+                              <div>
+                                <span style={{ fontWeight: 700 }}>DATE: </span>
+                                <span style={{ borderBottom: "1px solid #555", paddingBottom: "1px", minWidth: "90px", display: "inline-block" }}>
+                                  {entry.entryDate}
+                                </span>
+                              </div>
+                              <div>
+                                <span style={{ fontWeight: 700 }}>SIGNED: </span>
+                                <span style={{ borderBottom: "1px solid #555", minWidth: "160px", display: "inline-block", paddingBottom: "1px" }}>&nbsp;</span>
+                              </div>
+                            </div>
+                            <div className="text-xs text-right" style={{ color: "#555" }}>
+                              <p>WORK ORDER: {wo.woNumber}</p>
+                              <p>Printed by SkyShare MX</p>
+                            </div>
+                          </div>
+                          {sig && (
+                            <div className="mt-1 text-xs" style={{ marginLeft: "100px", color: "#111" }}>
+                              <p style={{ fontWeight: 600 }}>{sig.mechanicName}</p>
+                              {sig.certType && (
+                                <p>{sig.certType} Number: {sig.certNumber ?? ""}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
         )}
 
         {/* ── INVOICE TAB ────────────────────────────────────────────────────── */}
-        {activeTab === "invoice" && (
-          <div className="flex-1 overflow-y-auto p-8 max-w-3xl">
-            {linkedInvoice ? (
-              <div className="space-y-5">
-                {/* Header */}
-                <div className="flex items-center gap-4">
-                  <div>
-                    <h2 className="text-white text-xl font-bold">{linkedInvoice.invoiceNumber}</h2>
-                    <p className="text-white/40 text-sm mt-0.5">{linkedInvoice.customerName} · Issued {fmtDate(linkedInvoice.issuedDate)}</p>
-                  </div>
-                  <span
-                    className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
-                    style={{
-                      background: linkedInvoice.status === "paid" ? "rgba(52,211,153,0.15)" : linkedInvoice.status === "sent" ? "rgba(96,165,250,0.15)" : linkedInvoice.status === "void" ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.08)",
-                      color:      linkedInvoice.status === "paid" ? "#34d399" : linkedInvoice.status === "sent" ? "#60a5fa" : linkedInvoice.status === "void" ? "#f87171" : "rgba(255,255,255,0.5)",
-                    }}
-                  >
-                    {INVOICE_STATUS_LABELS[linkedInvoice.status]}
-                  </span>
-                  <div className="flex-1" />
-                  <Button
-                    variant="ghost" size="sm"
-                    onClick={() => navigate(`/app/beet-box/invoicing/${linkedInvoice.id}?from=/app/beet-box/work-orders/${wo.id}`)}
-                    className="text-white/50 hover:text-white border border-white/15 h-9 px-4 text-sm"
-                  >
-                    Open in Invoicing →
-                  </Button>
-                </div>
+        {activeTab === "invoice" && (() => {
+          const laborTotal    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0)
+          const partsTotal    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0)
+          const shippingTotal = wo.items.reduce((s, i) => s + i.shippingCost, 0)
+          const outsideTotal  = wo.items.reduce((s, i) => s + i.outsideServicesCost, 0)
+          const shopSupplies  = Math.round(laborTotal * SHOP_SUPPLIES_RATE * 100) / 100
+          const taxOnLabor    = Math.round(laborTotal * 0.0725 * 100) / 100
+          const taxOnSupplies = Math.round(shopSupplies * 0.0725 * 100) / 100
+          const taxTotal      = taxOnLabor + taxOnSupplies
+          const amountCharged = laborTotal + partsTotal + shippingTotal + outsideTotal + shopSupplies + taxTotal
+          const reg    = wo.aircraft?.registration ?? wo.guestRegistration ?? "—"
+          const make   = wo.aircraft?.make ?? ""
+          const model  = wo.aircraft?.modelFull ?? ""
+          const serial = wo.aircraft?.serialNumber ?? wo.guestSerial ?? "—"
+          const fe     = draftLogbookEntries[0]
+          const acTT   = fe ? (lbEdit(fe.id).aircraftTime || "") : ""
+          const lngs   = fe ? (lbEdit(fe.id).landings    || "") : ""
+          const hobbs  = fe ? (lbEdit(fe.id).hobbs       || "") : ""
+          const $f     = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-                {/* Line items */}
-                <div className="rounded-xl overflow-hidden" style={{ border: "1px solid hsl(0,0%,24%)" }}>
-                  <div className="px-4 py-3 grid grid-cols-12 gap-2 text-xs font-bold uppercase tracking-wider text-white/40"
-                    style={{ background: "hsl(0,0%,14%)", borderBottom: "1px solid hsl(0,0%,22%)" }}>
-                    <span className="col-span-6">Description</span>
-                    <span className="col-span-2 text-right">Qty</span>
-                    <span className="col-span-2 text-right">Unit</span>
-                    <span className="col-span-2 text-right">Total</span>
-                  </div>
-                  {linkedInvoice.lines.map(line => (
-                    <div key={line.id} className="px-4 py-3 grid grid-cols-12 gap-2 text-sm border-t" style={{ background: "hsl(0,0%,11%)", borderColor: "hsl(0,0%,17%)" }}>
-                      <span className="col-span-6 text-white/75">{line.description}</span>
-                      <span className="col-span-2 text-right text-white/50 font-mono">{line.qty}</span>
-                      <span className="col-span-2 text-right text-white/50 font-mono">${line.unitPrice.toFixed(2)}</span>
-                      <span className="col-span-2 text-right text-white font-mono">${line.extended.toFixed(2)}</span>
-                    </div>
-                  ))}
-                </div>
+          return (
+            <div className="flex-1 overflow-y-auto" style={{ background: "hsl(0,0%,14%)" }}>
 
-                {/* Totals */}
-                <div className="rounded-xl p-4 space-y-2" style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}>
-                  {[
-                    { label: "Labor",  value: linkedInvoice.subtotalLabor },
-                    { label: "Parts",  value: linkedInvoice.subtotalParts },
-                    { label: "Misc",   value: linkedInvoice.subtotalMisc  },
-                    { label: "Tax",    value: linkedInvoice.taxAmount      },
-                  ].filter(r => r.value > 0).map(r => (
-                    <div key={r.label} className="flex items-center justify-between text-sm">
-                      <span className="text-white/40">{r.label}</span>
-                      <span className="text-white/70 font-mono">${r.value.toFixed(2)}</span>
+              {/* Toolbar */}
+              <div className="flex items-center justify-end px-6 py-3" style={{ borderBottom: "1px solid hsl(0,0%,20%)" }}>
+                <Button
+                  size="sm" variant="ghost"
+                  disabled={pdfExporting === "invoice"}
+                  onClick={() => handleDownloadPdf("invoice", wo.woNumber)}
+                  className="flex items-center gap-2 text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 h-8 px-3 text-xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {pdfExporting === "invoice" ? "Exporting…" : "Download PDF"}
+                </Button>
+              </div>
+
+              {/* Paper */}
+              <div className="py-8 px-6">
+                <div
+                  ref={invoicePrintRef}
+                  className="mx-auto shadow-2xl"
+                  style={{ maxWidth: "740px", background: "#fff", color: "#111", fontFamily: "Arial, Helvetica, sans-serif", fontSize: "12px", lineHeight: "1.4" }}
+                >
+
+                  {/* ═══ PAGE 1 ═══ */}
+                  <div style={{ padding: "20px 24px 0" }}>
+
+                    {/* Top bar */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: "2px solid #111", paddingBottom: "4px", marginBottom: "12px" }}>
+                      <span style={{ fontWeight: 700, fontSize: "13px" }}>Customer Invoice: {wo.woNumber}</span>
+                      <span style={{ fontSize: "11px", color: "#666" }}>Printed by SkyShare MX (Pg. 1 / 2)</span>
                     </div>
-                  ))}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                    <span className="text-white font-bold">Total</span>
-                    <span className="text-xl font-bold font-mono" style={{ color: "var(--skyshare-gold)" }}>
-                      ${linkedInvoice.grandTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                    </span>
+
+                    {/* Logo + company left | aircraft + bill-to right */}
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "32px", marginBottom: "12px" }}>
+                      {/* Left: logo + company */}
+                      <div>
+                        <div style={{ width: "44px", height: "44px", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "8px" }}>
+                          <span style={{ color: "#fff", fontWeight: 900, fontSize: "24px", fontStyle: "italic" }}>S</span>
+                        </div>
+                        <p style={{ fontWeight: 700, fontSize: "13px", marginBottom: "2px" }}>CB Aviation, Inc.</p>
+                        <p style={{ color: "#444" }}>dba SkyShare</p>
+                        <p style={{ color: "#444" }}>3715 Airport Rd.</p>
+                        <p style={{ color: "#444" }}>Ogden, UT 84116</p>
+                        <p style={{ color: "#444" }}>Email: jstorey@skyshare.com</p>
+                        <p style={{ color: "#444" }}>Phone: 801-621-0326</p>
+                        <p style={{ color: "#444" }}>skyshare.com</p>
+                      </div>
+                      {/* Right: aircraft info + bill to */}
+                      <div style={{ minWidth: "240px" }}>
+                        <p>Date: {fmtDate(wo.openedAt)}</p>
+                        <p>Reg. No.: {reg}{(make || model) ? ` (${[make, model].filter(Boolean).join(" ")})` : ""}</p>
+                        <p>A/C Serial: {serial}</p>
+                        <p>A/C TT: {acTT}</p>
+                        <p>Landings: {lngs}</p>
+                        <p>Hobbs: {hobbs}</p>
+                        <p style={{ marginTop: "8px" }}>Bill to: — customer on file —</p>
+                      </div>
+                    </div>
+
+                    <div style={{ borderTop: "1px solid #bbb", marginBottom: "0" }} />
                   </div>
-                  {linkedInvoice.notes && (
-                    <p className="text-white/35 text-xs pt-1 border-t border-white/[0.06]">{linkedInvoice.notes}</p>
-                  )}
+
+                  {/* ── Per-item blocks ── */}
+                  <div style={{ padding: "0 24px 16px" }}>
+                    {wo.items.map((item) => {
+                      const labor  = itemLaborTotal(item)
+                      const parts  = itemPartsTotal(item)
+                      const ship   = item.shippingCost
+                      const out    = item.outsideServicesCost
+                      const sub    = itemSubtotal(item)
+                      const secLabel = item.logbookSection ? `-${item.logbookSection}` : ""
+                      return (
+                        <div key={item.id} style={{ marginTop: "10px" }}>
+                          {/* Item header bar */}
+                          <div style={{ background: "#e0e0e0", textAlign: "center", padding: "3px 8px", fontWeight: 700, borderTop: "1px solid #bbb", borderBottom: "1px solid #bbb" }}>
+                            Item: {item.itemNumber}{secLabel}
+                          </div>
+
+                          {/* Discrepancy */}
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", marginTop: "4px" }}>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ fontWeight: 700 }}>Discrepancy</p>
+                              <p>{item.discrepancy || item.category}</p>
+                              {item.taskNumber   && <p>Task #: {item.taskNumber}</p>}
+                              {item.partNumber   && <p>Part Number: {item.partNumber}</p>}
+                              {item.serialNumber && <p>Serial Number: {item.serialNumber}</p>}
+                            </div>
+                            <div style={{ textAlign: "right", minWidth: "110px" }}>
+                              <div style={{ display: "flex", gap: "20px", justifyContent: "flex-end", fontWeight: 700 }}>
+                                <span>Hours</span><span>Subtotal</span>
+                              </div>
+                              <div style={{ display: "flex", gap: "20px", justifyContent: "flex-end" }}>
+                                <span>{item.estimatedHours.toFixed(2)}</span>
+                                <span>{$f(labor)}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Corrective Action */}
+                          <div style={{ marginTop: "4px" }}>
+                            <p style={{ fontWeight: 700 }}>Corrective Action</p>
+                            <p style={{ lineHeight: "1.5" }}>{item.correctiveAction || "—"}</p>
+                          </div>
+
+                          {/* Item Summary row */}
+                          <div style={{ display: "flex", alignItems: "center", gap: "16px", background: "#f0f0f0", padding: "3px 8px", marginTop: "6px", borderTop: "1px solid #ccc", borderBottom: "1px solid #ccc", flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 700 }}>Item Summary</span>
+                            <span>Labor:&nbsp; {$f(labor)}</span>
+                            <span>Parts:&nbsp; {$f(parts)}</span>
+                            <span>Shipping:&nbsp; {$f(ship)}</span>
+                            {out > 0 && <span>Outside Svcs:&nbsp; {$f(out)}</span>}
+                            <span style={{ marginLeft: "auto", fontWeight: 700 }}>Item Subtotal:&nbsp; {$f(sub)}</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* ═══ PAGE 2 (visual separator) ═══ */}
+                  <div style={{ borderTop: "3px double #bbb", margin: "0 24px 0", paddingTop: "0" }} />
+                  <div style={{ padding: "16px 24px 0" }}>
+
+                    {/* Top bar pg 2 */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: "2px solid #111", paddingBottom: "4px", marginBottom: "14px" }}>
+                      <span style={{ fontWeight: 700, fontSize: "13px" }}>Customer Invoice: {wo.woNumber}</span>
+                      <span style={{ fontSize: "11px", color: "#666" }}>Printed by SkyShare MX (Pg. 2 / 2)</span>
+                    </div>
+
+                    {/* Totals: left notes | right column */}
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "32px", marginBottom: "20px" }}>
+                      {/* Left */}
+                      <div>
+                        <p><strong>Shop Supplies:</strong> {$f(shopSupplies)}</p>
+                        {taxTotal > 0 && (
+                          <p style={{ marginTop: "4px" }}>
+                            <strong>Tax Breakdown:</strong> Shop Labor = {taxOnLabor.toFixed(2)}, Shop Supplies = {taxOnSupplies.toFixed(2)}
+                          </p>
+                        )}
+                      </div>
+                      {/* Right: right-aligned totals column */}
+                      <div style={{ textAlign: "right", minWidth: "260px" }}>
+                        {[
+                          { label: "Total Shop Labor:",  val: $f(laborTotal),    bold: false },
+                          { label: "Total Parts:",        val: $f(partsTotal),    bold: false },
+                          { label: "Total Shipping:",     val: $f(shippingTotal), bold: false },
+                          { label: "Additional Charges:", val: $f(shopSupplies),  bold: false },
+                          { label: "Tax:",                val: $f(taxTotal),      bold: false },
+                          { label: "Amount Charged:",     val: $f(amountCharged), bold: false },
+                          { label: "Amount Paid:",        val: "$0.00",           bold: false },
+                          { label: "Amount Due:",         val: $f(amountCharged), bold: true  },
+                        ].map(r => (
+                          <div key={r.label} style={{ display: "flex", justifyContent: "flex-end", gap: "8px", fontWeight: r.bold ? 700 : 400 }}>
+                            <span>{r.label}</span>
+                            <span style={{ minWidth: "72px", textAlign: "right" }}>{r.val}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Important Information */}
+                    <div style={{ textAlign: "center", marginBottom: "16px" }}>
+                      <p style={{ fontWeight: 700, marginBottom: "4px" }}>Important Information</p>
+                      <p>Core fees may apply and the responsibility of the customer.</p>
+                      <p>Credit card convenience fee of 3.5% applies to all invoices $1000.00 or more.</p>
+                    </div>
+
+                    <div style={{ borderTop: "1px solid #555", marginBottom: "10px" }} />
+
+                    {/* Signature & Date */}
+                    <p style={{ fontWeight: 700, paddingBottom: "24px" }}>Signature &amp; Date</p>
+                  </div>
+
                 </div>
               </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-64 gap-3 text-white/25">
-                <Receipt className="w-12 h-12" />
-                <p className="text-lg">No invoice yet</p>
-                <p className="text-sm text-center max-w-xs">An invoice can be created once this work order moves to billing status.</p>
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          )
+        })()}
 
       </div>
 
@@ -1692,7 +2107,7 @@ export default function WorkOrderDetail() {
               style={{ background: "hsl(0,0%,11%)" }}
             >
               <p className="text-white/40 uppercase tracking-widest text-xs mb-2">Logbook Entry Preview</p>
-              <p className="text-white/75 text-sm"><span className="text-white/40">Aircraft:</span> {aircraft?.registration} — {aircraft?.make} {aircraft?.model}</p>
+              <p className="text-white/75 text-sm"><span className="text-white/40">Aircraft:</span> {aircraft?.registration ?? wo.guestRegistration ?? "—"}{aircraft?.make ? ` — ${aircraft.make} ${aircraft.modelFull}` : ""}</p>
               <p className="text-white/75 text-sm"><span className="text-white/40">Sections:</span> {[...new Set(wo.items.map(i => i.logbookSection))].join(", ")}</p>
               <p className="text-white/75 text-sm"><span className="text-white/40">Items:</span> {wo.items.length} tasks · {totalHours.toFixed(1)} hrs total</p>
             </div>
