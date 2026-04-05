@@ -8,7 +8,7 @@ import type { EmploymentStatus, Role, UserSummary } from "../../src/lib/types/us
  *   user_id uuid primary key references auth.users(id) on delete cascade,
  *   full_name text not null,
  *   email text not null unique,
- *   role text not null check (role in ('admin','manager','technician','viewer')),
+ *   role text not null check (role in ('admin','manager','technician','guest')),
  *   employment_status text not null default 'active' check (employment_status in ('active','inactive')),
  *   last_login timestamptz,
  *   is_super_admin boolean not null default false,

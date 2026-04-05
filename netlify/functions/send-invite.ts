@@ -219,7 +219,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   const email = sanitize(payload.email).toLowerCase();
-  const role = sanitize(payload.role) || "Technician";
+  const role = sanitize(payload.role) || "Guest";
   const invitedByName = sanitize(payload.invitedByName) || "A SkyShare admin";
   const siteUrl = sanitize(payload.siteUrl) || "https://www.skysharemx.com";
 
@@ -259,15 +259,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
       .maybeSingle();
 
     if (newProfile) {
-      const DEFAULT_SECTIONS = [
-        "Dashboard",
-        "Aircraft Info",
-        "External Requests",
-      ] as const;
+      // Guest users get the minimal default set. All other roles get the same
+      // defaults plus External Requests. Per-user grants can be added later.
+      const sectionsToSeed = role === "Guest"
+        ? ["Dashboard", "Aircraft Info", "AI Assistant"]
+        : ["Dashboard", "Aircraft Info", "AI Assistant", "External Requests"];
 
       // Upsert so the DB trigger's pre-seeded rows are never double-inserted.
       await adminClient.from("user_permissions").upsert(
-        DEFAULT_SECTIONS.map(section => ({ user_id: newProfile.id, section })),
+        sectionsToSeed.map(section => ({ user_id: newProfile.id, section })),
         { onConflict: "user_id,section", ignoreDuplicates: true }
       );
 
