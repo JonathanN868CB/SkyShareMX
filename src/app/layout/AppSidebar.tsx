@@ -1,6 +1,7 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
 import { useMmFleetOverview as useMmFleetOverviewForBadge } from "@/features/mm-audit/useMmAuditData"
+import { supabase } from "@/lib/supabase"
 import {
   Home,
   Plane,
@@ -14,6 +15,7 @@ import {
   FileText,
   Kanban,
   MessageSquare,
+  MessageSquarePlus,
   Building,
   ShieldCheck,
   GraduationCap,
@@ -117,7 +119,8 @@ const sidebarSections: SidebarSection[] = [
       { name: "Team Training & Journey", path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
       { name: "Alerts & Notifications",  path: "/app/admin/alerts",      icon: Bell,          section: "Dashboard"                   },
       { name: "Settings",                path: "/app/admin/settings",    icon: Settings,      section: "Dashboard"                   },
-      { name: "Permissions Index",       path: "/app/admin/permissions", icon: ShieldCheck,   section: "Dashboard", superAdminOnly: true },
+      { name: "Permissions Index",       path: "/app/admin/permissions", icon: ShieldCheck,      section: "Dashboard", superAdminOnly: true },
+      { name: "Site Suggestions",        path: "/app/admin/suggestions", icon: MessageSquarePlus, section: "Dashboard", superAdminOnly: true },
     ],
   },
 ]
@@ -182,6 +185,7 @@ export function AppSidebar() {
               />
               {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
               {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
+              {!collapsed && item.name === "Site Suggestions" && <SuggestionsBadge />}
               {!collapsed && (item.name === "Beet Box" || item.name === "Records Vault") && (
                 <span
                   className="flex-shrink-0 text-[8px] font-bold tracking-widest px-1 py-0.5 rounded"
@@ -383,6 +387,47 @@ export function AppSidebar() {
 }
 
 // ─── Compliance audit overdue badge ──────────────────────────────────────────
+function SuggestionsBadge() {
+  const [count, setCount] = useState(0)
+
+  useEffect(() => {
+    async function fetchCount() {
+      const { count: n } = await supabase
+        .from("site_suggestions")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "open")
+      setCount(n ?? 0)
+    }
+
+    fetchCount()
+
+    // Live update — re-fetch whenever any suggestion row changes
+    const channel = supabase
+      .channel("suggestions-badge")
+      .on("postgres_changes", { event: "*", schema: "public", table: "site_suggestions" }, fetchCount)
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+
+  if (count === 0) return null
+
+  return (
+    <span
+      className="ml-auto inline-flex items-center justify-center h-4 min-w-[16px] px-1.5 rounded-full text-[9px] font-bold tracking-wide"
+      style={{
+        background: "rgba(212,160,23,0.15)",
+        color: "var(--skyshare-gold)",
+        border: "1px solid rgba(212,160,23,0.3)",
+        fontFamily: "var(--font-heading)",
+        boxShadow: "0 0 6px rgba(212,160,23,0.15)",
+      }}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  )
+}
+
 function ComplianceBadge() {
   const { data } = useMmFleetOverviewForBadge()
   const overdue = (data?.summaries ?? []).filter((s: { status: string }) => s.status === "overdue").length

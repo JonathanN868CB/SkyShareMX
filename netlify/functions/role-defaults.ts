@@ -4,7 +4,7 @@ import type { Database } from "../../src/entities/supabase";
 const ROLE_DEFAULTS_QUERY =
   "select role::text as role, section, level::text as level from public.role_default_permissions";
 
-const ROLE_DEFAULT_ROLES = ["manager", "technician", "viewer"] as const;
+const ROLE_DEFAULT_ROLES = ["manager", "technician", "guest"] as const;
 const IMMUTABLE_ROLES = new Set(["admin"]);
 
 type RoleDefaultsRole = (typeof ROLE_DEFAULT_ROLES)[number];

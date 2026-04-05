@@ -22,12 +22,14 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "PATCH, DELETE, OPTIONS",
 };
 
-const ROLE_VALUES: Role[] = ["admin", "manager", "technician", "viewer"];
+const ROLE_VALUES: Role[] = ["admin", "manager", "technician", "guest"];
 const STATUS_VALUES: EmploymentStatus[] = ["active", "inactive"];
 const ROLE_NORMALIZATION_ALIASES: Partial<Record<string, Role>> = {
-  "read-only": "viewer",
-  "read only": "viewer",
-  readonly: "viewer",
+  // Legacy aliases kept for backward compatibility
+  "read-only": "guest",
+  "read only": "guest",
+  readonly: "guest",
+  viewer: "guest",
   "super-admin": "admin",
   "super admin": "admin",
   superadmin: "admin",
@@ -157,7 +159,7 @@ function normalizeRole(value: unknown): Role | undefined {
 
 function mapProfile(row: Record<string, unknown>): UserSummary {
   const fullName = typeof row.full_name === "string" && row.full_name.trim().length > 0 ? row.full_name.trim() : (row.email as string);
-  const role: Role = normalizeRole(row.role) ?? "viewer";
+  const role: Role = normalizeRole(row.role) ?? "guest";
 
   return {
     userId: String(row.user_id ?? ""),
