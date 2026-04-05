@@ -39,6 +39,7 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
   const [unreadReply, setUnreadReply] = useState<UnreadReply | null>(null)
   const [dismissing, setDismissing]   = useState(false)
   const [dragOver, setDragOver]       = useState(false)
+  const [zoneHovered, setZoneHovered] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const hasUnread = unreadReply !== null
@@ -354,23 +355,89 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
                     </button>
                   </div>
                 ) : (
+                  /* Paste / drag target — does NOT open file picker on click so focus stays
+                     in the dialog and the document paste listener keeps working */
                   <div
-                    onClick={() => fileInputRef.current?.click()}
+                    tabIndex={0}
+                    onMouseEnter={() => setZoneHovered(true)}
+                    onMouseLeave={() => setZoneHovered(false)}
+                    onPaste={e => {
+                      const items = e.clipboardData?.items
+                      if (!items) return
+                      for (const item of Array.from(items)) {
+                        if (item.type.startsWith("image/")) {
+                          const file = item.getAsFile()
+                          if (file) loadImage(file)
+                          break
+                        }
+                      }
+                    }}
                     onDragOver={e => { e.preventDefault(); setDragOver(true) }}
                     onDragLeave={() => setDragOver(false)}
                     onDrop={handleDrop}
-                    className="flex flex-col items-center justify-center gap-2 py-6 rounded-md cursor-pointer transition-colors"
+                    className="flex flex-col items-center justify-center gap-2 py-5 rounded-md focus:outline-none"
                     style={{
-                      border: `2px dashed ${dragOver ? "rgba(212,160,23,0.5)" : "rgba(255,255,255,0.1)"}`,
-                      background: dragOver ? "rgba(212,160,23,0.04)" : "rgba(255,255,255,0.02)",
+                      border: `2px dashed ${
+                        dragOver
+                          ? "rgba(212,160,23,0.6)"
+                          : zoneHovered
+                          ? "rgba(255,255,255,0.22)"
+                          : "rgba(255,255,255,0.1)"
+                      }`,
+                      background: dragOver
+                        ? "rgba(212,160,23,0.06)"
+                        : zoneHovered
+                        ? "rgba(255,255,255,0.04)"
+                        : "rgba(255,255,255,0.02)",
+                      transition: "border 0.15s ease, background 0.15s ease",
+                      cursor: "default",
                     }}
                   >
                     <ImageIcon
-                      size={20}
-                      style={{ color: dragOver ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))", opacity: dragOver ? 1 : 0.4 }}
+                      size={22}
+                      style={{
+                        color: dragOver ? "var(--skyshare-gold)" : zoneHovered ? "rgba(255,255,255,0.6)" : "hsl(var(--muted-foreground))",
+                        opacity: dragOver || zoneHovered ? 1 : 0.35,
+                        transition: "color 0.15s ease, opacity 0.15s ease",
+                      }}
                     />
-                    <span className="text-xs" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
-                      Paste, drag, or click to add a screenshot
+
+                    {/* Primary instruction — swaps on hover */}
+                    <span
+                      className="text-xs font-medium"
+                      style={{
+                        color: zoneHovered || dragOver ? "rgba(255,255,255,0.75)" : "hsl(var(--muted-foreground))",
+                        opacity: zoneHovered || dragOver ? 1 : 0.5,
+                        transition: "color 0.15s ease, opacity 0.15s ease",
+                      }}
+                    >
+                      {dragOver ? "Drop image here" : (
+                        <>
+                          Press{" "}
+                          <kbd
+                            className="px-1.5 py-0.5 rounded text-[11px] font-mono"
+                            style={{
+                              background: zoneHovered ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)",
+                              border: "1px solid rgba(255,255,255,0.15)",
+                              transition: "background 0.15s ease",
+                            }}
+                          >
+                            Ctrl+V
+                          </kbd>{" "}
+                          to paste your screenshot
+                        </>
+                      )}
+                    </span>
+
+                    <span className="text-[11px]" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.35 }}>
+                      or drag an image ·{" "}
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="hover:opacity-100 transition-opacity"
+                        style={{ textDecoration: "underline", textUnderlineOffset: 3, opacity: 0.7 }}
+                      >
+                        browse files
+                      </button>
                     </span>
                   </div>
                 )}
@@ -393,8 +460,38 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
                 Page: {window.location.pathname}
               </p>
 
+              {/* Submit row + Win+Shift+S hint */}
+              <div className="flex items-center justify-between pt-1">
+
+                {/* Snipping shortcut hint — bottom-left of dialog */}
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className="text-[10px] font-medium"
+                    style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5, fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+                  >
+                    Snip:
+                  </span>
+                  {["⊞ Win", "Shift", "S"].map((k, i) => (
+                    <span key={k} className="flex items-center gap-1">
+                      {i > 0 && (
+                        <span className="text-[10px]" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>+</span>
+                      )}
+                      <kbd
+                        className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold"
+                        style={{
+                          background: "rgba(212,160,23,0.1)",
+                          border: "1px solid rgba(212,160,23,0.3)",
+                          color: "rgba(212,160,23,0.75)",
+                        }}
+                      >
+                        {k}
+                      </kbd>
+                    </span>
+                  ))}
+                </div>
+
               {/* Submit */}
-              <div className="flex justify-end pt-1">
+              <div className="flex justify-end">
                 <Button
                   onClick={handleSubmit}
                   disabled={!title.trim() || submitting}
@@ -409,6 +506,8 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
                   {submitting ? "Sending..." : "Send Suggestion"}
                 </Button>
               </div>
+
+              </div>{/* end justify-between row */}
 
             </div>
           )}
