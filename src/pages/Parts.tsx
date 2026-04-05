@@ -39,7 +39,7 @@ export default function Parts() {
             </button>
           )}
           <button
-            onClick={() => navigate("/app/parts/new")}
+            onClick={() => navigate("/app/beet-box/parts/new")}
             className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors"
             style={{
               background: "var(--skyshare-gold)",

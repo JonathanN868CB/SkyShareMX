@@ -244,7 +244,7 @@ export function PartsDetailView({ requestId }: Props) {
       : `${request.aircraft_tail} — ${request.job_description}`
     const aogPrefix = request.aog ? "🔴 AOG: " : ""
     const actorName = profile.display_name || profile.full_name || "Parts team"
-    const meta = { request_id: request.id, path: `/app/parts/${request.id}` }
+    const meta = { request_id: request.id, path: `/app/beet-box/parts/${request.id}` }
 
     if (newStatus === "ordered") {
       // Notify requester that their part was ordered
@@ -311,7 +311,7 @@ export function PartsDetailView({ requestId }: Props) {
 
     if (error) { toast.error(`Failed to delete: ${error.message}`); return }
     toast.success("Parts request deleted")
-    navigate("/app/parts")
+    navigate("/app/beet-box/parts")
   }
 
   async function saveLineField(lineId: string, field: string, value: string) {
@@ -337,7 +337,7 @@ export function PartsDetailView({ requestId }: Props) {
       const jobLabel = request.order_type === "stock"
         ? `Stock — ${request.job_description}`
         : `${request.aircraft_tail} — ${request.job_description}`
-      const meta = { request_id: request.id, path: `/app/parts/${request.id}` }
+      const meta = { request_id: request.id, path: `/app/beet-box/parts/${request.id}` }
 
       await notifyProfileIds(
         [request.requested_by],

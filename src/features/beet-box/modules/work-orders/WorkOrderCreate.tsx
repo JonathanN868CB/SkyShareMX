@@ -1,18 +1,20 @@
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import * as XLSX from "xlsx"
 import {
   ArrowLeft, Upload, FileSpreadsheet, X, AlertTriangle,
   CheckCircle2, ClipboardList, Clock, Calendar, GripVertical,
   Trash2, Pencil, TriangleAlert, ShieldAlert, PackageCheck,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Plus,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
 import { Textarea } from "@/shared/ui/textarea"
 import { Label } from "@/shared/ui/label"
 import { cn } from "@/shared/lib/utils"
-import { AIRCRAFT, MECHANICS, type WOItem, type LogbookSection } from "../../data/mockData"
+import { getFleetAircraft, getTechnicians, createWorkOrder, upsertWOItem, getMyProfileId } from "../../services"
+import { WO_TYPES } from "../../constants"
+import type { FleetAircraft, Mechanic, WOItem, LogbookSection } from "../../types"
 
 // ─── Traxxall parser ──────────────────────────────────────────────────────────
 
@@ -139,16 +141,7 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
   return { aircraftReg, aircraftModel, currentHrsAirframe, tasks }
 }
 
-// ─── WO Types ─────────────────────────────────────────────────────────────────
-const WO_TYPES = [
-  "100-Hour Inspection", "Annual Inspection",
-  "Unscheduled — Avionics", "Unscheduled — Hydraulic",
-  "Unscheduled — Engine", "Unscheduled — Airframe",
-  "Squawk — Pilot Report", "Engine Trend Monitoring",
-  "Propeller Overhaul", "Brake Assembly R/R", "Landing Gear",
-  "Compliance — AD", "Compliance — SB", "Phase Inspection",
-  "Scheduled Maintenance — Traxxall Import", "Return to Service",
-]
+// WO_TYPES imported from ../../constants
 
 // ─── Drag-and-drop helpers ────────────────────────────────────────────────────
 function reorderTasks(tasks: ParsedTask[], dragId: string, targetId: string): ParsedTask[] {
@@ -205,12 +198,26 @@ export default function WorkOrderCreate() {
   const navigate = useNavigate()
   const [mode, setMode]   = useState<Mode>("choose")
 
+  // Fleet data
+  const [fleet, setFleet]         = useState<FleetAircraft[]>([])
+  const [technicians, setTechnicians] = useState<Mechanic[]>([])
+  const [aircraftMode, setAircraftMode] = useState<"fleet" | "guest">("fleet")
+
+  useEffect(() => {
+    Promise.all([getFleetAircraft(), getTechnicians()])
+      .then(([ac, techs]) => { setFleet(ac); setTechnicians(techs) })
+      .catch(() => {/* silently degrade — dropdowns will be empty */})
+  }, [])
+
+
   // Fresh form
   const [form, setForm]     = useState({
-    aircraftId: "", woType: "", priority: "routine" as "routine" | "urgent" | "aog",
+    aircraftId: "", guestRegistration: "", guestSerial: "",
+    woType: "", priority: "routine" as "routine" | "urgent" | "aog",
     description: "", meterAtOpen: "", mechanic: "",
   })
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting]   = useState(false)
+  const [commitError, setCommitError] = useState<string | null>(null)
 
   // Upload state
   const [dropZoneActive, setDropZoneActive] = useState(false)
@@ -219,19 +226,56 @@ export default function WorkOrderCreate() {
 
   // Review state
   const [draggedId, setDraggedId]           = useState<string | null>(null)
-  const [dragOverId, setDragOverId]         = useState<string | null>(null)
-  const [dragOverSection, setDragOverSection] = useState<LogbookSection | null>(null)
+  const [ghostPos, setGhostPos]             = useState<{ x: number; y: number } | null>(null)
+  const [gapBeforeId, setGapBeforeId]       = useState<string | null>(null)
+  const [gapSection, setGapSection]         = useState<LogbookSection | null>(null)
   const [editingId, setEditingId]           = useState<string | null>(null)
   const [editText, setEditText]             = useState("")
   const [collapsedSections, setCollapsedSections] = useState<Set<LogbookSection>>(new Set())
   const [deletedIds, setDeletedIds]         = useState<Set<string>>(new Set())  // for fade-out
-  const editRef = useRef<HTMLInputElement>(null)
+  const editRef    = useRef<HTMLInputElement>(null)
+  const rowEls     = useRef(new Map<string, HTMLDivElement>())
+  const dragMeta   = useRef({ ox: 0, oy: 0, h: 52, w: 600, color: "#d4a017" })
+  const gapRef     = useRef<{ beforeId: string; section: LogbookSection } | null>(null)
+  const parsedRef  = useRef(parsed)
+  parsedRef.current = parsed  // keep current every render (no effect needed)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const computeGapRef = useRef<(clientY: number, excludeId: string) => { beforeId: string; section: LogbookSection } | null>(null as any)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const commitDropRef = useRef<(dragId: string) => void>(null as any)
+  const dragState  = useRef<{ id: string; startX: number; startY: number; active: boolean } | null>(null)
+
+  // Add-item state (import review)
+  const [addingToSection, setAddingToSection] = useState<LogbookSection | null>(null)
+  const [newTaskDesc, setNewTaskDesc]         = useState("")
+  const [newTaskNum, setNewTaskNum]           = useState("")
 
   // ── Fresh form ─────────────────────────────────────────────────────────────
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitting(true)
-    setTimeout(() => navigate("/app/beet-box/work-orders/wo-007"), 800)
+    try {
+      const profileId = await getMyProfileId()
+      if (!profileId) throw new Error("Not authenticated")
+      const wo = await createWorkOrder({
+        woType: form.woType,
+        description: form.description || undefined,
+        priority: form.priority,
+        aircraftId: aircraftMode === "fleet" ? form.aircraftId || undefined : undefined,
+        guestRegistration: aircraftMode === "guest" ? form.guestRegistration || undefined : undefined,
+        guestSerial: aircraftMode === "guest" ? form.guestSerial || undefined : undefined,
+        meterAtOpen: form.meterAtOpen ? parseFloat(form.meterAtOpen) : undefined,
+        openedBy: profileId,
+      })
+      if (form.mechanic && profileId) {
+        const { assignMechanic } = await import("../../services")
+        await assignMechanic(wo.id, form.mechanic, profileId)
+      }
+      navigate(`/app/beet-box/work-orders/${wo.id}`)
+    } catch (err) {
+      console.error("Failed to create work order:", err)
+      setSubmitting(false)
+    }
   }
 
   // ── File handling ──────────────────────────────────────────────────────────
@@ -314,92 +358,190 @@ export default function WorkOrderCreate() {
     setEditingId(null)
   }
 
-  // ── Review: drag-and-drop ─────────────────────────────────────────────────
-  function onTaskDragStart(e: React.DragEvent, id: string) {
-    setDraggedId(id)
-    e.dataTransfer.effectAllowed = "move"
-    // Invisible drag ghost
-    const ghost = document.createElement("div")
-    ghost.style.position = "absolute"; ghost.style.top = "-9999px"
-    document.body.appendChild(ghost)
-    e.dataTransfer.setDragImage(ghost, 0, 0)
-    setTimeout(() => document.body.removeChild(ghost), 0)
-  }
+  // ── Review: pointer drag-and-drop ────────────────────────────────────────
 
-  function onTaskDragOver(e: React.DragEvent, id: string) {
-    e.preventDefault()
-    if (id !== draggedId) setDragOverId(id)
-    setDragOverSection(null)
-  }
-
-  function onTaskDrop(e: React.DragEvent, targetId: string) {
-    e.preventDefault()
-    if (draggedId && draggedId !== targetId) {
-      setParsed(p => p ? { ...p, tasks: reorderTasks(p.tasks, draggedId, targetId) } : p)
+  // Always-current helpers — updated every render so effects always get latest state
+  computeGapRef.current = (clientY, excludeId) => {
+    const p = parsedRef.current
+    if (!p) return null
+    const visible = p.tasks.filter(t =>
+      t.importId !== excludeId &&
+      !deletedIds.has(t.importId) &&
+      !collapsedSections.has(t.section)
+    )
+    for (const task of visible) {
+      const el = rowEls.current.get(task.importId)
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (clientY < rect.top + rect.height / 2) {
+        return { beforeId: task.importId, section: task.section }
+      }
     }
-    setDraggedId(null); setDragOverId(null)
+    const last = visible[visible.length - 1]
+    return { beforeId: "__end__", section: last?.section ?? "Airframe" }
   }
 
-  function onSectionDragOver(e: React.DragEvent, section: LogbookSection) {
-    e.preventDefault()
-    if (draggedId) {
-      const draggedTask = parsed?.tasks.find(t => t.importId === draggedId)
-      if (draggedTask && draggedTask.section !== section) setDragOverSection(section)
+  commitDropRef.current = (dragId) => {
+    const gap = gapRef.current
+    const p = parsedRef.current
+    if (!gap || !p) return
+    const dragged = p.tasks.find(t => t.importId === dragId)
+    if (!dragged) return
+    const updated = { ...dragged, section: gap.section }
+    const next = p.tasks.filter(t => t.importId !== dragId)
+    if (gap.beforeId === "__end__") {
+      const lastIdx = next.reduce<number>((acc, t, i) => t.section === gap.section ? i : acc, -1)
+      next.splice(lastIdx + 1, 0, updated)
+    } else {
+      const idx = next.findIndex(t => t.importId === gap.beforeId)
+      next.splice(idx >= 0 ? idx : next.length, 0, updated)
     }
+    setParsed(prev => prev ? { ...prev, tasks: next } : prev)
   }
 
-  function onSectionDrop(e: React.DragEvent, section: LogbookSection) {
-    e.preventDefault()
-    if (draggedId) {
-      setParsed(p => p ? { ...p, tasks: moveSectionTasks(p.tasks, draggedId, section) } : p)
+  // Arm drag on any pointer-down on a row (threshold activates it)
+  function startDrag(e: React.PointerEvent, importId: string) {
+    if (e.button !== 0) return
+    dragState.current = { id: importId, startX: e.clientX, startY: e.clientY, active: false }
+    document.body.style.userSelect = "none"
+  }
+
+  // Global pointer tracking — mounted once, reads refs so no stale-closure issues
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const ds = dragState.current
+      if (!ds) return
+
+      if (!ds.active) {
+        // Only activate after crossing a 5px threshold — preserves click interactions
+        if (Math.hypot(e.clientX - ds.startX, e.clientY - ds.startY) < 5) return
+        ds.active = true
+        const el = rowEls.current.get(ds.id)
+        const p  = parsedRef.current
+        if (el && p) {
+          const rect = el.getBoundingClientRect()
+          dragMeta.current = {
+            ox: ds.startX - rect.left,
+            oy: ds.startY - rect.top,
+            h: rect.height,
+            w: rect.width,
+            color: SECTION_COLORS[p.tasks.find(t => t.importId === ds.id)?.section ?? "Airframe"],
+          }
+        }
+        document.body.style.cursor = "grabbing"
+        setDraggedId(ds.id)
+      }
+
+      setGhostPos({ x: e.clientX, y: e.clientY })
+      const gap = computeGapRef.current(e.clientY, ds.id)
+      gapRef.current = gap
+      setGapBeforeId(gap?.beforeId ?? null)
+      setGapSection(gap?.section ?? null)
     }
-    setDraggedId(null); setDragOverId(null); setDragOverSection(null)
+
+    const onUp = () => {
+      const ds = dragState.current
+      if (ds?.active) {
+        commitDropRef.current(ds.id)
+        setDraggedId(null); setGhostPos(null); setGapBeforeId(null); setGapSection(null)
+        gapRef.current = null
+        document.body.style.cursor = ""
+      }
+      dragState.current = null
+      document.body.style.userSelect = ""
+    }
+
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [])
+
+  // ── Manual task addition (import review) ─────────────────────────────────
+  function addTask(section: LogbookSection) {
+    if (!newTaskDesc.trim()) return
+    const task: ParsedTask = {
+      importId:         `manual-${Date.now()}`,
+      section,
+      taskNumber:       newTaskNum.trim(),
+      description:      newTaskDesc.trim(),
+      nextDueDate:      null,
+      nextDueHours:     null,
+      remainingDisplay: "",
+      urgencyDays:      9999,
+      selected:         true,
+    }
+    setParsed(p => p ? { ...p, tasks: [...p.tasks, task] } : p)
+    setNewTaskDesc(""); setNewTaskNum(""); setAddingToSection(null)
   }
 
   // ── Build WO ──────────────────────────────────────────────────────────────
-  function createFromImport() {
-    if (!parsed) return
+  async function createFromImport() {
+    if (!parsed || submitting) return
     const selected = parsed.tasks.filter(t => t.selected)
     if (selected.length === 0) return
 
-    const aircraft = AIRCRAFT.find(a =>
-      a.registration.replace(/\s/g, "").toUpperCase() ===
-      parsed.aircraftReg.replace(/\s/g, "").toUpperCase()
-    )
+    setSubmitting(true)
+    setCommitError(null)
+    try {
+      // Step 1 — get profiles.id (FK target), not auth.users.id
+      const profileId = await getMyProfileId()
+      if (!profileId) throw new Error("Not authenticated — could not resolve profile")
 
-    const woItems: WOItem[] = selected.map((t, idx) => ({
-      id: `import-item-${idx + 1}`,
-      itemNumber: idx + 1,
-      category: t.description,
-      logbookSection: t.section,
-      taskNumber: t.taskNumber || undefined,
-      discrepancy: `Perform ${t.description}.`,
-      correctiveAction: "",
-      hours: 0, laborRate: 125,
-      parts: [], shippingCost: 0, outsideServicesCost: 0,
-      signOffRequired: true, itemStatus: "pending", itemLaborEntries: [],
-    }))
+      const matchedAircraft = fleet.find(a =>
+        (a.registration ?? "").replace(/\s/g, "").toUpperCase() ===
+        parsed.aircraftReg.replace(/\s/g, "").toUpperCase()
+      )
+      const sections = [...new Set(selected.map(t => t.section))]
 
-    const sections = [...new Set(selected.map(t => t.section))]
-    navigate("/app/beet-box/work-orders/wo-traxxall-import", {
-      state: {
-        traxxallImport: true,
-        aircraftId:     aircraft?.id ?? AIRCRAFT[0].id,
-        aircraftReg:    parsed.aircraftReg,
-        aircraftModel:  parsed.aircraftModel,
-        woType:         "Scheduled Maintenance — Traxxall Import",
-        description:    `Traxxall import — ${parsed.aircraftReg}. ${selected.length} tasks across ${sections.join(", ")}.`,
-        items:          woItems,
-        meterAtOpen:    parsed.currentHrsAirframe ? parseFloat(parsed.currentHrsAirframe) : undefined,
-      },
-    })
+      // Step 2 — create the work order header
+      const wo = await createWorkOrder({
+        woType:            "Scheduled Maintenance — Traxxall Import",
+        description:       `Traxxall import — ${parsed.aircraftReg}. ${selected.length} tasks across ${sections.join(", ")}.`,
+        priority:          "routine",
+        aircraftId:        matchedAircraft?.id ?? undefined,
+        guestRegistration: matchedAircraft ? undefined : parsed.aircraftReg,
+        meterAtOpen:       parsed.currentHrsAirframe ? parseFloat(parsed.currentHrsAirframe) : undefined,
+        openedBy:          profileId,
+      })
+
+      // Step 3 — save all items sequentially to avoid RLS race on mechanic_id check
+      for (let idx = 0; idx < selected.length; idx++) {
+        const t = selected[idx]
+        await upsertWOItem({
+          workOrderId:         wo.id,
+          itemNumber:          idx + 1,
+          category:            t.description,
+          logbookSection:      t.section,
+          taskNumber:          t.taskNumber || null,
+          discrepancy:         `Perform ${t.description}.`,
+          correctiveAction:    "",
+          estimatedHours:      0,
+          laborRate:           125,
+          shippingCost:        0,
+          outsideServicesCost: 0,
+          signOffRequired:     true,
+          itemStatus:          "pending",
+          noPartsRequired:     false,
+        })
+      }
+
+      navigate(`/app/beet-box/work-orders/${wo.id}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      console.error("Commit failed:", msg)
+      setCommitError(msg)
+      setSubmitting(false)
+    }
   }
 
   // ── Derived stats ─────────────────────────────────────────────────────────
   const selectedCount = parsed?.tasks.filter(t => t.selected).length ?? 0
   const overdueCount  = parsed?.tasks.filter(t => t.selected && t.urgencyDays < 0).length ?? 0
   const dueSoonCount  = parsed?.tasks.filter(t => t.selected && t.urgencyDays >= 0 && t.urgencyDays < 14).length ?? 0
-  const isValid       = form.aircraftId && form.woType && form.description
+  const isValid       = (aircraftMode === "fleet" ? form.aircraftId : form.guestRegistration) && form.woType && form.description
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -469,12 +611,44 @@ export default function WorkOrderCreate() {
         <div className="px-8 py-6 max-w-2xl">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Aircraft *</Label>
-              <select value={form.aircraftId} onChange={e => setForm(f => ({ ...f, aircraftId: e.target.value }))}
-                className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30" required>
-                <option value="">Select aircraft…</option>
-                {AIRCRAFT.map(ac => <option key={ac.id} value={ac.id}>{ac.registration} — {ac.make} {ac.model}</option>)}
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Aircraft *</Label>
+                <div className="flex rounded overflow-hidden" style={{ border: "1px solid hsl(0,0%,25%)" }}>
+                  {(["fleet", "guest"] as const).map(m => (
+                    <button key={m} type="button" onClick={() => setAircraftMode(m)}
+                      className={cn("px-2.5 py-1 text-xs transition-colors", aircraftMode === m ? "bg-white/10 text-white" : "text-white/35 hover:text-white/60")}>
+                      {m === "fleet" ? "From Fleet" : "Guest / Manual"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {aircraftMode === "fleet" ? (
+                <select value={form.aircraftId} onChange={e => setForm(f => ({ ...f, aircraftId: e.target.value }))}
+                  className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30" required>
+                  <option value="">Select aircraft…</option>
+                  {fleet.map(ac => (
+                    <option key={ac.id} value={ac.id}>
+                      {ac.registration ?? ac.serialNumber} — {ac.make} {ac.modelFull} ({ac.year})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    placeholder="Tail number (e.g. N863CB) *"
+                    value={form.guestRegistration}
+                    onChange={e => setForm(f => ({ ...f, guestRegistration: e.target.value }))}
+                    required={aircraftMode === "guest"}
+                    className="flex-1 px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                  />
+                  <input
+                    placeholder="Serial (optional)"
+                    value={form.guestSerial}
+                    onChange={e => setForm(f => ({ ...f, guestSerial: e.target.value }))}
+                    className="w-36 px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                  />
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Work Order Type *</Label>
@@ -515,7 +689,7 @@ export default function WorkOrderCreate() {
               <select value={form.mechanic} onChange={e => setForm(f => ({ ...f, mechanic: e.target.value }))}
                 className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30">
                 <option value="">Unassigned</option>
-                {MECHANICS.map(m => <option key={m.id} value={m.id}>{m.name} — {m.certificate} · {m.role}</option>)}
+                {technicians.map(m => <option key={m.id} value={m.id}>{m.name}{m.certType ? ` — ${m.certType}` : ""}</option>)}
               </select>
             </div>
             <div className="flex items-center gap-3 pt-2">
@@ -568,7 +742,6 @@ export default function WorkOrderCreate() {
         <div
           className="flex-1 overflow-hidden flex flex-col"
           style={{ background: "hsl(0,0%,9%)" }}
-          onDragEnd={() => { setDraggedId(null); setDragOverId(null); setDragOverSection(null) }}
         >
 
           {/* ── Masthead ──────────────────────────────────────────────────── */}
@@ -669,30 +842,22 @@ export default function WorkOrderCreate() {
           <div className="flex-1 overflow-y-auto px-8 py-5 space-y-4">
 
             {SECTION_ORDER.filter(s => parsed.tasks.some(t => t.section === s)).map(section => {
-              const sectionTasks  = parsed.tasks.filter(t => t.section === s)
+              const sectionTasks  = parsed.tasks.filter(t => t.section === section)
               const color         = SECTION_COLORS[section]
               const allSelected   = sectionTasks.every(t => t.selected)
               const someSelected  = sectionTasks.some(t => t.selected)
               const isCollapsed   = collapsedSections.has(section)
-              const isDragTarget  = dragOverSection === section
 
               return (
                 <div key={section}>
-                  {/* Section header — drop target for cross-section moves */}
+                  {/* Section header */}
                   <div
                     className="flex items-center gap-3 px-4 py-3 rounded-xl mb-1 transition-all cursor-pointer select-none"
                     style={{
-                      background: isDragTarget
-                        ? `${color}22`
-                        : `linear-gradient(to right, ${color}14, hsl(0,0%,11%))`,
-                      border: isDragTarget
-                        ? `2px dashed ${color}`
-                        : `1px solid hsl(0,0%,20%)`,
-                      borderLeft: isDragTarget ? `2px dashed ${color}` : `4px solid ${color}`,
+                      background: `linear-gradient(to right, ${color}14, hsl(0,0%,11%))`,
+                      border: `1px solid hsl(0,0%,20%)`,
+                      borderLeft: `4px solid ${color}`,
                     }}
-                    onDragOver={e => onSectionDragOver(e, section)}
-                    onDragLeave={() => setDragOverSection(null)}
-                    onDrop={e => onSectionDrop(e, section)}
                   >
                     {/* Collapse toggle */}
                     <button onClick={() => collapseSection(section)} className="text-white/30 hover:text-white/70 transition-colors">
@@ -722,124 +887,268 @@ export default function WorkOrderCreate() {
                     <span className="text-white/30 text-xs font-mono">
                       {sectionTasks.filter(t => t.selected).length}/{sectionTasks.length}
                     </span>
-
-                    {isDragTarget && (
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{ background: `${color}33`, color }}>
-                        Drop to move here
-                      </span>
-                    )}
                   </div>
 
                   {/* Task rows */}
                   {!isCollapsed && (
                     <div className="rounded-xl overflow-hidden" style={{ border: "1px solid hsl(0,0%,19%)" }}>
                       {sectionTasks.map((task, idx) => {
-                        const isBeingDragged = draggedId === task.importId
-                        const isDropTarget   = dragOverId === task.importId && draggedId !== task.importId
-                        const isDeleting     = deletedIds.has(task.importId)
-                        const isEditing      = editingId === task.importId
+                        const isDragging = draggedId === task.importId
+                        const isDeleting = deletedIds.has(task.importId)
+                        const isEditing  = editingId === task.importId
+                        const showGapBefore = draggedId && gapBeforeId === task.importId && gapSection === section
 
                         return (
-                          <div
-                            key={task.importId}
-                            draggable
-                            onDragStart={e => onTaskDragStart(e, task.importId)}
-                            onDragOver={e => onTaskDragOver(e, task.importId)}
-                            onDrop={e => onTaskDrop(e, task.importId)}
-                            className={cn("flex items-center gap-3 px-3 py-3.5 transition-all group", idx > 0 && "border-t")}
-                            style={{
-                              borderColor: "hsl(0,0%,18%)",
-                              background: isBeingDragged ? "hsl(0,0%,8%)" : isDropTarget ? `${color}0d` : "hsl(0,0%,11%)",
-                              opacity: isBeingDragged ? 0.4 : isDeleting ? 0 : task.selected ? 1 : 0.4,
-                              borderTop: isDropTarget ? `2px solid ${color}` : idx > 0 ? "1px solid hsl(0,0%,18%)" : undefined,
-                              transform: isDeleting ? "translateX(12px)" : undefined,
-                              transition: "opacity 0.28s ease, transform 0.28s ease, background 0.12s ease, border-color 0.12s ease",
-                              cursor: isEditing ? "text" : "grab",
-                            }}
-                          >
-                            {/* Drag handle */}
-                            <div className="text-white/15 group-hover:text-white/40 transition-colors flex-shrink-0 cursor-grab active:cursor-grabbing">
-                              <GripVertical className="w-4 h-4" />
-                            </div>
-
-                            {/* Checkbox */}
-                            <button
-                              onClick={() => toggleTask(task.importId)}
-                              className="w-5 h-5 rounded border flex items-center justify-center transition-all flex-shrink-0"
+                          <div key={task.importId}>
+                            {/* Drop gap — opens up above this row */}
+                            {showGapBefore && (
+                              <div
+                                style={{
+                                  height: dragMeta.current.h,
+                                  background: `${dragMeta.current.color}12`,
+                                  border: `2px dashed ${dragMeta.current.color}55`,
+                                  borderRadius: 8,
+                                  margin: "3px 4px",
+                                  transition: "height 0.12s ease",
+                                }}
+                              />
+                            )}
+                            <div
+                              ref={el => { if (el) rowEls.current.set(task.importId, el); else rowEls.current.delete(task.importId) }}
+                              className={cn("flex items-center gap-3 px-3 py-3.5 transition-all group select-none", idx > 0 && "border-t")}
                               style={{
-                                background: task.selected ? color : "transparent",
-                                border: task.selected ? `1px solid ${color}` : "1px solid rgba(255,255,255,0.2)",
+                                borderColor: "hsl(0,0%,18%)",
+                                background: "hsl(0,0%,11%)",
+                                opacity: isDragging ? 0 : isDeleting ? 0 : task.selected ? 1 : 0.4,
+                                transform: isDeleting ? "translateX(12px)" : undefined,
+                                transition: "opacity 0.28s ease, transform 0.28s ease",
+                                cursor: "grab",
                               }}
+                              onPointerDown={e => startDrag(e, task.importId)}
                             >
-                              {task.selected && <CheckCircle2 className="w-3.5 h-3.5 text-black" />}
-                            </button>
+                              {/* Drag handle — visual affordance */}
+                              <div className="text-white/15 group-hover:text-white/40 transition-colors flex-shrink-0">
+                                <GripVertical className="w-4 h-4" />
+                              </div>
 
-                            {/* Section dot */}
-                            <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }} />
+                              {/* Checkbox */}
+                              <button
+                                onClick={() => toggleTask(task.importId)}
+                                onPointerDown={e => e.stopPropagation()}
+                                className="w-5 h-5 rounded border flex items-center justify-center transition-all flex-shrink-0"
+                                style={{
+                                  background: task.selected ? color : "transparent",
+                                  border: task.selected ? `1px solid ${color}` : "1px solid rgba(255,255,255,0.2)",
+                                }}
+                              >
+                                {task.selected && <CheckCircle2 className="w-3.5 h-3.5 text-black" />}
+                              </button>
 
-                            {/* Description — click to edit */}
-                            <div className="flex-1 min-w-0">
-                              {isEditing ? (
-                                <input
-                                  ref={editRef}
-                                  value={editText}
-                                  onChange={e => setEditText(e.target.value)}
-                                  onBlur={() => commitEdit(task.importId)}
-                                  onKeyDown={e => { if (e.key === "Enter") commitEdit(task.importId); if (e.key === "Escape") setEditingId(null) }}
-                                  className="w-full bg-white/[0.08] border border-white/20 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-white/40"
-                                  onClick={e => e.stopPropagation()}
-                                />
-                              ) : (
-                                <div
-                                  className="group/edit flex items-center gap-1.5 cursor-text"
-                                  onClick={() => startEdit(task)}
-                                >
-                                  <span className={cn("text-sm leading-snug", task.selected ? "text-white/90" : "text-white/35")}>
-                                    {task.description}
-                                  </span>
-                                  <Pencil className="w-3 h-3 text-white/0 group-hover/edit:text-white/30 transition-colors flex-shrink-0" />
-                                </div>
-                              )}
-                              {task.taskNumber && (
-                                <p className="text-white/25 text-xs font-mono mt-0.5">{task.taskNumber}</p>
-                              )}
+                              {/* Section dot */}
+                              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }} />
+
+                              {/* Description — click to edit */}
+                              <div className="flex-1 min-w-0">
+                                {isEditing ? (
+                                  <input
+                                    ref={editRef}
+                                    value={editText}
+                                    onChange={e => setEditText(e.target.value)}
+                                    onBlur={() => commitEdit(task.importId)}
+                                    onKeyDown={e => { if (e.key === "Enter") commitEdit(task.importId); if (e.key === "Escape") setEditingId(null) }}
+                                    className="w-full bg-white/[0.08] border border-white/20 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-white/40"
+                                    onClick={e => e.stopPropagation()}
+                                  />
+                                ) : (
+                                  <div
+                                    className="group/edit flex items-center gap-1.5 cursor-text"
+                                    onPointerDown={e => e.stopPropagation()}
+                                    onClick={() => startEdit(task)}
+                                  >
+                                    <span className={cn("text-sm leading-snug", task.selected ? "text-white/90" : "text-white/35")}>
+                                      {task.description}
+                                    </span>
+                                    <Pencil className="w-3 h-3 text-white/0 group-hover/edit:text-white/30 transition-colors flex-shrink-0" />
+                                  </div>
+                                )}
+                                {task.taskNumber && (
+                                  <p className="text-white/25 text-xs font-mono mt-0.5">{task.taskNumber}</p>
+                                )}
+                              </div>
+
+                              {/* Due info */}
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {task.nextDueDate && (
+                                  <div className="flex items-center gap-1 text-xs text-white/35">
+                                    <Calendar className="w-3 h-3 flex-shrink-0" />
+                                    <span className="font-mono">{task.nextDueDate}</span>
+                                  </div>
+                                )}
+                                {task.nextDueHours && !task.nextDueDate && (
+                                  <div className="flex items-center gap-1 text-xs text-white/35">
+                                    <Clock className="w-3 h-3 flex-shrink-0" />
+                                    <span className="font-mono">{task.nextDueHours}</span>
+                                  </div>
+                                )}
+                                {task.remainingDisplay && (
+                                  <UrgencyChip days={task.urgencyDays} display={task.remainingDisplay} />
+                                )}
+                              </div>
+
+                              {/* Delete */}
+                              <button
+                                onClick={() => deleteTask(task.importId)}
+                                onPointerDown={e => e.stopPropagation()}
+                                title="Remove this task"
+                                className="w-7 h-7 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-all text-white/20 hover:text-red-400 hover:bg-red-900/20 flex-shrink-0"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
-
-                            {/* Due info */}
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              {task.nextDueDate && (
-                                <div className="flex items-center gap-1 text-xs text-white/35">
-                                  <Calendar className="w-3 h-3 flex-shrink-0" />
-                                  <span className="font-mono">{task.nextDueDate}</span>
-                                </div>
-                              )}
-                              {task.nextDueHours && !task.nextDueDate && (
-                                <div className="flex items-center gap-1 text-xs text-white/35">
-                                  <Clock className="w-3 h-3 flex-shrink-0" />
-                                  <span className="font-mono">{task.nextDueHours}</span>
-                                </div>
-                              )}
-                              {task.remainingDisplay && (
-                                <UrgencyChip days={task.urgencyDays} display={task.remainingDisplay} />
-                              )}
-                            </div>
-
-                            {/* Delete */}
-                            <button
-                              onClick={() => deleteTask(task.importId)}
-                              title="Remove this task"
-                              className="w-7 h-7 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-all text-white/20 hover:text-red-400 hover:bg-red-900/20 flex-shrink-0"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
                           </div>
                         )
                       })}
+
+                      {/* Gap at end of this section */}
+                      {draggedId && gapBeforeId === "__end__" && gapSection === section && (
+                        <div
+                          style={{
+                            height: dragMeta.current.h,
+                            background: `${dragMeta.current.color}12`,
+                            border: `2px dashed ${dragMeta.current.color}55`,
+                            borderRadius: 8,
+                            margin: "3px 4px",
+                          }}
+                        />
+                      )}
+
+                      {/* ── Add item row / inline form ── */}
+                      {addingToSection === section ? (
+                        <div
+                          className="px-3 py-3 flex flex-col gap-2"
+                          style={{ borderTop: "1px solid hsl(0,0%,18%)", background: "hsl(0,0%,10%)" }}
+                          onPointerDown={e => e.stopPropagation()}
+                        >
+                          <input
+                            autoFocus
+                            value={newTaskDesc}
+                            onChange={e => setNewTaskDesc(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") addTask(section); if (e.key === "Escape") setAddingToSection(null) }}
+                            placeholder="Task description…"
+                            className="w-full px-3 py-2 text-sm rounded-lg text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                            style={{ background: "hsl(0,0%,14%)", border: "1px solid hsl(0,0%,24%)" }}
+                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={newTaskNum}
+                              onChange={e => setNewTaskNum(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") addTask(section); if (e.key === "Escape") setAddingToSection(null) }}
+                              placeholder="Task # (optional)"
+                              className="w-36 px-3 py-1.5 text-xs rounded-lg text-white/70 placeholder:text-white/20 focus:outline-none"
+                              style={{ background: "hsl(0,0%,14%)", border: "1px solid hsl(0,0%,22%)" }}
+                            />
+                            <button
+                              onClick={() => addTask(section)}
+                              disabled={!newTaskDesc.trim()}
+                              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                              style={{
+                                background: newTaskDesc.trim() ? color : "rgba(255,255,255,0.06)",
+                                color: newTaskDesc.trim() ? "#000" : "rgba(255,255,255,0.25)",
+                              }}
+                            >
+                              Add
+                            </button>
+                            <button
+                              onClick={() => { setAddingToSection(null); setNewTaskDesc(""); setNewTaskNum("") }}
+                              className="px-3 py-1.5 rounded-lg text-xs text-white/30 hover:text-white/60 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setAddingToSection(section); setNewTaskDesc(""); setNewTaskNum("") }}
+                          className="w-full flex items-center gap-1.5 px-4 py-2 text-xs transition-colors"
+                          style={{ borderTop: sectionTasks.length > 0 ? "1px solid hsl(0,0%,16%)" : undefined, color: `${color}80` }}
+                          onMouseEnter={e => (e.currentTarget.style.color = color)}
+                          onMouseLeave={e => (e.currentTarget.style.color = `${color}80`)}
+                        >
+                          <Plus className="w-3 h-3" /> Add item to {section}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
               )
             })}
+
+            {/* Add to a section not yet in the import */}
+            {SECTION_ORDER.filter(s => !parsed.tasks.some(t => t.section === s)).length > 0 && (
+              <div className="mt-2 pt-3" style={{ borderTop: "1px solid hsl(0,0%,16%)" }}>
+                <p className="text-white/20 text-xs mb-2 px-1">Add items to additional sections:</p>
+                <div className="flex flex-wrap gap-2">
+                  {SECTION_ORDER.filter(s => !parsed.tasks.some(t => t.section === s)).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => { setAddingToSection(s); setParsed(p => p ? { ...p, tasks: [...p.tasks] } : p) }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                      style={{
+                        background: `${SECTION_COLORS[s]}15`,
+                        border: `1px solid ${SECTION_COLORS[s]}35`,
+                        color: `${SECTION_COLORS[s]}cc`,
+                      }}
+                    >
+                      + {s}
+                    </button>
+                  ))}
+                </div>
+                {addingToSection && !parsed.tasks.some(t => t.section === addingToSection) && (
+                  <div
+                    className="mt-3 p-3 rounded-xl flex flex-col gap-2"
+                    style={{ background: "hsl(0,0%,11%)", border: `1px solid ${SECTION_COLORS[addingToSection]}30` }}
+                  >
+                    <p className="text-xs font-semibold" style={{ color: SECTION_COLORS[addingToSection] }}>{addingToSection}</p>
+                    <input
+                      autoFocus
+                      value={newTaskDesc}
+                      onChange={e => setNewTaskDesc(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") addTask(addingToSection); if (e.key === "Escape") setAddingToSection(null) }}
+                      placeholder="Task description…"
+                      className="w-full px-3 py-2 text-sm rounded-lg text-white placeholder:text-white/25 focus:outline-none"
+                      style={{ background: "hsl(0,0%,14%)", border: "1px solid hsl(0,0%,24%)" }}
+                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={newTaskNum}
+                        onChange={e => setNewTaskNum(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") addTask(addingToSection); if (e.key === "Escape") setAddingToSection(null) }}
+                        placeholder="Task # (optional)"
+                        className="w-36 px-3 py-1.5 text-xs rounded-lg text-white/70 placeholder:text-white/20 focus:outline-none"
+                        style={{ background: "hsl(0,0%,14%)", border: "1px solid hsl(0,0%,22%)" }}
+                      />
+                      <button
+                        onClick={() => addTask(addingToSection)}
+                        disabled={!newTaskDesc.trim()}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                        style={{
+                          background: newTaskDesc.trim() ? SECTION_COLORS[addingToSection] : "rgba(255,255,255,0.06)",
+                          color: newTaskDesc.trim() ? "#000" : "rgba(255,255,255,0.25)",
+                        }}
+                      >
+                        Add
+                      </button>
+                      <button
+                        onClick={() => { setAddingToSection(null); setNewTaskDesc(""); setNewTaskNum("") }}
+                        className="px-3 py-1.5 text-xs text-white/30 hover:text-white/60 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="h-6" />
           </div>
@@ -853,7 +1162,15 @@ export default function WorkOrderCreate() {
             }}
           >
             <div>
-              {selectedCount === 0 ? (
+              {commitError ? (
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-red-400 text-sm font-medium">Save failed</p>
+                    <p className="text-red-400/70 text-xs mt-0.5 font-mono">{commitError}</p>
+                  </div>
+                </div>
+              ) : selectedCount === 0 ? (
                 <p className="text-white/30 text-sm">No tasks selected — check at least one task to continue</p>
               ) : (
                 <div>
@@ -876,20 +1193,64 @@ export default function WorkOrderCreate() {
               </Button>
               <Button
                 size="sm"
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || submitting}
                 onClick={createFromImport}
                 className="h-11 px-8 text-sm font-bold tracking-wide"
                 style={{
-                  background: selectedCount > 0 ? "var(--skyshare-gold)" : "rgba(212,160,23,0.2)",
-                  color: selectedCount > 0 ? "#000" : "rgba(212,160,23,0.4)",
-                  boxShadow: selectedCount > 0 ? "0 0 24px rgba(212,160,23,0.3)" : "none",
+                  background: selectedCount > 0 && !submitting ? "var(--skyshare-gold)" : "rgba(212,160,23,0.2)",
+                  color: selectedCount > 0 && !submitting ? "#000" : "rgba(212,160,23,0.4)",
+                  boxShadow: selectedCount > 0 && !submitting ? "0 0 24px rgba(212,160,23,0.3)" : "none",
                   transition: "all 0.2s ease",
                 }}
               >
-                Commit to Work Order →
+                {submitting ? "Saving…" : "Commit to Work Order →"}
               </Button>
             </div>
           </div>
+
+          {/* ── Drag ghost — follows cursor ────────────────────────────��─── */}
+          {draggedId && ghostPos && (() => {
+            const t = parsed.tasks.find(x => x.importId === draggedId)
+            if (!t) return null
+            const c = SECTION_COLORS[t.section]
+            return (
+              <div
+                className="pointer-events-none fixed z-[9999] select-none"
+                style={{
+                  left: ghostPos.x - dragMeta.current.ox,
+                  top:  ghostPos.y - dragMeta.current.oy,
+                  width: dragMeta.current.w,
+                  borderRadius: 10,
+                  background: "hsl(0,0%,17%)",
+                  border: `1px solid ${c}55`,
+                  boxShadow: `0 28px 72px rgba(0,0,0,0.6), 0 6px 18px rgba(0,0,0,0.4), 0 0 0 1px ${c}22`,
+                  transform: "rotate(1.2deg) scale(1.025)",
+                  opacity: 0.97,
+                }}
+              >
+                <div className="flex items-center gap-3 px-3 py-3.5">
+                  <GripVertical className="w-4 h-4 flex-shrink-0" style={{ color: `${c}99` }} />
+                  <div
+                    className="w-5 h-5 rounded border flex items-center justify-center flex-shrink-0"
+                    style={{
+                      background: t.selected ? c : "transparent",
+                      border: t.selected ? `1px solid ${c}` : "1px solid rgba(255,255,255,0.2)",
+                    }}
+                  >
+                    {t.selected && <CheckCircle2 className="w-3.5 h-3.5 text-black" />}
+                  </div>
+                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: c }} />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-white/90 leading-snug truncate block">{t.description}</span>
+                    {t.taskNumber && <p className="text-white/25 text-xs font-mono mt-0.5">{t.taskNumber}</p>}
+                  </div>
+                  {t.remainingDisplay && (
+                    <UrgencyChip days={t.urgencyDays} display={t.remainingDisplay} />
+                  )}
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>

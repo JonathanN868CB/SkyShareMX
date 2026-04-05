@@ -43,6 +43,7 @@ function getAccessToken(event: HandlerEvent): string | null {
 const SUPABASE_PROJECT_URL  = "https://xzcrkzvonjyznzxdbpjj.supabase.co";
 const EDGE_FUNCTION_URL     = `${SUPABASE_PROJECT_URL}/functions/v1/process-record-source`;
 const EXTRACT_FUNCTION_URL  = `${SUPABASE_PROJECT_URL}/functions/v1/extract-record-events`;
+const EMBED_FUNCTION_URL    = `${SUPABASE_PROJECT_URL}/functions/v1/generate-page-embeddings`;
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
@@ -167,14 +168,20 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         return;
       }
 
-      // Step 2 — Intelligence extraction (extract-record-events)
-      // Runs after OCR so it has access to indexed page text.
-      fetch(EXTRACT_FUNCTION_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` },
-        body: JSON.stringify({ record_source_id: newSource.id }),
-      }).catch((err) => {
-        console.error("[records-vault-register] Extract Function trigger failed:", err);
+      // Step 2 — Intelligence extraction + RAG embeddings fire in parallel.
+      // Both are independent consumers of rv_pages; neither blocks the other.
+      const postOcrBody = JSON.stringify({ record_source_id: newSource.id });
+      const postOcrHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
+
+      Promise.allSettled([
+        fetch(EXTRACT_FUNCTION_URL, { method: "POST", headers: postOcrHeaders, body: postOcrBody }),
+        fetch(EMBED_FUNCTION_URL,   { method: "POST", headers: postOcrHeaders, body: postOcrBody }),
+      ]).then((results) => {
+        results.forEach((r, i) => {
+          if (r.status === "rejected") {
+            console.error(`[records-vault-register] Post-OCR function ${i === 0 ? "extract" : "embed"} failed:`, r.reason);
+          }
+        });
       });
 
     } catch (err) {

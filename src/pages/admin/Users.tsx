@@ -109,15 +109,26 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
     label: "Operations",
     items: [
       "Discrepancy Intelligence",
+      "Records Vault",
       "Beet Box",
       "My Journey",
       "Training",
-      "Parts",
       "Vendor Map",
+      "14-Day Check",
       "Compliance",
       "Safety",
+    ],
+  },
+  {
+    label: "Island of Misfit Toys",
+    items: [
+      "External Requests",
+    ],
+  },
+  {
+    label: "Pending Cert.",
+    items: [
       "Aircraft Conformity",
-      "14-Day Check",
       "Maintenance Planning",
       "Ten or More",
       "Terminal-OGD",

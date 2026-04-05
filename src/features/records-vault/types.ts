@@ -8,6 +8,7 @@ export type SourceCategory =
 
 export type IngestionStatus   = "pending" | "extracting" | "indexed" | "failed"
 export type ExtractionStatus  = "pending" | "extracting" | "complete" | "failed"
+export type ChunkStatus       = "pending" | "chunking" | "chunked" | "failed"
 
 export type EventType =
   | "logbook_entry"
@@ -46,6 +47,9 @@ export type RecordSource = {
   extraction_completed_at: string | null
   extraction_error: string | null
   events_extracted: number | null
+  // Phase 3 fields
+  chunk_status: ChunkStatus
+  chunks_generated: number | null
   created_at: string
   updated_at: string
 }
@@ -106,6 +110,21 @@ export type RecordComponent = {
   removed_hours: number | null
   time_installed: number | null   // computed by DB
   created_at: string
+}
+
+// Phase 3 — vector chunk (rv_page_chunks + rv_match_chunks RPC result)
+export type PageChunk = {
+  chunk_id: string
+  page_id: string
+  record_source_id: string
+  aircraft_id: string
+  chunk_index: number
+  chunk_text: string
+  original_filename: string
+  source_category: SourceCategory
+  page_number: number
+  page_image_path: string | null
+  similarity: number
 }
 
 // Shape for the upload modal form

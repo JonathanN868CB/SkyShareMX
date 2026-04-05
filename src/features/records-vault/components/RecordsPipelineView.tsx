@@ -10,13 +10,15 @@ import {
   ChevronRight,
   FileText,
   Trash2,
+  Brain,
+  Layers,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/lib/supabase"
 import { useRecordsPipeline, type PipelineSource } from "../hooks/useRecordsPipeline"
-import { INGESTION_STATUS_LABELS, SOURCE_CATEGORY_LABELS } from "../constants"
-import type { IngestionStatus } from "../types"
+import { SOURCE_CATEGORY_LABELS } from "../constants"
+import type { ExtractionStatus, ChunkStatus } from "../types"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,61 +44,107 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(secs / 86400)}d ago`
 }
 
-// ─── Status indicator ─────────────────────────────────────────────────────────
+// ─── Three-stage pipeline indicator ──────────────────────────────────────────
 
-function StatusIndicator({ source }: { source: PipelineSource }) {
-  const { ingestion_status, verification_status, pages_extracted, pages_inserted } = source
+type StageState = "pending" | "running" | "done" | "failed"
 
-  if (ingestion_status === "indexed" && verification_status === "verified") {
-    return (
-      <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400 text-xs font-medium">
-        <CheckCircle2 className="h-4 w-4" />
-        Verified — {pages_inserted}/{pages_extracted} pages
-      </span>
-    )
+function StageChip({
+  icon: Icon,
+  label,
+  detail,
+  state,
+}: {
+  icon: React.ElementType
+  label: string
+  detail?: string
+  state: StageState
+}) {
+  const colours: Record<StageState, string> = {
+    pending: "text-muted-foreground/60",
+    running: "text-blue-600 dark:text-blue-400",
+    done:    "text-green-600 dark:text-green-400",
+    failed:  "text-destructive",
   }
-
-  if (ingestion_status === "indexed" && verification_status === "partial") {
-    return (
-      <span className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400 text-xs font-medium">
-        <AlertTriangle className="h-4 w-4" />
-        Partial — {pages_inserted ?? "?"}/{pages_extracted ?? "?"} pages — retry recommended
-      </span>
-    )
-  }
-
-  if (ingestion_status === "failed") {
-    return (
-      <span className="flex items-center gap-1.5 text-destructive text-xs font-medium">
-        <XCircle className="h-4 w-4" />
-        Failed
-      </span>
-    )
-  }
-
-  if (ingestion_status === "extracting") {
-    return (
-      <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs font-medium">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        {pages_extracted
-          ? `OCR complete — inserting ${pages_extracted} pages…`
-          : "OCR in progress…"}
-      </span>
-    )
-  }
-
-  if (ingestion_status === "pending") {
-    return (
-      <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
-        <Clock className="h-4 w-4" />
-        Queued
-      </span>
-    )
-  }
+  const colour = colours[state]
 
   return (
-    <span className="text-xs text-muted-foreground">
-      {INGESTION_STATUS_LABELS[ingestion_status as IngestionStatus] ?? ingestion_status}
+    <span className={`flex items-center gap-1 text-[11px] font-medium ${colour}`}>
+      {state === "running"
+        ? <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+        : state === "done"
+        ? <CheckCircle2 className="h-3 w-3 shrink-0" />
+        : state === "failed"
+        ? <XCircle className="h-3 w-3 shrink-0" />
+        : <Clock className="h-3 w-3 shrink-0" />
+      }
+      <Icon className="h-3 w-3 shrink-0" />
+      {label}
+      {detail && <span className="font-normal opacity-70">{detail}</span>}
+    </span>
+  )
+}
+
+function PipelineSeparator({ active }: { active: boolean }) {
+  return (
+    <span className={`text-[10px] ${active ? "text-muted-foreground/50" : "text-muted-foreground/20"}`}>
+      →
+    </span>
+  )
+}
+
+function StatusIndicator({ source }: { source: PipelineSource }) {
+  const {
+    ingestion_status, verification_status, pages_extracted, pages_inserted,
+    extraction_status, events_extracted,
+    chunk_status, chunks_generated,
+  } = source
+
+  // ── Stage 1: OCR ────────────────────────────────────────────────────────────
+  let ocrState: StageState = "pending"
+  let ocrDetail: string | undefined
+  if (ingestion_status === "extracting") { ocrState = "running" }
+  else if (ingestion_status === "indexed") {
+    ocrState = verification_status === "partial" ? "failed" : "done"
+    ocrDetail = pages_inserted != null ? ` ${pages_inserted}p` : undefined
+  } else if (ingestion_status === "failed") {
+    ocrState = "failed"
+  }
+
+  // ── Stage 2: Event extraction ────────────────────────────────────────────────
+  const exStatus = (extraction_status ?? "pending") as ExtractionStatus
+  let evState: StageState = "pending"
+  let evDetail: string | undefined
+  if (exStatus === "extracting") { evState = "running" }
+  else if (exStatus === "complete") {
+    evState = "done"
+    evDetail = events_extracted != null ? ` ${events_extracted}ev` : undefined
+  } else if (exStatus === "failed") { evState = "failed" }
+
+  // ── Stage 3: Vector embeddings ────────────────────────────────────────────────
+  const ckStatus = (chunk_status ?? "pending") as ChunkStatus
+  let vecState: StageState = "pending"
+  let vecDetail: string | undefined
+  if (ckStatus === "chunking") { vecState = "running" }
+  else if (ckStatus === "chunked") {
+    vecState = "done"
+    vecDetail = chunks_generated != null ? ` ${chunks_generated}ch` : undefined
+  } else if (ckStatus === "failed") { vecState = "failed" }
+
+  const ocrDoneOrBetter = ocrState === "done"
+
+  return (
+    <span className="flex items-center gap-1.5 flex-wrap">
+      <StageChip icon={FileText} label="OCR" detail={ocrDetail} state={ocrState} />
+      <PipelineSeparator active={ocrDoneOrBetter} />
+      <StageChip icon={Brain}    label="Events" detail={evDetail} state={evState} />
+      <PipelineSeparator active={evState === "done"} />
+      <StageChip icon={Layers}   label="Vectors" detail={vecDetail} state={vecState} />
+      {verification_status === "partial" && (
+        <span className="flex items-center gap-1 text-[11px] text-yellow-600 dark:text-yellow-400 font-medium">
+          <AlertTriangle className="h-3 w-3" />
+          {pages_inserted ?? "?"}/{pages_extracted ?? "?"} pages inserted
+        </span>
+      )}
     </span>
   )
 }
@@ -111,18 +159,22 @@ function SourceRow({
   deleting,
 }: {
   source: PipelineSource
-  onRetry: (id: string) => void
+  onRetry: (id: string, ocrDone: boolean) => void
   onDelete: (id: string, filename: string) => void
   retrying: boolean
   deleting: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
 
+  // Can always retry if OCR failed/partial; can re-run extract+embed if indexed
   const canRetry =
     source.ingestion_status === "failed" ||
     source.ingestion_status === "pending" ||
     source.verification_status === "partial" ||
-    source.ingestion_status === "indexed"
+    source.ingestion_status === "indexed"  // covers re-running extract/embed
+
+  // Whether OCR is done — if so, retry only needs to re-run extract+embed
+  const ocrAlreadyDone = source.ingestion_status === "indexed"
 
   const duration = formatDuration(
     source.ingestion_started_at,
@@ -168,11 +220,17 @@ function SourceRow({
               size="sm"
               variant="outline"
               className="h-7 text-xs gap-1.5"
-              onClick={() => onRetry(source.id)}
-              disabled={retrying || deleting || source.ingestion_status === "extracting"}
+              onClick={() => onRetry(source.id, ocrAlreadyDone)}
+              disabled={
+                retrying || deleting ||
+                source.ingestion_status === "extracting" ||
+                source.extraction_status === "extracting" ||
+                source.chunk_status === "chunking"
+              }
+              title={ocrAlreadyDone ? "Re-run event extraction + vector embedding" : "Retry OCR ingestion"}
             >
               <RefreshCw className={`h-3 w-3 ${retrying ? "animate-spin" : ""}`} />
-              {source.verification_status === "partial" ? "Re-process" : "Retry"}
+              {ocrAlreadyDone ? "Re-extract" : source.verification_status === "partial" ? "Re-process" : "Retry"}
             </Button>
           )}
 
@@ -248,16 +306,25 @@ function BatchGroup({
 }: {
   label: string
   sources: PipelineSource[]
-  onRetry: (id: string) => void
+  onRetry: (id: string, ocrDone: boolean) => void
   onDelete: (id: string, filename: string) => void
   retryingId: string | null
   deletingId: string | null
 }) {
-  const verified  = sources.filter((s) => s.verification_status === "verified").length
-  const failed    = sources.filter((s) => s.ingestion_status === "failed").length
+  const allDone = (s: PipelineSource) =>
+    s.ingestion_status === "indexed" &&
+    s.extraction_status === "complete" &&
+    s.chunk_status === "chunked"
+
+  const verified  = sources.filter((s) => allDone(s) && s.verification_status === "verified").length
+  const failed    = sources.filter(
+    (s) => s.ingestion_status === "failed" || s.extraction_status === "failed" || s.chunk_status === "failed"
+  ).length
   const partial   = sources.filter((s) => s.verification_status === "partial").length
   const running   = sources.filter(
-    (s) => s.ingestion_status === "pending" || s.ingestion_status === "extracting"
+    (s) =>
+      s.ingestion_status === "pending" || s.ingestion_status === "extracting" ||
+      s.extraction_status === "extracting" || s.chunk_status === "chunking"
   ).length
 
   return (
@@ -315,13 +382,18 @@ export function RecordsPipelineView({ aircraftId }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterMode>("all")
 
-  async function handleRetry(recordSourceId: string) {
+  async function handleRetry(recordSourceId: string, ocrAlreadyDone: boolean) {
     setRetryingId(recordSourceId)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error("Not authenticated")
 
-      const resp = await fetch("/.netlify/functions/records-vault-retry", {
+      // If OCR is already done, skip re-OCR and just re-run extract + embed
+      const endpoint = ocrAlreadyDone
+        ? "/.netlify/functions/records-vault-reextract"
+        : "/.netlify/functions/records-vault-retry"
+
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -332,7 +404,10 @@ export function RecordsPipelineView({ aircraftId }: Props) {
       const json = await resp.json()
       if (!resp.ok) throw new Error(json.error ?? "Retry failed")
 
-      toast({ title: "Retry triggered", description: json.message })
+      toast({
+        title: ocrAlreadyDone ? "Re-extraction triggered" : "Retry triggered",
+        description: json.message ?? `Processing ${json.queued ?? 1} document(s)`,
+      })
     } catch (err) {
       toast({
         title: "Retry failed",
@@ -366,12 +441,33 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     }
   }
 
+  function isProcessing(s: PipelineSource) {
+    return (
+      s.ingestion_status === "pending" || s.ingestion_status === "extracting" ||
+      s.extraction_status === "extracting" || s.chunk_status === "chunking"
+    )
+  }
+
+  function needsAttention(s: PipelineSource) {
+    return (
+      s.ingestion_status === "failed" || s.verification_status === "partial" ||
+      s.extraction_status === "failed" || s.chunk_status === "failed"
+    )
+  }
+
+  function isFullyComplete(s: PipelineSource) {
+    return (
+      s.ingestion_status === "indexed" &&
+      s.extraction_status === "complete" &&
+      s.chunk_status === "chunked"
+    )
+  }
+
   // Filter
   const filtered = sources.filter((s) => {
-    if (filter === "verified")   return s.verification_status === "verified"
-    if (filter === "processing") return s.ingestion_status === "pending" || s.ingestion_status === "extracting"
-    if (filter === "needs_attention")
-      return s.ingestion_status === "failed" || s.verification_status === "partial"
+    if (filter === "verified")        return isFullyComplete(s) && s.verification_status === "verified"
+    if (filter === "processing")      return isProcessing(s)
+    if (filter === "needs_attention") return needsAttention(s)
     return true
   })
 
@@ -383,12 +479,8 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     groups.get(key)!.push(s)
   }
 
-  const needsAttentionCount = sources.filter(
-    (s) => s.ingestion_status === "failed" || s.verification_status === "partial"
-  ).length
-  const processingCount = sources.filter(
-    (s) => s.ingestion_status === "pending" || s.ingestion_status === "extracting"
-  ).length
+  const needsAttentionCount = sources.filter(needsAttention).length
+  const processingCount = sources.filter(isProcessing).length
 
   const FILTERS: Array<{ key: FilterMode; label: string; count?: number }> = [
     { key: "all",              label: "All",             count: sources.length },

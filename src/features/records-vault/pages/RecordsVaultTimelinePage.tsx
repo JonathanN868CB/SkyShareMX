@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef, useCallback } from "react"
 import {
   Loader2, Search, Filter, Calendar, Clock, Wrench,
   ShieldCheck, Package, AlertTriangle, FileCheck, RotateCcw,
@@ -8,6 +8,7 @@ import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { useTimeline } from "../hooks/useTimeline"
 import { useRecordSources } from "../hooks/useRecordSources"
 import { RecordsVaultViewer } from "../components/RecordsVaultViewer"
+import { supabase } from "@/lib/supabase"
 import type { MaintenanceEvent, EventType, SearchHit, SourceCategory } from "../types"
 
 // ─── Event type config ────────────────────────────────────────────────────────
@@ -214,34 +215,41 @@ export default function RecordsVaultTimelinePage() {
   const events = data?.events ?? []
   const total  = data?.total ?? 0
 
-  // Debounce search
-  const handleSearch = (val: string) => {
+  // Debounce search — useRef-based to avoid stale closures
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleSearch = useCallback((val: string) => {
     setSearchQuery(val)
-    clearTimeout((handleSearch as { _t?: ReturnType<typeof setTimeout> })._t)
-    ;(handleSearch as { _t?: ReturnType<typeof setTimeout> })._t = setTimeout(() => {
-      setDebouncedQuery(val)
-    }, 300)
-  }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedQuery(val), 300)
+  }, [])
 
-  function openViewerForEvent(event: MaintenanceEvent) {
+  async function openViewerForEvent(event: MaintenanceEvent) {
     const source = sources.find((s) => s.id === event.record_source_id)
-    const pageNum = event.page_ids?.[0]
-      ? undefined  // We'd need to look up the actual page number from the page_id
-      : 1          // Fallback to page 1
 
-    // Build a synthetic SearchHit for the viewer
+    // Resolve the actual page number from the first page_id UUID.
+    // Falls back to 1 if the lookup fails (e.g. page deleted).
+    let pageNumber = 1
+    if (event.page_ids?.[0]) {
+      const { data: pageRow } = await supabase
+        .from("rv_pages")
+        .select("page_number")
+        .eq("id", event.page_ids[0])
+        .single()
+      if (pageRow?.page_number) pageNumber = pageRow.page_number
+    }
+
     const syntheticHit: SearchHit = {
-      page_id: event.page_ids?.[0] ?? event.id,
-      record_source_id: event.record_source_id,
-      aircraft_id: event.aircraft_id,
-      page_number: pageNum ?? 1,
-      original_filename: event.original_filename ?? source?.original_filename ?? "Document",
-      source_category: (event.source_category ?? source?.source_category ?? "other") as SourceCategory,
+      page_id:              event.page_ids?.[0] ?? event.id,
+      record_source_id:     event.record_source_id,
+      aircraft_id:          event.aircraft_id,
+      page_number:          pageNumber,
+      original_filename:    event.original_filename ?? source?.original_filename ?? "Document",
+      source_category:      (event.source_category ?? source?.source_category ?? "other") as SourceCategory,
       observed_registration: source?.observed_registration ?? null,
-      date_range_start: source?.date_range_start ?? null,
-      date_range_end: source?.date_range_end ?? null,
-      ocr_excerpt: "",
-      rank: 0,
+      date_range_start:     source?.date_range_start ?? null,
+      date_range_end:       source?.date_range_end ?? null,
+      ocr_excerpt:          "",
+      rank:                 0,
     }
 
     setViewerHits([syntheticHit])

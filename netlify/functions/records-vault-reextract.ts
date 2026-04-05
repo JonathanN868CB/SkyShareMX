@@ -41,6 +41,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const anonKey      = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
   const edgeFnUrl    = process.env.SUPABASE_EXTRACT_FN_URL
     ?? `${supabaseUrl}/functions/v1/extract-record-events`;
+  const embedFnUrl   = `${supabaseUrl}/functions/v1/generate-page-embeddings`;
 
   if (!supabaseUrl || !serviceRole || !anonKey) return json(500, { error: "Server config error" });
 
@@ -54,7 +55,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const { data: profile } = await adminClient
     .from("profiles")
     .select("role")
-    .eq("id", user.id)
+    .eq("user_id", user.id)
     .single();
 
   const managerRoles = ["Manager", "Director of Maintenance", "DPE", "Admin", "Super Admin"];
@@ -91,25 +92,23 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   if (sourceIds.length === 0) return json(200, { queued: 0, message: "No indexed sources found" });
 
-  // Fire-and-forget extraction for each source
+  // Fire extraction + embedding re-generation for each source (both in parallel per source)
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
   const results = await Promise.allSettled(
-    sourceIds.map((id) =>
-      fetch(edgeFnUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${serviceRole}`,
-        },
-        body: JSON.stringify({ record_source_id: id }),
-      })
-    )
+    sourceIds.flatMap((id) => {
+      const body = JSON.stringify({ record_source_id: id });
+      return [
+        fetch(edgeFnUrl,  { method: "POST", headers, body }),
+        fetch(embedFnUrl, { method: "POST", headers, body }),
+      ];
+    })
   );
 
   const succeeded = results.filter((r) => r.status === "fulfilled").length;
 
   return json(200, {
-    queued: sourceIds.length,
-    succeeded,
-    message: `Triggered extraction for ${sourceIds.length} document(s)`,
+    queued:    sourceIds.length,
+    succeeded: Math.floor(succeeded / 2), // pairs of calls per source
+    message:   `Triggered extraction + embedding for ${sourceIds.length} document(s)`,
   });
 };
