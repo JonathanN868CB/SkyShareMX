@@ -36,9 +36,10 @@ const Login = lazy(() => import("@/pages/Login"))
 const AuthCallback = lazy(() => import("@/pages/AuthCallback"))
 const RequestAccess = lazy(() => import("@/pages/RequestAccess"))
 const Dashboard = lazy(() => import("@/pages/Dashboard"))
-const AdminUsers     = lazy(() => import("@/pages/admin/Users"))
-const AdminTraining  = lazy(() => import("@/pages/admin/AdminTraining"))
+const AdminUsers       = lazy(() => import("@/pages/admin/Users"))
+const AdminTraining    = lazy(() => import("@/pages/admin/AdminTraining"))
 const PermissionsIndex = lazy(() => import("@/pages/admin/PermissionsIndex"))
+const SuggestionAdmin  = lazy(() => import("@/pages/admin/SuggestionAdmin"))
 const AccessRestricted = lazy(() => import("@/pages/AccessRestricted"))
 const AircraftInfo = lazy(() => import("@/pages/AircraftInfo"))
 const MyTraining   = lazy(() => import("@/pages/training/MyTraining"))
@@ -151,6 +152,10 @@ const routes: RouteObject[] = [
       {
         path: "admin/permissions",
         element: wrap(<PermissionsIndex />),
+      },
+      {
+        path: "admin/suggestions",
+        element: wrap(<SuggestionAdmin />),
       },
       {
         path: "access-restricted",
