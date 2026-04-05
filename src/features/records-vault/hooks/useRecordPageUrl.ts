@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
 
-async function fetchPageUrl(recordSourceId: string): Promise<string> {
+// Returns a 60-minute signed URL for the source PDF.
+// Used as the src of an <iframe> so the browser's native PDF renderer
+// handles all compression formats (JBIG2, CCITTFax, JPEG, etc.).
+async function fetchPdfUrl(recordSourceId: string): Promise<string> {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error("Not authenticated")
 
@@ -23,13 +26,10 @@ async function fetchPageUrl(recordSourceId: string): Promise<string> {
   return signedUrl as string
 }
 
-// Fetches a 60-min signed URL for a source PDF.
-// Only enabled when a recordSourceId is provided.
-// The signed URL is cached for 55 minutes (slightly under expiry).
 export function useRecordPageUrl(recordSourceId: string | null) {
   return useQuery({
     queryKey: ["record-page-url", recordSourceId],
-    queryFn: () => fetchPageUrl(recordSourceId!),
+    queryFn: () => fetchPdfUrl(recordSourceId!),
     enabled: !!recordSourceId,
     staleTime: 55 * 60 * 1000,
     retry: 1,
