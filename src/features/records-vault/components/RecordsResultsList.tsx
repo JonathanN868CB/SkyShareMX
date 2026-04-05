@@ -16,17 +16,17 @@ const CATEGORY_COLORS: Record<string, string> = {
   other:        "bg-muted text-muted-foreground",
 }
 
-// Replace [[term]] markers from ts_headline with <mark> spans
+// Parse ts_headline <b>term</b> markers into highlighted <mark> spans
 function renderExcerpt(excerpt: string): React.ReactNode {
-  const parts = excerpt.split(/(\[\[.*?\]\])/g)
+  const parts = excerpt.split(/(<b>.*?<\/b>)/g)
   return parts.map((part, i) => {
-    if (part.startsWith("[[") && part.endsWith("]]")) {
+    if (part.startsWith("<b>") && part.endsWith("</b>")) {
       return (
         <mark
           key={i}
           className="bg-yellow-200 dark:bg-yellow-800/60 text-yellow-900 dark:text-yellow-100 rounded-sm px-0.5 font-medium not-italic"
         >
-          {part.slice(2, -2)}
+          {part.slice(3, -4)}
         </mark>
       )
     }

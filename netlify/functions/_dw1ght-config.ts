@@ -25,6 +25,10 @@ export const DW1GHT_CONFIG = {
   // Max rows returned from a SQL query before truncation
   sqlResultLimit: 50,
 
+  // RAG retrieval settings (Records Vault vector search)
+  ragChunkLimit: 8,
+  ragThreshold: 0.4,
+
   // ── Identity ─────────────────────────────────────────────────
   // Who DW1GHT is. Shared by ALL modes. Never changes.
   identity: `You are DW1GHT -- AI Assistant to the DOM (Director of Maintenance) at SkyShare MX.
@@ -214,6 +218,40 @@ RELATIONSHIPS:
 - interview_assignments.assigned_to -> profiles.id (technician assigned)
 - interview_assignments.assigned_by -> profiles.id (manager who assigned)
 
+TABLE: rv_record_sources (Records Vault — uploaded aircraft record documents)
+  id                  uuid PK
+  aircraft_id         uuid FK -> aircraft
+  original_filename   text        -- e.g. "N477KR_Logbook_2019.pdf"
+  source_category     text        -- 'logbook', 'work_package', 'inspection', 'ad_compliance', 'major_repair', 'other'
+  observed_registration text      -- tail number observed in document
+  date_range_start    date
+  date_range_end      date
+  page_count          integer
+  ingestion_status    text        -- 'pending', 'extracting', 'indexed', 'failed'
+  chunk_status        text        -- 'pending', 'chunking', 'chunked', 'failed'
+  chunks_generated    integer
+  created_at          timestamptz
+
+TABLE: rv_pages (individual pages with Mistral OCR text)
+  id                  uuid PK
+  record_source_id    uuid FK -> rv_record_sources
+  page_number         integer
+  raw_ocr_text        text        -- full OCR text from Mistral
+  ocr_status          text        -- 'pending', 'extracting', 'extracted', 'failed'
+  created_at          timestamptz
+
+TABLE: rv_page_chunks (text chunks with vector embeddings — searched via rv_match_chunks RPC)
+  id                  uuid PK
+  page_id             uuid FK -> rv_pages
+  aircraft_id         uuid FK -> aircraft
+  record_source_id    uuid FK -> rv_record_sources
+  chunk_index         integer
+  chunk_text          text
+  embedding           vector(1024) -- Voyage AI voyage-3 model
+  created_at          timestamptz
+
+NOTE: rv_page_chunks is searched via the rv_match_chunks() RPC using cosine similarity, NOT via SQL queries. Do NOT generate SQL against rv_page_chunks. The RAG pipeline handles Records Vault searches separately.
+
 FLEET NOTES:
 - Fleet is primarily Pilatus PC-12 single-engine turboprops
 - 10 aircraft currently in system with 542 discrepancy records
@@ -237,7 +275,8 @@ RULES:
 - For questions about specific aircraft, join aircraft_registrations on aircraft_id and filter by registration.
 - When asked about "recent" or "latest", ORDER BY found_at DESC and LIMIT appropriately.
 - For time-based analysis, you can use date_trunc, EXTRACT, or interval arithmetic.
-- Use the discrepancy_enrichments table when questions involve interviews or enrichment data.`,
+- Use the discrepancy_enrichments table when questions involve interviews or enrichment data.
+- Do NOT generate SQL against rv_page_chunks or rv_pages. Records Vault data is searched via vector similarity (RAG), not SQL. If a question involves aircraft records, logbooks, or maintenance documents, still respond with a SELECT query for any discrepancy/aircraft data, and the system will separately search Records Vault vectors.`,
 
   // ── Interview Mode ────────────────────────────────────────────
   // Separate from mode overlays — interview is a distinct workflow, not a toggle.
