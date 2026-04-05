@@ -27,6 +27,9 @@ const SOPDetail          = lazy(() => import("@/features/beet-box/modules/sops/S
 const TrainingDashboard  = lazy(() => import("@/features/beet-box/modules/training/TrainingDashboard"))
 const TrainingDetail     = lazy(() => import("@/features/beet-box/modules/training/TrainingDetail"))
 const SettingsDashboard  = lazy(() => import("@/features/beet-box/modules/settings/SettingsDashboard"))
+const BeetBoxParts       = lazy(() => import("@/pages/Parts"))
+const BeetBoxPartsNew    = lazy(() => import("@/pages/PartsNew"))
+const BeetBoxPartsDetail = lazy(() => import("@/pages/PartsDetail"))
 
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
@@ -58,6 +61,7 @@ const RecordsVaultApp      = lazy(() => import("@/features/records-vault/Records
 const RecordsVaultRedirect = lazy(() => import("@/features/records-vault/RecordsVaultApp").then(m => ({ default: m.RecordsVaultRedirect })))
 const RecordsVaultSearch   = lazy(() => import("@/features/records-vault/pages/RecordsVaultSearchPage"))
 const RecordsVaultBrowse   = lazy(() => import("@/features/records-vault/pages/RecordsVaultBrowsePage"))
+const RecordsVaultTimeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultTimelinePage"))
 const RecordsVaultPipeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultPipelinePage"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 
@@ -191,6 +195,9 @@ const routes: RouteObject[] = [
       { path: "training",                         element: wrap(<TrainingDashboard />) },
       { path: "training/:id",                     element: wrap(<TrainingDetail />) },
       { path: "settings",                         element: wrap(<SettingsDashboard />) },
+      { path: "parts",                            element: wrap(<BeetBoxParts />) },
+      { path: "parts/new",                        element: wrap(<BeetBoxPartsNew />) },
+      { path: "parts/:id",                        element: wrap(<BeetBoxPartsDetail />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────
@@ -209,6 +216,7 @@ const routes: RouteObject[] = [
       { index: true,           element: wrap(<RecordsVaultRedirect />) },
       { path: "search",        element: wrap(<RecordsVaultSearch />) },
       { path: "browse",        element: wrap(<RecordsVaultBrowse />) },
+      { path: "timeline",      element: wrap(<RecordsVaultTimeline />) },
       { path: "pipeline",      element: wrap(<RecordsVaultPipeline />) },
     ],
   },

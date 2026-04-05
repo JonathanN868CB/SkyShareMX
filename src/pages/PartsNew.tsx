@@ -10,7 +10,7 @@ export default function PartsNew() {
       {/* Header */}
       <div className="flex items-center gap-3">
         <button
-          onClick={() => navigate("/app/parts")}
+          onClick={() => navigate("/app/beet-box/parts")}
           className="p-1.5 rounded-md transition-colors"
           style={{ color: "rgba(255,255,255,0.5)" }}
           onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.8)")}

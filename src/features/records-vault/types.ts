@@ -6,7 +6,23 @@ export type SourceCategory =
   | "major_repair"
   | "other"
 
-export type IngestionStatus = "pending" | "extracting" | "indexed" | "failed"
+export type IngestionStatus   = "pending" | "extracting" | "indexed" | "failed"
+export type ExtractionStatus  = "pending" | "extracting" | "complete" | "failed"
+export type ChunkStatus       = "pending" | "chunking" | "chunked" | "failed"
+
+export type EventType =
+  | "logbook_entry"
+  | "inspection"
+  | "ad_compliance"
+  | "sb_compliance"
+  | "component_install"
+  | "component_removal"
+  | "repair"
+  | "alteration"
+  | "overhaul"
+  | "return_to_service"
+  | "discrepancy"
+  | "other"
 
 export type RecordSource = {
   id: string
@@ -26,6 +42,14 @@ export type RecordSource = {
   ingestion_status: IngestionStatus
   ingestion_error: string | null
   ocr_quality_score: number | null
+  // Phase 2 fields
+  extraction_status: ExtractionStatus
+  extraction_completed_at: string | null
+  extraction_error: string | null
+  events_extracted: number | null
+  // Phase 3 fields
+  chunk_status: ChunkStatus
+  chunks_generated: number | null
   created_at: string
   updated_at: string
 }
@@ -38,10 +62,69 @@ export type SearchHit = {
   original_filename: string
   source_category: SourceCategory
   observed_registration: string | null
-  date_range_start: string | null   // ISO date string from rv_record_sources
-  date_range_end: string | null     // ISO date string from rv_record_sources
-  ocr_excerpt: string               // contains [[highlighted]] markers
+  date_range_start: string | null
+  date_range_end: string | null
+  ocr_excerpt: string              // ts_headline output — contains <b>…</b> markers
   rank: number
+}
+
+export type MaintenanceEvent = {
+  id: string
+  aircraft_id: string
+  record_source_id: string
+  page_ids: string[]
+  event_type: EventType
+  event_date: string | null
+  aircraft_total_time: number | null
+  aircraft_cycles: number | null
+  description: string
+  part_numbers: string[]
+  serial_numbers: string[]
+  work_order_number: string | null
+  ad_sb_number: string | null
+  performed_by: string | null
+  approved_by: string | null
+  station: string | null
+  confidence: number | null
+  extraction_model: string | null
+  extraction_notes: string | null
+  // Joined from rv_record_sources (timeline RPC)
+  original_filename?: string
+  source_category?: SourceCategory
+  // Pagination meta (timeline RPC)
+  total_count?: number
+  created_at: string
+}
+
+export type RecordComponent = {
+  id: string
+  aircraft_id: string
+  part_number: string
+  serial_number: string | null
+  description: string | null
+  installed_event_id: string | null
+  installed_date: string | null
+  installed_hours: number | null
+  removed_event_id: string | null
+  removed_date: string | null
+  removed_hours: number | null
+  time_installed: number | null   // computed by DB
+  created_at: string
+}
+
+// Phase 3 — vector chunk (rv_page_chunks + rv_match_chunks RPC result)
+export type PageChunk = {
+  chunk_id: string
+  page_id: string
+  record_source_id: string
+  aircraft_id: string
+  chunk_index: number
+  chunk_text: string
+  original_filename: string
+  source_category: SourceCategory
+  page_number: number
+  page_image_path: string | null
+  similarity: number
 }
 
 // Shape for the upload modal form

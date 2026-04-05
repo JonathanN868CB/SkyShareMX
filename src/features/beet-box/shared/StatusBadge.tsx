@@ -1,11 +1,11 @@
 import { cn } from "@/shared/lib/utils"
-import type { WOStatus, POStatus, ToolStatus, InvoiceStatus } from "../data/mockData"
+import type { WOStatus, POStatus, ToolStatus, InvoiceStatus } from "../types"
 import {
   WO_STATUS_LABELS,
   PO_STATUS_LABELS,
   TOOL_STATUS_LABELS,
   INVOICE_STATUS_LABELS,
-} from "../data/mockData"
+} from "../constants"
 
 // ─── Work Order Status ────────────────────────────────────────────────────────
 

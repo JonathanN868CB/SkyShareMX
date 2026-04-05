@@ -12,7 +12,7 @@ export default function PartsDetail() {
     <div className="p-6 max-w-5xl mx-auto space-y-6">
       {/* Back button */}
       <button
-        onClick={() => navigate("/app/parts")}
+        onClick={() => navigate("/app/beet-box/parts")}
         className="flex items-center gap-2 text-sm transition-colors"
         style={{ color: "rgba(255,255,255,0.5)" }}
         onMouseEnter={e => (e.currentTarget.style.color = "rgba(255,255,255,0.8)")}
