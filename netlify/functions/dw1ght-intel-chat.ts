@@ -14,10 +14,22 @@ type HandlerResponse = {
   body?: string;
 };
 
+type ContextSource = "discrepancies" | "records" | "manuals";
+
 interface RequestPayload {
   message?: unknown;
   history?: unknown;
   mode?: unknown;
+  contextSources?: unknown;
+}
+
+interface RagChunk {
+  chunk_id: string;
+  chunk_text: string;
+  original_filename: string;
+  source_category: string;
+  page_number: number;
+  similarity: number;
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -47,6 +59,78 @@ function getMode(raw: unknown): Dw1ghtMode {
 
 function buildSystemPrompt(mode: Dw1ghtMode): string {
   return DW1GHT_CONFIG.identity + "\n\n" + DW1GHT_CONFIG.modes[mode];
+}
+
+// ── Context Sources ─────────────────────────────────────────
+function getContextSources(raw: unknown): Set<ContextSource> {
+  const defaults = new Set<ContextSource>(["discrepancies"]);
+  if (!Array.isArray(raw)) return defaults;
+  const valid: ContextSource[] = ["discrepancies", "records", "manuals"];
+  const sources = raw.filter((s): s is ContextSource => valid.includes(s as ContextSource));
+  return sources.length > 0 ? new Set(sources) : defaults;
+}
+
+// ── Voyage AI Query Embedding ───────────────────────────────
+async function embedQuery(query: string): Promise<number[] | null> {
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (!apiKey) {
+    console.error("[DW1GHT] VOYAGE_API_KEY not set — cannot embed query");
+    return null;
+  }
+
+  try {
+    const resp = await fetch("https://api.voyageai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ input: [query], model: "voyage-3" }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error(`[DW1GHT] Voyage AI error ${resp.status}: ${err}`);
+      return null;
+    }
+
+    const result = await resp.json() as { data: { embedding: number[] }[] };
+    return result.data[0].embedding;
+  } catch (err) {
+    console.error("[DW1GHT] Voyage AI embed failed:", err);
+    return null;
+  }
+}
+
+// ── RAG Retrieval via rv_match_chunks ───────────────────────
+async function retrieveRecordsContext(
+  queryEmbedding: number[],
+): Promise<{ chunks: RagChunk[]; error: string | null }> {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE;
+
+  if (!url || !key) {
+    return { chunks: [], error: "Database not configured for RAG" };
+  }
+
+  const supabase = createClient(url, key);
+
+  try {
+    const { data, error } = await supabase.rpc("rv_match_chunks", {
+      query_embedding: `[${queryEmbedding.join(",")}]`,
+      p_aircraft_id: null, // fleet-wide
+      p_limit: DW1GHT_CONFIG.ragChunkLimit,
+      p_threshold: DW1GHT_CONFIG.ragThreshold,
+    });
+
+    if (error) {
+      return { chunks: [], error: error.message };
+    }
+
+    return { chunks: (data ?? []) as RagChunk[], error: null };
+  } catch (err) {
+    return { chunks: [], error: err instanceof Error ? err.message : "RAG query failed" };
+  }
 }
 
 // ── SQL Classification ──────────────────────────────────────────
@@ -148,9 +232,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   const mode = getMode(payload.mode);
+  const sources = getContextSources(payload.contextSources);
   const history = Array.isArray(payload.history) ? payload.history : [];
   const message = payload.message.trim();
   const client = new Anthropic({ apiKey });
+
+  console.log("[DW1GHT] Context sources:", [...sources].join(", "));
 
   // Keep conversation history within window
   const recentHistory = history.slice(-(DW1GHT_CONFIG.historyWindow * 2));
@@ -185,56 +272,86 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     });
   }
 
-  // ── Data path: generate SQL ───────────────────────────────────
+  // ── Data path ─────────────────────────────────────────────────
   const conversationContext = recentHistory
     .slice(-4)
     .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)
     .join("\n");
 
-  const sql = await generateSQL(client, message, conversationContext);
-  console.log("[DW1GHT] Generated SQL:", sql ?? "NO_SQL");
+  // Run SQL and RAG pipelines in parallel based on active sources
+  const useDiscrepancies = sources.has("discrepancies");
+  const useRecords = sources.has("records");
 
-  if (!sql) {
-    const messages: Anthropic.MessageParam[] = [
-      ...recentHistory,
-      { role: "user", content: message },
-    ];
+  const [sqlResult, ragResult] = await Promise.all([
+    // SQL pipeline (discrepancy history)
+    useDiscrepancies
+      ? generateSQL(client, message, conversationContext).then(async (sql) => {
+          console.log("[DW1GHT] Generated SQL:", sql ?? "NO_SQL");
+          if (!sql) return { sql: null, data: null, error: null };
+          const result = await runQuery(sql);
+          console.log("[DW1GHT] Query result:", result.error ? `ERROR: ${result.error}` : `${result.data?.length ?? 0} rows`);
+          return { sql, ...result };
+        })
+      : Promise.resolve({ sql: null, data: null, error: null }),
 
-    const response = await client.messages.create({
-      model: DW1GHT_CONFIG.model,
-      max_tokens: DW1GHT_CONFIG.maxTokens[mode],
-      system: buildSystemPrompt(mode) + `\n\nIMPORTANT: The user asked a data question but the system could not generate a database query for it. Tell the user you understood their question but could not formulate a precise query. Ask them to rephrase with specifics — a tail number, date range, or technician name.`,
-      messages,
-    });
+    // RAG pipeline (aircraft records)
+    useRecords
+      ? embedQuery(message).then(async (embedding) => {
+          if (!embedding) return { chunks: [] as RagChunk[], error: "Embedding generation failed" };
+          console.log("[DW1GHT] Query embedded, searching rv_page_chunks...");
+          const result = await retrieveRecordsContext(embedding);
+          console.log("[DW1GHT] RAG result:", result.error ? `ERROR: ${result.error}` : `${result.chunks.length} chunks`);
+          return result;
+        })
+      : Promise.resolve({ chunks: [] as RagChunk[], error: null }),
+  ]);
 
-    const reply = response.content[0].type === "text" ? response.content[0].text : "";
-    return json(200, {
-      reply,
-      mode,
-      queryType: "data",
-      sqlGenerated: false,
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-      },
-    });
+  // ── Build combined data context ───────────────────────────────
+  const contextSections: string[] = [];
+  let sqlGenerated = false;
+  let resultCount = 0;
+  let ragChunksUsed = 0;
+
+  // SQL results section
+  if (useDiscrepancies) {
+    if (sqlResult.sql) {
+      sqlGenerated = true;
+      if (sqlResult.error) {
+        contextSections.push(`DISCREPANCY DATABASE QUERY FAILED.\nSQL attempted: ${sqlResult.sql}\nError: ${sqlResult.error}\n\nTell the user the query encountered an issue. Do not expose raw SQL or error details — just say the retrieval hit a snag and ask them to try rephrasing.`);
+      } else if (!sqlResult.data || sqlResult.data.length === 0) {
+        contextSections.push(`DISCREPANCY DATABASE QUERY RETURNED NO RESULTS.\nSQL executed: ${sqlResult.sql}\n\nTell the user no matching discrepancy records were found. Be specific about what was searched for.`);
+      } else {
+        resultCount = sqlResult.data.length;
+        const truncated = sqlResult.data.slice(0, DW1GHT_CONFIG.sqlResultLimit);
+        const overflow = sqlResult.data.length > DW1GHT_CONFIG.sqlResultLimit;
+        contextSections.push(`DISCREPANCY DATABASE RESULTS (${sqlResult.data.length} rows${overflow ? `, showing first ${DW1GHT_CONFIG.sqlResultLimit}` : ""}):\n${JSON.stringify(truncated, null, 2)}${overflow ? `\n\n(${sqlResult.data.length - DW1GHT_CONFIG.sqlResultLimit} additional rows not shown)` : ""}`);
+      }
+    } else {
+      contextSections.push(`DISCREPANCY DATABASE: Could not generate a SQL query for this question. The discrepancy history was searched but no structured query could be formed.`);
+    }
   }
 
-  // ── Data path: execute SQL ────────────────────────────────────
-  const { data: queryResults, error: queryError } = await runQuery(sql);
-  console.log("[DW1GHT] Query result:", queryError ? `ERROR: ${queryError}` : `${queryResults?.length ?? 0} rows`);
-
-  // ── Data path: generate grounded response ─────────────────────
-  let dataContext: string;
-  if (queryError) {
-    dataContext = `DATABASE QUERY FAILED.\nSQL attempted: ${sql}\nError: ${queryError}\n\nTell the user the query encountered an issue. Do not expose raw SQL or error details — just say the retrieval hit a snag and ask them to try rephrasing.`;
-  } else if (!queryResults || queryResults.length === 0) {
-    dataContext = `DATABASE QUERY RETURNED NO RESULTS.\nSQL executed: ${sql}\n\nTell the user no matching records were found. Be specific about what was searched for.`;
-  } else {
-    const truncated = queryResults.slice(0, DW1GHT_CONFIG.sqlResultLimit);
-    const overflow = queryResults.length > DW1GHT_CONFIG.sqlResultLimit;
-    dataContext = `DATABASE QUERY RESULTS (${queryResults.length} rows${overflow ? `, showing first ${DW1GHT_CONFIG.sqlResultLimit}` : ""}):\n${JSON.stringify(truncated, null, 2)}${overflow ? `\n\n(${queryResults.length - DW1GHT_CONFIG.sqlResultLimit} additional rows not shown)` : ""}`;
+  // RAG results section
+  if (useRecords) {
+    if (ragResult.error && ragResult.chunks.length === 0) {
+      contextSections.push(`RECORDS VAULT SEARCH FAILED: ${ragResult.error}`);
+    } else if (ragResult.chunks.length === 0) {
+      contextSections.push(`RECORDS VAULT: No semantically similar content found in uploaded aircraft records.`);
+    } else {
+      ragChunksUsed = ragResult.chunks.length;
+      const chunkTexts = ragResult.chunks.map((c) =>
+        `[Source: ${c.original_filename}, p.${c.page_number}, category: ${c.source_category}, similarity: ${c.similarity.toFixed(3)}]\n${c.chunk_text}`
+      ).join("\n\n");
+      contextSections.push(`RECORDS VAULT RESULTS (semantic search, ${ragResult.chunks.length} chunks from aircraft records):\n${chunkTexts}`);
+    }
   }
+
+  // If neither pipeline produced anything useful, tell the user
+  if (contextSections.length === 0) {
+    contextSections.push(`No context sources are active. The user should enable at least one data source (Discrepancy History or Aircraft Records) to search fleet data.`);
+  }
+
+  const dataContext = contextSections.join("\n\n─────────────────────────────────────\n\n");
 
   const messages: Anthropic.MessageParam[] = [
     ...recentHistory,
@@ -256,8 +373,9 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     reply,
     mode,
     queryType: "data",
-    sqlGenerated: true,
-    resultCount: queryResults?.length ?? 0,
+    sqlGenerated,
+    resultCount,
+    ragChunksUsed,
     usage: {
       input_tokens: response.usage.input_tokens,
       output_tokens: response.usage.output_tokens,

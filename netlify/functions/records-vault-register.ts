@@ -40,10 +40,8 @@ function getAccessToken(event: HandlerEvent): string | null {
   return token.length > 0 ? token : null;
 }
 
-const SUPABASE_PROJECT_URL  = "https://xzcrkzvonjyznzxdbpjj.supabase.co";
-const EDGE_FUNCTION_URL     = `${SUPABASE_PROJECT_URL}/functions/v1/process-record-source`;
-const EXTRACT_FUNCTION_URL  = `${SUPABASE_PROJECT_URL}/functions/v1/extract-record-events`;
-const EMBED_FUNCTION_URL    = `${SUPABASE_PROJECT_URL}/functions/v1/generate-page-embeddings`;
+const SUPABASE_PROJECT_URL = "https://xzcrkzvonjyznzxdbpjj.supabase.co";
+const EDGE_FUNCTION_URL    = `${SUPABASE_PROJECT_URL}/functions/v1/process-record-source`;
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
@@ -118,6 +116,8 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const dateRangeEnd        = typeof payload.dateRangeEnd        === "string" ? payload.dateRangeEnd               : null;
   const notes               = typeof payload.notes               === "string" ? payload.notes.trim()               : null;
   const importBatch         = typeof payload.importBatch         === "string" ? payload.importBatch.trim()         : null;
+  // Number of page images pre-rendered by the client (PDFium WASM, for JBIG2 docs)
+  const pageImagesPreRendered = typeof payload.pageImagesPreRendered === "number" ? payload.pageImagesPreRendered : 0;
 
   if (!storagePath || !originalFilename || !aircraftId) {
     return jsonResponse(400, { error: "storagePath, originalFilename, and aircraftId are required" });
@@ -143,6 +143,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
       import_batch: importBatch,
       imported_by: profile.id,
       ingestion_status: "pending",
+      page_images_stored: pageImagesPreRendered > 0 ? pageImagesPreRendered : 0,
     })
     .select("id")
     .single();
@@ -152,38 +153,23 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(500, { error: "Failed to register record source" });
   }
 
-  // Fire-and-forget: trigger OCR ingestion, then chain event extraction.
-  // We don't await — the client polls ingestion_status via Supabase Realtime.
+  // Fire-and-forget: trigger OCR ingestion.
+  // process-record-source chains event extraction + embeddings internally
+  // after OCR completes via EdgeRuntime.waitUntil — no chaining needed here.
   (async () => {
     try {
-      // Step 1 — OCR ingestion (process-record-source)
       const ocrResp = await fetch(EDGE_FUNCTION_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` },
-        body: JSON.stringify({ record_source_id: newSource.id }),
+        body: JSON.stringify({
+          record_source_id: newSource.id,
+          page_images_pre_uploaded: pageImagesPreRendered > 0,
+        }),
       });
 
       if (!ocrResp.ok) {
         console.error("[records-vault-register] OCR Edge Function failed:", await ocrResp.text());
-        return;
       }
-
-      // Step 2 — Intelligence extraction + RAG embeddings fire in parallel.
-      // Both are independent consumers of rv_pages; neither blocks the other.
-      const postOcrBody = JSON.stringify({ record_source_id: newSource.id });
-      const postOcrHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
-
-      Promise.allSettled([
-        fetch(EXTRACT_FUNCTION_URL, { method: "POST", headers: postOcrHeaders, body: postOcrBody }),
-        fetch(EMBED_FUNCTION_URL,   { method: "POST", headers: postOcrHeaders, body: postOcrBody }),
-      ]).then((results) => {
-        results.forEach((r, i) => {
-          if (r.status === "rejected") {
-            console.error(`[records-vault-register] Post-OCR function ${i === 0 ? "extract" : "embed"} failed:`, r.reason);
-          }
-        });
-      });
-
     } catch (err) {
       console.error("[records-vault-register] Pipeline trigger failed:", err);
     }

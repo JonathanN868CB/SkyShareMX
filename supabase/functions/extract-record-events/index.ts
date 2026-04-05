@@ -187,6 +187,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     auth: { persistSession: false },
   });
 
+  async function log(step: string, message: string): Promise<void> {
+    await supabase.from("rv_ingestion_log").insert({ record_source_id, step, message });
+  }
+
   // Mark as extracting
   await supabase
     .from("rv_record_sources")
@@ -213,6 +217,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (pagesErr) throw new Error(`Failed to fetch pages: ${pagesErr.message}`);
     if (!pages || pages.length === 0) throw new Error("No indexed pages found");
+
+    const batchCount = Math.ceil(pages.length / PAGE_BATCH_SIZE);
+    await log("events_extracting", `Sending ${pages.length} pages to Claude Haiku for event extraction (${batchCount} batch${batchCount !== 1 ? "es" : ""})`);
 
     // Delete any existing events for this source (idempotent re-extraction)
     await supabase
@@ -280,6 +287,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       })
       .eq("id", record_source_id);
 
+    await log("events_complete", `✓ Extracted ${allInsertRows.length} maintenance event${allInsertRows.length !== 1 ? "s" : ""} from ${pages.length} pages`);
+
     return jsonResp(200, {
       success: true,
       pages_processed: pages.length,
@@ -289,6 +298,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[extract-record-events] Failed for ${record_source_id}:`, message);
+
+    await log("events_failed", `Event extraction failed: ${message}`);
 
     await supabase
       .from("rv_record_sources")

@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react"
 import {
   Search, X, ArrowDownUp, Clock, BookOpen,
-  FileText, AlertCircle, Loader2, FolderOpen,
+  FileText, AlertCircle, Loader2, FolderOpen, Globe, Plane,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { Input } from "@/shared/ui/input"
@@ -254,12 +254,17 @@ function DocumentGrid({
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function RecordsVaultSearchPage() {
-  const { selectedAircraftId } = useRecordsVaultCtx()
+  const { selectedAircraftId, allAircraft } = useRecordsVaultCtx()
 
   const [query, setQuery]               = useState("")
   const [searchPage, setSearchPage]     = useState(1)
   const [selectedCategory, setSelectedCategory] = useState<SourceCategory | null>(null)
   const [sortBy, setSortBy]             = useState<SortBy>("relevance")
+  const [fleetWide, setFleetWide]       = useState(false)
+
+  // Determine search scope: fleet-wide or aircraft-scoped
+  const searchAircraftId = fleetWide ? null : selectedAircraftId
+  const currentAircraft = allAircraft.find((a) => a.id === selectedAircraftId)
 
   const [viewerOpen, setViewerOpen]       = useState(false)
   const [viewerHits, setViewerHits]       = useState<SearchHit[]>([])
@@ -272,7 +277,7 @@ export default function RecordsVaultSearchPage() {
   const { data: hits = [], isLoading: searchLoading, isError: searchError } =
     useRecordsSearch({
       query,
-      aircraftId: selectedAircraftId,
+      aircraftId: searchAircraftId,
       category: selectedCategory,
       sourceId: null,
       sortBy,
@@ -293,6 +298,8 @@ export default function RecordsVaultSearchPage() {
   function handleQueryChange(q: string) {
     setQuery(q)
     setSearchPage(1)
+    // Close viewer so the user can see updated results and click one
+    if (viewerOpen) setViewerOpen(false)
   }
 
   function handleSortChange(s: SortBy) {
@@ -359,8 +366,38 @@ export default function RecordsVaultSearchPage() {
           )}
         </div>
 
-        {/* Filter row — category pills + sort toggle */}
+        {/* Filter row — scope toggle + category pills + sort toggle */}
         <div className="flex items-center gap-2 mt-3 flex-wrap">
+          {/* Fleet scope toggle */}
+          {selectedAircraftId && (
+            <div className="flex items-center rounded-full bg-muted p-0.5 mr-1">
+              <button
+                onClick={() => { setFleetWide(false); setSearchPage(1) }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  !fleetWide
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title={currentAircraft?.tailNumber ? `Search ${currentAircraft.tailNumber} only` : "This aircraft"}
+              >
+                <Plane className="h-3 w-3" />
+                {currentAircraft?.tailNumber ?? "Aircraft"}
+              </button>
+              <button
+                onClick={() => { setFleetWide(true); setSearchPage(1) }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  fleetWide
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Search all aircraft"
+              >
+                <Globe className="h-3 w-3" />
+                Fleet
+              </button>
+            </div>
+          )}
+
           {activeCategories.map(({ value, label }) => (
             <button
               key={value}
@@ -405,44 +442,48 @@ export default function RecordsVaultSearchPage() {
         </div>
       </div>
 
-      {/* ── Stats strip ────────────────────────────────────────────────────── */}
-      {!isSearchActive && <StatsStrip sources={sources} />}
-
       {/* ── Content ────────────────────────────────────────────────────────── */}
-      <main className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
+      {viewerOpen ? (
+        /* Viewer mode — inline, replaces content but search bar stays */
+        <RecordsVaultViewer
+          open={viewerOpen}
+          onClose={() => setViewerOpen(false)}
+          hits={viewerHits}
+          hitIndex={viewerIndex}
+          query={viewerQuery}
+          totalPages={viewerTotalPages}
+        />
+      ) : (
+        <>
+          {/* Stats strip */}
+          {!isSearchActive && <StatsStrip sources={sources} />}
 
-        {/* Search mode — grouped results */}
-        {isSearchActive ? (
-          <RecordsResultsList
-            hits={hits}
-            isLoading={searchLoading}
-            isError={searchError}
-            query={query}
-            page={searchPage}
-            pageSize={PAGE_SIZE}
-            sortBy={sortBy}
-            onPageChange={setSearchPage}
-            onViewPage={handleViewHit}
-          />
-        ) : (
-          /* Gallery mode — document cards */
-          <DocumentGrid
-            sources={sources}
-            isLoading={sourcesLoading}
-            categoryFilter={selectedCategory}
-            onOpen={handleOpenSource}
-          />
-        )}
-      </main>
-
-      <RecordsVaultViewer
-        open={viewerOpen}
-        onClose={() => setViewerOpen(false)}
-        hits={viewerHits}
-        hitIndex={viewerIndex}
-        query={viewerQuery}
-        totalPages={viewerTotalPages}
-      />
+          <main className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
+            {/* Search mode — grouped results */}
+            {isSearchActive ? (
+              <RecordsResultsList
+                hits={hits}
+                isLoading={searchLoading}
+                isError={searchError}
+                query={query}
+                page={searchPage}
+                pageSize={PAGE_SIZE}
+                sortBy={sortBy}
+                onPageChange={setSearchPage}
+                onViewPage={handleViewHit}
+              />
+            ) : (
+              /* Gallery mode — document cards */
+              <DocumentGrid
+                sources={sources}
+                isLoading={sourcesLoading}
+                categoryFilter={selectedCategory}
+                onOpen={handleOpenSource}
+              />
+            )}
+          </main>
+        </>
+      )}
     </div>
   )
 }

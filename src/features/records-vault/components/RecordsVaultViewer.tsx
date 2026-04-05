@@ -11,22 +11,23 @@
  *   - Search matches are highlighted in the strip and jump-to is instant
  */
 
-import { useState, useEffect, useRef, useCallback } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
+import { useQuery } from "@tanstack/react-query"
 import {
   X, ChevronLeft, ChevronRight, FileText, ChevronDown,
-  ChevronUp, Loader2, AlertTriangle, Search, Download, AlertCircle, Trash2,
+  ChevronUp, Loader2, AlertTriangle, Search, AlignLeft,
 } from "lucide-react"
-import { Dialog, DialogContent } from "@/shared/ui/dialog"
+// Dialog import removed — viewer is now inline within the search page
 import { supabase } from "@/lib/supabase"
-import { useAuth } from "@/features/auth"
 import { useRecordPageUrl } from "../hooks/useRecordPageUrl"
-import { usePageImage } from "../hooks/usePageImage"
+import { useRecordPageImageUrl } from "../hooks/useRecordPageImageUrl"
+import { usePageOcrText } from "../hooks/usePageOcrText"
 import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { SOURCE_CATEGORY_LABELS } from "../constants"
+import { PdfPageRenderer } from "./PdfPageRenderer"
+import { OcrTextPane } from "./OcrTextPane"
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/shared/ui/resizable"
 import type { SearchHit, RecordSource, SourceCategory } from "../types"
-
-const MANAGER_ROLES = ["Manager", "Director of Maintenance", "DPE", "Admin", "Super Admin"]
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,147 +77,102 @@ const CAT_COLOUR: Record<SourceCategory | string, string> = {
   other:        "text-muted-foreground",
 }
 
-// ─── Page confidence map hook ─────────────────────────────────────────────────
-// Fetches ocr_confidence for all pages in a document in a single query.
-// Used to show low-confidence warnings in the page strip.
+// ─── Thumbnail strip item ─────────────────────────────────────────────────────
+// Uses a scaled-down iframe so the browser's native PDF renderer handles JBIG2,
+// CCITTFax, and all other compression formats that PDF.js can't decode.
+// The iframe is rendered at 840×840px and scaled to ~152px via CSS transform.
 
-const OCR_CONFIDENCE_WARN = 0.7
-
-function usePageConfidenceMap(recordSourceId: string | null) {
-  return useQuery({
-    queryKey: ["rv-page-confidence", recordSourceId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("rv_pages")
-        .select("page_number, ocr_confidence, page_image_path")
-        .eq("record_source_id", recordSourceId!)
-        .order("page_number", { ascending: true })
-      if (error) throw error
-      const map = new Map<number, { confidence: number | null; imagePath: string | null }>()
-      for (const row of data ?? []) {
-        map.set(row.page_number, {
-          confidence: row.ocr_confidence,
-          imagePath:  row.page_image_path,
-        })
-      }
-      return map
-    },
-    enabled: !!recordSourceId,
-    staleTime: 10 * 60 * 1000,
-  })
-}
-
-// ─── Page strip item ──────────────────────────────────────────────────────────
-
-function PageThumbnail({
-  recordSourceId,
+function ThumbnailItem({
   pageNumber,
-  imagePath,
-}: {
-  recordSourceId: string
-  pageNumber: number
-  imagePath: string | null
-}) {
-  // Try DB-stored image path first; fall back to Netlify signed URL
-  const { data: signedUrl } = usePageImage(
-    imagePath ? recordSourceId : null,
-    pageNumber,
-  )
-
-  if (!signedUrl) return null
-
-  return (
-    <img
-      src={signedUrl}
-      alt={`Page ${pageNumber}`}
-      className="w-full rounded-sm object-cover border border-border/40"
-      style={{ aspectRatio: "8.5 / 11", minHeight: "60px" }}
-      loading="lazy"
-    />
-  )
-}
-
-function PageStripItem({
   recordSourceId,
-  pageNumber,
   isActive,
   isMatch,
   matchIndex,
-  lowConfidence,
-  imagePath,
   onClick,
 }: {
-  recordSourceId: string
   pageNumber: number
+  recordSourceId: string
   isActive: boolean
   isMatch: boolean
   matchIndex: number | null
-  lowConfidence: boolean
-  imagePath: string | null
   onClick: () => void
 }) {
   const ref = useRef<HTMLButtonElement>(null)
+  const [inView, setInView] = useState(false)
 
   useEffect(() => {
     if (isActive && ref.current) {
-      ref.current.scrollIntoView({ block: "nearest", behavior: "smooth" })
+      ref.current.scrollIntoView({ block: "center", behavior: "smooth" })
     }
   }, [isActive])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setInView(true) },
+      { rootMargin: "150px" },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const { data: pdfUrl } = useRecordPageUrl(inView ? recordSourceId : null, pageNumber)
+
+  // iframe renders at 840px wide, scaled to 152px → scale ≈ 0.181
+  const IFRAME_SIZE = 840
+  const THUMB_WIDTH = 152
+  const scale = THUMB_WIDTH / IFRAME_SIZE
+  const thumbHeight = Math.round(IFRAME_SIZE * scale) // ≈ 152px
 
   return (
     <button
       ref={ref}
       onClick={onClick}
-      className={`w-full text-left px-1.5 py-1.5 rounded-sm flex flex-col gap-1 transition-all duration-100 ${
-        isActive
-          ? "bg-primary/10 border border-primary/30"
-          : "hover:bg-muted/50 border border-transparent"
+      className={`w-full p-1 rounded transition-all duration-100 ${
+        isActive ? "bg-primary/15 ring-1 ring-primary/40" : "hover:bg-muted/40"
       }`}
     >
-      {/* Thumbnail image if available */}
-      {imagePath && (
-        <PageThumbnail
-          recordSourceId={recordSourceId}
-          pageNumber={pageNumber}
-          imagePath={imagePath}
-        />
-      )}
-
-      {/* Page number row */}
-      <div className="flex items-center gap-1 px-0.5">
-        <span className={`tabular-nums text-xs min-w-[24px] ${isActive ? "text-foreground font-medium" : "text-muted-foreground"}`}>
-          {pageNumber}
-        </span>
-        {isMatch && (
-          <span className="text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-yellow-400/20 text-yellow-700 dark:text-yellow-400 shrink-0">
-            {matchIndex !== null ? `#${matchIndex + 1}` : "match"}
-          </span>
-        )}
-        {lowConfidence && (
-          <AlertCircle
-            className="h-3 w-3 text-amber-500 shrink-0 ml-auto"
-            title="Low OCR confidence — text may be inaccurate"
+      {/* Thumbnail */}
+      <div
+        className="relative w-full overflow-hidden rounded bg-muted/20"
+        style={{ height: `${thumbHeight}px` }}
+      >
+        {pdfUrl ? (
+          <iframe
+            src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=page-fit`}
+            className="absolute top-0 left-0 border-0 pointer-events-none"
+            style={{
+              width: `${IFRAME_SIZE}px`,
+              height: `${IFRAME_SIZE}px`,
+              transform: `scale(${scale})`,
+              transformOrigin: "0 0",
+            }}
+            title={`p.${pageNumber}`}
           />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-3xl font-bold tabular-nums" style={{ color: "rgba(255,255,255,0.08)" }}>
+              {pageNumber}
+            </span>
+          </div>
+        )}
+
+        {isMatch && (
+          <div
+            className="absolute top-1 right-1 text-[8px] font-bold uppercase tracking-wide px-1 py-0.5 rounded z-10"
+            style={{ background: "var(--skyshare-gold)", color: "#000" }}
+          >
+            {matchIndex !== null ? `#${matchIndex + 1}` : "✓"}
+          </div>
         )}
       </div>
+
+      <p className={`text-center tabular-nums mt-0.5 text-[10px] ${isActive ? "text-foreground font-semibold" : "text-muted-foreground"}`}>
+        {pageNumber}
+      </p>
     </button>
   )
-}
-
-// ─── Preload hook — keeps N-1, N, N+1 in cache ───────────────────────────────
-
-function usePreloadAdjacentPages(
-  recordSourceId: string | null,
-  currentPage: number,
-  totalPages: number,
-) {
-  const prevPage = Math.max(1, currentPage - 1)
-  const nextPage = Math.min(totalPages, currentPage + 1)
-
-  // These queries run in background — results are cached; the main viewer
-  // hook picks them up instantly when the user navigates.
-  useRecordPageUrl(currentPage > 1  ? recordSourceId : null, prevPage)
-  useRecordPageUrl(currentPage < totalPages ? recordSourceId : null, nextPage)
 }
 
 // ─── PDF pane ─────────────────────────────────────────────────────────────────
@@ -226,68 +182,115 @@ function PdfPane({
   pageNumber,
   filename,
   totalPages,
-  onNavigate,
+  searchQuery,
+  onNextPage,
+  onPrevPage,
 }: {
   recordSourceId: string
   pageNumber: number
   filename: string
   totalPages: number
-  onNavigate: (delta: number) => void
+  searchQuery?: string
+  onNextPage: () => void
+  onPrevPage: () => void
 }) {
-  const { data: pdfUrl, isLoading, error } = useRecordPageUrl(recordSourceId, pageNumber)
-  usePreloadAdjacentPages(recordSourceId, pageNumber, totalPages)
+  // PDF.js is the primary rendering path — efficient with native text highlighting.
+  // Page images are only fetched as a backup for JBIG2/CCITTFax documents where
+  // the pipeline detected problematic compression and stored images during ingestion.
+  const { data: pdfUrl, isLoading: pdfLoading, error } = useRecordPageUrl(recordSourceId)
+  const { data: pageImageUrl, isLoading: imageLoading } = useRecordPageImageUrl(recordSourceId, pageNumber)
 
-  // Throttle wheel navigation so rapid scrolls don't skip multiple pages
-  const lastWheelTime = useRef(0)
-  function handleWheel(e: React.WheelEvent) {
-    e.preventDefault()
-    const now = Date.now()
-    if (now - lastWheelTime.current < 120) return // 120ms throttle ≈ max 8 pages/sec
-    lastWheelTime.current = now
-    onNavigate(e.deltaY > 0 ? 1 : -1)
-  }
+  const isLoading = pdfLoading || imageLoading
 
   return (
     <div className="relative w-full h-full">
       {isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/60 z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/60 z-10 pointer-events-none">
           <Loader2 className="h-7 w-7 animate-spin text-muted-foreground mb-2" />
           <p className="text-xs text-muted-foreground">Loading page {pageNumber}…</p>
         </div>
       )}
-      {error && (
+      {error && !pageImageUrl && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
           <AlertTriangle className="h-7 w-7 text-destructive mb-2" />
-          <p className="text-xs text-destructive">Failed to load page. Try navigating away and back.</p>
+          <p className="text-xs text-destructive">Failed to load document. Try closing and reopening.</p>
         </div>
       )}
-      {pdfUrl && (
-        <>
-          <iframe
-            key={`${recordSourceId}-${pageNumber}`}
-            // #toolbar=0&navpanes=0 hides the browser's native PDF UI (download btn, zoom, X)
-            src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0`}
-            className="w-full h-full border-0"
-            title={`${filename} — page ${pageNumber}`}
-            scrolling="no"
-          />
-          {/*
-            Transparent overlay captures scroll wheel events for page navigation.
-            Iframes swallow all scroll events and never propagate them up.
-            Scanned PDFs have no selectable text, so blocking pointer-events is fine.
-          */}
-          <div
-            className="absolute inset-0"
-            onWheel={handleWheel}
-            style={{ cursor: "default", background: "transparent" }}
-          />
-        </>
+      {(pdfUrl || pageImageUrl) && (
+        <PdfPageRenderer
+          pdfUrl={pdfUrl ?? ""}
+          pageImageUrl={pageImageUrl}
+          pageNumber={pageNumber}
+          pageKey={`${recordSourceId}-${pageNumber}`}
+          searchQuery={searchQuery}
+          onNextPage={onNextPage}
+          onPrevPage={onPrevPage}
+        />
       )}
     </div>
   )
 }
 
-// ─── Properties panel ─────────────────────────────────────────────────────────
+// ─── Event type labels + colors ──────────────────────────────────────────────
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  logbook_entry:      "Logbook Entry",
+  inspection:         "Inspection",
+  ad_compliance:      "AD Compliance",
+  sb_compliance:      "SB Compliance",
+  component_install:  "Component Install",
+  component_removal:  "Component Removal",
+  repair:             "Repair",
+  alteration:         "Alteration",
+  overhaul:           "Overhaul",
+  return_to_service:  "Return to Service",
+  discrepancy:        "Discrepancy",
+  other:              "Other",
+}
+
+const EVENT_TYPE_COLORS: Record<string, string> = {
+  inspection:         "text-amber-500",
+  ad_compliance:      "text-red-500",
+  sb_compliance:      "text-red-400",
+  component_install:  "text-green-500",
+  component_removal:  "text-orange-500",
+  repair:             "text-blue-500",
+  discrepancy:        "text-destructive",
+}
+
+// ─── Page events hook — fetches maintenance events linked to the current page ─
+
+function usePageEvents(recordSourceId: string | null, currentPageId: string | null) {
+  return useQuery({
+    queryKey: ["rv-page-events", recordSourceId, currentPageId],
+    queryFn: async () => {
+      if (!recordSourceId) return []
+      // Fetch events for this source, then filter by page_ids containing current page
+      const { data, error } = await supabase
+        .from("rv_maintenance_events")
+        .select("id, event_type, event_date, description, part_numbers, serial_numbers, work_order_number, confidence, page_ids")
+        .eq("record_source_id", recordSourceId)
+        .order("event_date", { ascending: true, nullsFirst: false })
+        .limit(50)
+      if (error) throw error
+      return (data ?? []) as Array<{
+        id: string
+        event_type: string
+        event_date: string | null
+        description: string
+        part_numbers: string[]
+        serial_numbers: string[]
+        work_order_number: string | null
+        confidence: number | null
+        page_ids: string[]
+      }>
+    },
+    enabled: !!recordSourceId,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// ─── Properties + Intelligence panel ─────────────────────────────────────────
 
 function PropertiesPanel({
   hit,
@@ -295,26 +298,38 @@ function PropertiesPanel({
   tailNumber,
   panelOpen,
   onToggle,
-  onDelete,
-  isManager,
+  currentPageId,
 }: {
   hit: SearchHit
   source: RecordSource | undefined | null
   tailNumber: string | undefined
   panelOpen: boolean
   onToggle: () => void
-  onDelete?: () => void
-  isManager?: boolean
+  currentPageId: string | null
 }) {
+  const { data: allEvents = [] } = usePageEvents(hit?.record_source_id, currentPageId)
+
+  // Filter events that reference the current page (if we have a page ID)
+  // If no page ID available, show all events from this document
+  const pageEvents = currentPageId
+    ? allEvents.filter((e) => e.page_ids.includes(currentPageId))
+    : []
+  const hasPageEvents = pageEvents.length > 0
+
   function fmtDate(iso: string | null | undefined) {
     if (!iso) return "—"
     return new Date(iso).toLocaleDateString([], { month: "short", year: "numeric" })
   }
 
+  function fmtEventDate(iso: string | null) {
+    if (!iso) return "—"
+    return new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })
+  }
+
   return (
     <div
       className="shrink-0 flex flex-col border-l border-border overflow-hidden transition-all duration-200"
-      style={{ width: panelOpen ? "260px" : "32px" }}
+      style={{ width: panelOpen ? "280px" : "32px" }}
     >
       <button
         onClick={onToggle}
@@ -329,6 +344,7 @@ function PropertiesPanel({
 
       {panelOpen && (
         <div className="flex-1 overflow-y-auto p-4 space-y-4 min-w-0">
+          {/* ── File properties ─────────────────────────────────────────── */}
           <div>
             <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">File</p>
             <p className="text-xs font-medium text-foreground break-all leading-snug">{hit.original_filename}</p>
@@ -363,19 +379,12 @@ function PropertiesPanel({
           {source?.ocr_quality_score != null && (
             <div>
               <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">OCR Quality</p>
-              <p className="text-xs text-foreground">{Math.round(source.ocr_quality_score * 100)}%</p>
-            </div>
-          )}
-          {source?.events_extracted != null && source.events_extracted > 0 && (
-            <div>
-              <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Events Extracted</p>
-              <p className="text-xs text-foreground">{source.events_extracted} maintenance events</p>
-            </div>
-          )}
-          {source?.chunks_generated != null && source.chunks_generated > 0 && (
-            <div>
-              <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Vector Chunks</p>
-              <p className="text-xs text-foreground">{source.chunks_generated} indexed</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-foreground">{Math.round(source.ocr_quality_score * 100)}%</p>
+                {source.ocr_quality_score < 0.5 && (
+                  <span className="text-[9px] text-amber-500">Low — review source page</span>
+                )}
+              </div>
             </div>
           )}
           {source?.notes && (
@@ -385,93 +394,60 @@ function PropertiesPanel({
             </div>
           )}
 
-          {isManager && onDelete && (
-            <div className="pt-2 mt-2 border-t border-border">
-              <button
-                onClick={onDelete}
-                className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-destructive transition-colors"
-              >
-                <Trash2 className="h-3 w-3" />
-                Delete document
-              </button>
+          {/* ── Intelligence: page events ──────────────────────────────── */}
+          {(hasPageEvents || (allEvents.length > 0)) && (
+            <>
+              <div className="border-t border-border pt-3">
+                <p className="text-[9px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--skyshare-gold)" }}>
+                  {hasPageEvents ? "Events on This Page" : "Events in Document"}
+                </p>
+
+                <div className="space-y-2.5">
+                  {(hasPageEvents ? pageEvents : allEvents.slice(0, 8)).map((event) => (
+                    <div key={event.id} className="rounded bg-muted/30 p-2.5">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className={`text-[9px] font-semibold uppercase tracking-wide ${EVENT_TYPE_COLORS[event.event_type] ?? "text-muted-foreground"}`}>
+                          {EVENT_TYPE_LABELS[event.event_type] ?? event.event_type}
+                        </span>
+                        {event.confidence != null && event.confidence < 0.7 && (
+                          <span className="text-[8px] text-amber-500" title={`${Math.round(event.confidence * 100)}% confidence`}>
+                            ~
+                          </span>
+                        )}
+                      </div>
+                      {event.event_date && (
+                        <p className="text-[10px] text-muted-foreground mb-0.5">{fmtEventDate(event.event_date)}</p>
+                      )}
+                      <p className="text-[11px] text-foreground/80 leading-snug line-clamp-3">{event.description}</p>
+                      {event.work_order_number && (
+                        <p className="text-[10px] text-muted-foreground mt-1">W/O: {event.work_order_number}</p>
+                      )}
+                      {event.part_numbers.length > 0 && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          P/N: {event.part_numbers.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {!hasPageEvents && allEvents.length > 8 && (
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    +{allEvents.length - 8} more events in this document
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+
+          {source?.events_extracted != null && source.events_extracted > 0 && allEvents.length === 0 && (
+            <div>
+              <p className="text-[9px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">Events Extracted</p>
+              <p className="text-xs text-foreground">{source.events_extracted} maintenance events</p>
             </div>
           )}
         </div>
       )}
-    </div>
-  )
-}
-
-// ─── Delete confirm dialog ────────────────────────────────────────────────────
-
-function DeleteConfirmDialog({
-  open,
-  filename,
-  pageCount,
-  onCancel,
-  onConfirm,
-  isDeleting,
-}: {
-  open: boolean
-  filename: string
-  pageCount: number | null | undefined
-  onCancel: () => void
-  onConfirm: () => void
-  isDeleting: boolean
-}) {
-  const [step, setStep] = useState<1 | 2>(1)
-
-  useEffect(() => {
-    if (open) setStep(1)
-  }, [open])
-
-  if (!open) return null
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
-      <div className="bg-background border border-border rounded-lg shadow-xl w-[400px] p-6 space-y-4">
-        {step === 1 ? (
-          <>
-            <p className="text-sm font-semibold text-foreground">Delete this document?</p>
-            <p className="text-xs text-muted-foreground font-medium break-all">{filename}</p>
-            <p className="text-xs text-muted-foreground">This will permanently remove:</p>
-            <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
-              <li>{pageCount ?? "all"} indexed pages</li>
-              <li>All extracted maintenance events</li>
-              <li>All vector search chunks</li>
-              <li>Original PDF and cached files from storage</li>
-            </ul>
-            <div className="flex justify-end gap-2 pt-2">
-              <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded border border-border hover:bg-muted transition-colors">
-                Cancel
-              </button>
-              <button onClick={() => setStep(2)} className="px-3 py-1.5 text-xs rounded bg-muted hover:bg-muted/80 text-foreground transition-colors">
-                Continue →
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="text-sm font-semibold text-destructive">This cannot be undone</p>
-            <p className="text-xs text-muted-foreground">
-              All pages, events, and storage files for <span className="font-medium text-foreground break-all">{filename}</span> will be permanently deleted.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <button onClick={onCancel} disabled={isDeleting} className="px-3 py-1.5 text-xs rounded border border-border hover:bg-muted transition-colors disabled:opacity-50">
-                Cancel
-              </button>
-              <button
-                onClick={onConfirm}
-                disabled={isDeleting}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {isDeleting && <Loader2 className="h-3 w-3 animate-spin" />}
-                Permanently Delete
-              </button>
-            </div>
-          </>
-        )}
-      </div>
     </div>
   )
 }
@@ -482,25 +458,19 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   const [currentPage, setCurrentPage] = useState(hits[hitIndex]?.page_number ?? 1)
   const [currentHitIdx, setCurrentHitIdx] = useState(hitIndex)
   const [excerptOpen, setExcerptOpen] = useState(true)
-  const [propsPanelOpen, setPropsPanelOpen] = useState(true)
+  const [propsPanelOpen, setPropsPanelOpen] = useState(false)
   const [pageJumpValue, setPageJumpValue] = useState("")
   const [showJumpInput, setShowJumpInput] = useState(false)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
+  const [ocrPaneVisible, setOcrPaneVisible] = useState(false)
   const jumpInputRef = useRef<HTMLInputElement>(null)
+  const centerRef = useRef<HTMLDivElement>(null)
+  const wheelDebounce = useRef<number | null>(null)
 
   const { allAircraft } = useRecordsVaultCtx()
-  const queryClient = useQueryClient()
 
   const currentHit = hits[currentHitIdx] ?? hits[0]
   const recordSourceId = currentHit?.record_source_id ?? null
   const aircraft = allAircraft.find((a) => a.id === currentHit?.aircraft_id)
-
-  // Page metadata: confidence scores + image paths
-  const { data: pageMetaMap } = usePageConfidenceMap(open ? recordSourceId : null)
-
-  // Current page PDF URL — used for download
-  const { data: currentPageUrl } = useRecordPageUrl(recordSourceId, currentPage)
 
   // Build a Set of match page numbers for the strip
   const matchPages = new Set(hits.map((h) => h.page_number))
@@ -549,6 +519,26 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     return () => window.removeEventListener("keydown", handleKey)
   }, [open, navigate, onClose, showJumpInput])
 
+  // Window-level wheel listener. Uses bounding rect hit-test instead of
+  // mouseenter/mouseleave — entering an iframe fires mouseleave on the parent
+  // div, so enter/leave tracking breaks the moment the cursor is over the PDF.
+  useEffect(() => {
+    if (!open) return
+    const handleWheel = (e: WheelEvent) => {
+      const centerEl = centerRef.current
+      if (!centerEl) return
+      const { left, right, top, bottom } = centerEl.getBoundingClientRect()
+      if (e.clientX < left || e.clientX > right || e.clientY < top || e.clientY > bottom) return
+      e.preventDefault()
+      if (wheelDebounce.current) return
+      wheelDebounce.current = window.setTimeout(() => { wheelDebounce.current = null }, 350)
+      if (e.deltaY > 0) navigate(1)
+      else navigate(-1)
+    }
+    window.addEventListener("wheel", handleWheel, { passive: false })
+    return () => window.removeEventListener("wheel", handleWheel)
+  }, [open, navigate])
+
   // Fetch source metadata for properties panel
   const { data: source } = useQuery({
     queryKey: ["rv-source-detail", recordSourceId],
@@ -565,33 +555,20 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     staleTime: 5 * 60 * 1000,
   })
 
-  const { profile } = useAuth()
-  const isManager = !!profile && MANAGER_ROLES.includes(profile.role as string)
+  // OCR text companion pane — Mistral's raw_ocr_text for the current page
+  const { data: ocrData } = usePageOcrText(recordSourceId, currentPage, ocrPaneVisible)
 
-  async function handleDeleteConfirm() {
-    if (!recordSourceId) return
-    setIsDeleting(true)
-    try {
-      const session = await supabase.auth.getSession()
-      const token = session.data.session?.access_token
-      const resp = await fetch("/.netlify/functions/records-vault-delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ recordSourceId }),
-      })
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: "Unknown error" }))
-        console.error("[delete]", err)
-      } else {
-        setDeleteOpen(false)
-        queryClient.invalidateQueries({ queryKey: ["record-sources"] })
-        queryClient.invalidateQueries({ queryKey: ["rv-source-detail", recordSourceId] })
-        onClose()
-      }
-    } finally {
-      setIsDeleting(false)
-    }
-  }
+  // Auto-show OCR pane when searching
+  useEffect(() => {
+    if (query) setOcrPaneVisible(true)
+  }, [query])
+
+  // Determine split orientation from page dimensions
+  const ocrOrientation = useMemo(() => {
+    if (!ocrData?.page_dimensions) return "vertical" as const // default top/bottom
+    const { width, height } = ocrData.page_dimensions
+    return height > width ? "horizontal" : "vertical"
+  }, [ocrData?.page_dimensions])
 
   const hasPrevHit  = currentHitIdx > 0
   const hasNextHit  = currentHitIdx < hits.length - 1
@@ -632,9 +609,10 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     stripPages.push(...sortedPages)
   }
 
+  if (!open) return null
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent hideCloseButton className="max-w-none w-screen h-screen p-0 gap-0 rounded-none flex flex-col">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-background">
 
         {/* ── Top bar ────────────────────────────────────────────────────────── */}
         <div className="flex-none flex items-center gap-3 px-4 py-2 border-b border-border bg-background">
@@ -707,6 +685,17 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
             </div>
           )}
 
+          {/* OCR text pane toggle */}
+          <div className="flex items-center shrink-0 border-l border-border pl-3">
+            <button
+              onClick={() => setOcrPaneVisible((v) => !v)}
+              className={`p-1.5 rounded transition-colors ${ocrPaneVisible ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+              title={ocrPaneVisible ? "Hide OCR text" : "Show OCR text"}
+            >
+              <AlignLeft className="h-4 w-4" />
+            </button>
+          </div>
+
           {/* Prev/Next page */}
           <div className="flex items-center gap-1 shrink-0 border-l border-border pl-3">
             <button
@@ -727,20 +716,6 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
             </button>
           </div>
 
-          {/* Download current page */}
-          {currentPageUrl && (
-            <a
-              href={currentPageUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0 border-l border-border pl-3"
-              title={`Download page ${currentPage}`}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Download className="h-4 w-4" />
-            </a>
-          )}
-
           {/* Close */}
           <button
             onClick={onClose}
@@ -754,44 +729,71 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
         {/* ── Body ────────────────────────────────────────────────────────────── */}
         <div className="flex-1 flex min-h-0 overflow-hidden">
 
-          {/* LEFT — page strip */}
-          <div className="w-[96px] shrink-0 flex flex-col border-r border-border bg-muted/5 overflow-y-auto">
-            <div className="px-1 pt-1 space-y-0.5">
-              {stripPages.map((pageNum) => {
-                const pageMeta = pageMetaMap?.get(pageNum)
-                return (
-                  <PageStripItem
-                    key={pageNum}
-                    recordSourceId={recordSourceId ?? ""}
-                    pageNumber={pageNum}
-                    isActive={pageNum === currentPage}
-                    isMatch={matchPages.has(pageNum)}
-                    matchIndex={matchPages.has(pageNum) ? (pageToHitIndex.get(pageNum) ?? null) : null}
-                    lowConfidence={
-                      pageMeta?.confidence != null &&
-                      pageMeta.confidence < OCR_CONFIDENCE_WARN
-                    }
-                    imagePath={pageMeta?.imagePath ?? null}
-                    onClick={() => setCurrentPage(pageNum)}
-                  />
-                )
-              })}
+          {/* LEFT — thumbnail strip */}
+          <div className="w-[176px] shrink-0 flex flex-col border-r border-border bg-muted/5 overflow-y-auto">
+            <div className="p-1.5 space-y-1">
+              {stripPages.map((pageNum) => (
+                <ThumbnailItem
+                  key={pageNum}
+                  pageNumber={pageNum}
+                  recordSourceId={recordSourceId ?? ""}
+                  isActive={pageNum === currentPage}
+                  isMatch={matchPages.has(pageNum)}
+                  matchIndex={matchPages.has(pageNum) ? (pageToHitIndex.get(pageNum) ?? null) : null}
+                  onClick={() => setCurrentPage(pageNum)}
+                />
+              ))}
             </div>
           </div>
 
-          {/* CENTER — PDF */}
-          <div className="flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
+          {/* CENTER — PDF + OCR text companion */}
+          <div
+            ref={centerRef}
+            className="flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden"
+          >
 
-            {/* PDF iframe area */}
-            <div className="flex-1 min-h-0 bg-muted/20">
-              {recordSourceId && (
-                <PdfPane
-                  recordSourceId={recordSourceId}
-                  pageNumber={currentPage}
-                  filename={currentHit?.original_filename ?? ""}
-                  totalPages={effectiveTotalPages}
-                  onNavigate={navigate}
-                />
+            {/* PDF + optional OCR text split */}
+            <div className="flex-1 min-h-0">
+              {ocrPaneVisible && ocrData?.raw_ocr_text ? (
+                <ResizablePanelGroup direction={ocrOrientation} key={ocrOrientation}>
+                  <ResizablePanel defaultSize={50} minSize={25}>
+                    <div className="h-full bg-muted/20">
+                      {recordSourceId && (
+                        <PdfPane
+                          recordSourceId={recordSourceId}
+                          pageNumber={currentPage}
+                          filename={currentHit?.original_filename ?? ""}
+                          totalPages={effectiveTotalPages}
+                          searchQuery={query || undefined}
+                          onNextPage={() => navigate(1)}
+                          onPrevPage={() => navigate(-1)}
+                        />
+                      )}
+                    </div>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel defaultSize={50} minSize={20}>
+                    <OcrTextPane
+                      ocrText={ocrData.raw_ocr_text}
+                      pageNumber={currentPage}
+                      searchQuery={query || undefined}
+                    />
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              ) : (
+                <div className="h-full bg-muted/20">
+                  {recordSourceId && (
+                    <PdfPane
+                      recordSourceId={recordSourceId}
+                      pageNumber={currentPage}
+                      filename={currentHit?.original_filename ?? ""}
+                      totalPages={effectiveTotalPages}
+                      searchQuery={query || undefined}
+                      onNextPage={() => navigate(1)}
+                      onPrevPage={() => navigate(-1)}
+                    />
+                  )}
+                </div>
               )}
             </div>
 
@@ -819,27 +821,16 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
             )}
           </div>
 
-          {/* RIGHT — properties panel */}
+          {/* RIGHT — properties + intelligence panel */}
           <PropertiesPanel
             hit={currentHit}
             source={source}
             tailNumber={aircraft?.tailNumber}
             panelOpen={propsPanelOpen}
             onToggle={() => setPropsPanelOpen((v) => !v)}
-            isManager={isManager}
-            onDelete={() => setDeleteOpen(true)}
+            currentPageId={matchPages.has(currentPage) ? currentHit?.page_id ?? null : null}
           />
         </div>
-      </DialogContent>
-
-      <DeleteConfirmDialog
-        open={deleteOpen}
-        filename={currentHit?.original_filename ?? ""}
-        pageCount={source?.page_count}
-        onCancel={() => setDeleteOpen(false)}
-        onConfirm={handleDeleteConfirm}
-        isDeleting={isDeleting}
-      />
-    </Dialog>
+      </div>
   )
 }
