@@ -7,6 +7,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { BeetIcon } from "./shared/BeetIcon"
+import { SuggestionWidget } from "@/features/site-suggestions"
 
 const OPS_ITEMS = [
   { label: "Work Orders",      path: "/app/beet-box/work-orders",     icon: ClipboardList },
@@ -108,13 +109,16 @@ export function BeetBoxSidebar() {
 
           <div className="flex-1" />
 
+          {/* Back to Portal + Suggestion widget stacked */}
+          <div className="flex flex-col items-end gap-1.5 flex-shrink-0 mr-1">
+
           {/* Back to Portal */}
           <button
             onClick={() => navigate("/app")}
             onMouseEnter={() => setPortalHovered(true)}
             onMouseLeave={() => setPortalHovered(false)}
             title="Back to Portal"
-            className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm mr-1"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm"
             style={{
               border:     portalHovered ? "1px solid rgba(212,160,23,0.65)" : "1px solid rgba(212,160,23,0.2)",
               background: portalHovered
@@ -148,6 +152,11 @@ export function BeetBoxSidebar() {
               SkyShareMX
             </span>
           </button>
+
+          {/* Suggestion widget */}
+          <SuggestionWidget variant="sidebar" />
+
+          </div>{/* end stacked group */}
 
           {/* Collapse toggle — only on WO detail */}
           {onWODetail && (

@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from "react"
 import { AlertTriangle, Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { SuggestionWidget } from "@/features/site-suggestions"
 import { useNavigate } from "react-router-dom"
 import { useTheme } from "next-themes"
 import { useAuth } from "@/features/auth"
@@ -582,6 +583,9 @@ export function Topbar() {
             )}
           </PopoverContent>
         </Popover>
+
+        {/* Suggestion widget */}
+        <SuggestionWidget variant="topbar" />
 
         {/* Theme toggle */}
         <Button

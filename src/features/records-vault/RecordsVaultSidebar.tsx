@@ -5,6 +5,7 @@ import { cn } from "@/shared/lib/utils"
 import { useAuth } from "@/features/auth"
 import { useRecordsVaultCtx } from "./RecordsVaultApp"
 import { MANAGER_ROLES } from "./constants"
+import { SuggestionWidget } from "@/features/site-suggestions"
 
 const NAV_ITEMS = [
   { label: "Records",  path: "/app/records-vault/search",   icon: FileText   },
@@ -27,7 +28,8 @@ export function RecordsVaultSidebar() {
       style={{ background: "hsl(0 0% 9%)", borderRight: "1px solid hsl(0 0% 14%)" }}
     >
       {/* Back to portal strip */}
-      <div className="flex justify-end px-3 pt-3 pb-2">
+      <div className="flex items-center justify-end gap-2 px-3 pt-3 pb-2">
+        <SuggestionWidget variant="sidebar" />
         <button
           onClick={() => navigate("/app")}
           onMouseEnter={() => setPortalHovered(true)}
