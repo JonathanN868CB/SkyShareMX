@@ -65,6 +65,7 @@ export default function LogbookDetail() {
   const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
   const woParam        = searchParams.get("wo")
+  const fromWO         = searchParams.get("from")
 
   const isNew    = id === "new"
   const original = isNew ? buildNewEntry(woParam) : LOGBOOK_ENTRIES.find(e => e.id === id)
@@ -80,8 +81,8 @@ export default function LogbookDetail() {
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <AlertTriangle className="w-10 h-10 text-white/20" />
         <p className="text-white/40 text-sm">Logbook entry not found.</p>
-        <Button variant="ghost" size="sm" onClick={() => navigate("/app/beet-box/logbook")} className="text-white/50">
-          ← Back to Logbook
+        <Button variant="ghost" size="sm" onClick={() => navigate(fromWO ?? "/app/beet-box/logbook")} className="text-white/50">
+          {fromWO ? "← Back to Work Order" : "← Back to Logbook"}
         </Button>
       </div>
     )
@@ -136,10 +137,10 @@ export default function LogbookDetail() {
       {/* Page header */}
       <div className="hero-area px-8 pt-6 pb-5">
         <button
-          onClick={() => navigate("/app/beet-box/logbook")}
+          onClick={() => navigate(fromWO ?? "/app/beet-box/logbook")}
           className="flex items-center gap-2 text-white/40 hover:text-white/70 text-sm mb-4 transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" /> Logbook
+          <ArrowLeft className="w-4 h-4" /> {fromWO ? "Back to Work Order" : "Logbook"}
         </button>
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
