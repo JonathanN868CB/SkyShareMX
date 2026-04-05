@@ -1,5 +1,32 @@
 import { useState, useRef, useEffect, useMemo } from "react"
-import { Send, ShieldAlert, Award, Database, Wrench } from "lucide-react"
+import { Send, ShieldAlert, Award, Database, Wrench, FileText, BookOpen } from "lucide-react"
+
+// ── Keyframe styles injected once ────────────────────────────
+const COST_METER_STYLES = `
+@keyframes dw1ght-jitter {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  10% { transform: translate(-1px, -1px) rotate(-2deg); }
+  30% { transform: translate(1px, 0px) rotate(1deg); }
+  50% { transform: translate(-1px, 1px) rotate(-1deg); }
+  70% { transform: translate(1px, -1px) rotate(2deg); }
+  90% { transform: translate(0px, 1px) rotate(0deg); }
+}
+@keyframes dw1ght-coin-fall {
+  0% { opacity: 1; transform: translateY(0) rotate(0deg) scale(1); }
+  60% { opacity: 0.8; }
+  100% { opacity: 0; transform: translateY(28px) rotate(180deg) scale(0.5); }
+}
+@keyframes dw1ght-glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(212,160,23,0.3)); }
+  50% { filter: drop-shadow(0 0 8px rgba(212,160,23,0.7)); }
+}
+@keyframes dw1ght-fire-flicker {
+  0%, 100% { opacity: 0.7; transform: scaleY(1) translateY(0); }
+  25% { opacity: 1; transform: scaleY(1.1) translateY(-1px); }
+  50% { opacity: 0.8; transform: scaleY(0.95) translateY(0.5px); }
+  75% { opacity: 1; transform: scaleY(1.05) translateY(-0.5px); }
+}
+`
 
 const OPENING_LINES = [
   { quote: "I am ready. State your question. Make it count.", attr: "DW1GHT, upon activation" },
@@ -12,11 +39,14 @@ const OPENING_LINES = [
   { quote: "Identity confirmed. Clearance verified. Jim is not here. We can proceed.", attr: "DW1GHT, security check" },
 ]
 
+type ContextSource = "discrepancies" | "records" | "manuals"
+
 type Message = {
   role: "user" | "assistant"
   content: string
   fromData?: boolean
   resultCount?: number
+  ragChunksUsed?: number
 }
 
 export default function AiAssistant() {
@@ -25,9 +55,22 @@ export default function AiAssistant() {
   const [loading, setLoading] = useState(false)
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
   const [mode, setMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
+  const [contextSources, setContextSources] = useState<Set<ContextSource>>(new Set(["discrepancies"]))
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const opening = useMemo(() => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)], [])
+
+  function toggleSource(source: ContextSource) {
+    setContextSources(prev => {
+      const next = new Set(prev)
+      if (next.has(source)) next.delete(source)
+      else next.add(source)
+      return next
+    })
+  }
+
+  const activeSources = contextSources.size
+  const dollarSigns = Math.max(1, activeSources) // at least 1 dollar sign
 
   // Haiku pricing: $0.80/M input, $4.00/M output
   const sessionCost = (sessionTokens.input * 0.0000008) + (sessionTokens.output * 0.000004)
@@ -54,6 +97,7 @@ export default function AiAssistant() {
         body: JSON.stringify({
           message: text,
           mode,
+          contextSources: [...contextSources],
           history: newMessages.slice(0, -1).map((m) => ({
             role: m.role,
             content: m.content,
@@ -66,6 +110,7 @@ export default function AiAssistant() {
         content: data.reply ?? "...",
         fromData: data.sqlGenerated === true,
         resultCount: data.resultCount,
+        ragChunksUsed: data.ragChunksUsed,
       }])
       if (data.usage) {
         setSessionTokens(prev => ({
@@ -190,6 +235,12 @@ export default function AiAssistant() {
         className="flex items-center gap-4 rounded-xl px-4 py-2.5"
         style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
       >
+        <span
+          className="text-[9px] font-bold tracking-widest uppercase flex-shrink-0"
+          style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5, minWidth: "90px" }}
+        >
+          Operating Mode
+        </span>
         <div
           className="flex items-center rounded-lg overflow-hidden"
           style={{ border: "1px solid rgba(255,255,255,0.08)" }}
@@ -234,12 +285,166 @@ export default function AiAssistant() {
             <Wrench className="w-3 h-3" />
           </button>
         </div>
-        <span
-          className="text-[9px] font-bold tracking-widest uppercase"
-          style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}
-        >
-          Operating Mode
-        </span>
+      </div>
+
+      {/* ── Context Source Selector ─────────────────────────── */}
+      <style>{COST_METER_STYLES}</style>
+      <div
+        className="flex items-center gap-4 rounded-xl px-4 py-2.5"
+        style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        {/* Cost meter — left side */}
+        <div className="flex items-center gap-2 flex-shrink-0" style={{ minWidth: "90px" }}>
+          <div
+            className="relative flex items-center justify-center transition-all duration-500"
+            style={{
+              fontSize: activeSources <= 1 ? "18px" : activeSources === 2 ? "26px" : "34px",
+              lineHeight: 1,
+              minWidth: activeSources <= 1 ? "32px" : activeSources === 2 ? "40px" : "48px",
+              minHeight: "36px",
+              animation: activeSources >= 3
+                ? "dw1ght-jitter 0.15s infinite, dw1ght-glow-pulse 1s ease-in-out infinite"
+                : activeSources === 2
+                  ? "dw1ght-jitter 0.4s infinite"
+                  : "none",
+            }}
+          >
+            {/* Fire effect at level 3 */}
+            {activeSources >= 3 && (
+              <>
+                <span
+                  className="absolute -top-2 left-1/2 -translate-x-1/2 text-[10px] select-none pointer-events-none"
+                  style={{ animation: "dw1ght-fire-flicker 0.3s infinite" }}
+                >
+                  🔥
+                </span>
+                <span
+                  className="absolute -top-1 left-0 text-[8px] select-none pointer-events-none"
+                  style={{ animation: "dw1ght-fire-flicker 0.25s infinite 0.1s" }}
+                >
+                  🔥
+                </span>
+                <span
+                  className="absolute -top-1 right-0 text-[8px] select-none pointer-events-none"
+                  style={{ animation: "dw1ght-fire-flicker 0.35s infinite 0.15s" }}
+                >
+                  🔥
+                </span>
+              </>
+            )}
+
+            {/* The dollar signs */}
+            <span
+              className="select-none font-black transition-all duration-300"
+              style={{
+                color: activeSources <= 1
+                  ? "var(--skyshare-success)"
+                  : activeSources === 2
+                    ? "var(--skyshare-gold)"
+                    : "#ff8c00",
+                textShadow: activeSources >= 3
+                  ? "0 0 12px rgba(212,160,23,0.8), 0 0 24px rgba(255,140,0,0.4)"
+                  : activeSources === 2
+                    ? "0 0 6px rgba(212,160,23,0.4)"
+                    : "0 0 4px rgba(16,185,129,0.3)",
+                fontFamily: "var(--font-display)",
+                letterSpacing: activeSources >= 3 ? "-0.02em" : "0.02em",
+              }}
+            >
+              {"$".repeat(Math.max(1, activeSources))}
+            </span>
+
+            {/* Falling coins at level 3 */}
+            {activeSources >= 3 && (
+              <div className="absolute inset-0 overflow-visible pointer-events-none">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <span
+                    key={i}
+                    className="absolute text-[8px] select-none"
+                    style={{
+                      left: `${10 + i * 18}%`,
+                      top: "80%",
+                      animation: `dw1ght-coin-fall ${0.8 + i * 0.15}s ease-in infinite ${i * 0.25}s`,
+                    }}
+                  >
+                    🪙
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Label under cost meter */}
+          <span
+            className="text-[8px] font-bold tracking-widest uppercase"
+            style={{
+              color: activeSources >= 3 ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+              fontFamily: "var(--font-heading)",
+              opacity: activeSources >= 3 ? 0.9 : 0.5,
+              transition: "all 0.3s",
+            }}
+          >
+            {activeSources <= 1 ? "Context" : activeSources === 2 ? "Context" : "oh no"}
+          </span>
+        </div>
+
+        {/* Source buttons */}
+        <div className="flex items-center gap-2">
+          {/* Discrepancy History */}
+          <button
+            onClick={() => toggleSource("discrepancies")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all"
+            style={{
+              fontFamily: "var(--font-heading)",
+              background: contextSources.has("discrepancies") ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.02)",
+              color: contextSources.has("discrepancies") ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+              border: contextSources.has("discrepancies") ? "1px solid rgba(212,160,23,0.3)" : "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <Database className="w-3 h-3" />
+            Discrepancy History
+          </button>
+
+          {/* Aircraft Records */}
+          <button
+            onClick={() => toggleSource("records")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all"
+            style={{
+              fontFamily: "var(--font-heading)",
+              background: contextSources.has("records") ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.02)",
+              color: contextSources.has("records") ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+              border: contextSources.has("records") ? "1px solid rgba(212,160,23,0.3)" : "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <FileText className="w-3 h-3" />
+            Aircraft Records
+          </button>
+
+          {/* Maintenance Manuals — toggleable, TBD */}
+          <button
+            onClick={() => toggleSource("manuals")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-widest uppercase transition-all"
+            style={{
+              fontFamily: "var(--font-heading)",
+              background: contextSources.has("manuals") ? "rgba(212,160,23,0.15)" : "rgba(255,255,255,0.02)",
+              color: contextSources.has("manuals") ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+              border: contextSources.has("manuals") ? "1px solid rgba(212,160,23,0.3)" : "1px solid rgba(255,255,255,0.08)",
+              opacity: contextSources.has("manuals") ? 1 : 0.55,
+            }}
+          >
+            <BookOpen className="w-3 h-3" />
+            Maint. Manuals
+            <span
+              className="text-[7px] px-1 py-0 rounded ml-0.5"
+              style={{
+                background: contextSources.has("manuals") ? "rgba(212,160,23,0.25)" : "rgba(255,255,255,0.08)",
+                color: contextSources.has("manuals") ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+              }}
+            >
+              TBD
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* ── Chat Panel ──────────────────────────────────────── */}
@@ -361,6 +566,21 @@ export default function AiAssistant() {
                       >
                         <Database className="w-2.5 h-2.5" />
                         {m.resultCount != null ? `${m.resultCount} records` : "queried"}
+                      </span>
+                    )}
+                    {(m.ragChunksUsed ?? 0) > 0 && (
+                      <span
+                        className="flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: "rgba(212,160,23,0.12)",
+                          color: "var(--skyshare-gold)",
+                          fontFamily: "var(--font-heading)",
+                          letterSpacing: "0.08em",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        <FileText className="w-2.5 h-2.5" />
+                        {m.ragChunksUsed} chunks
                       </span>
                     )}
                   </div>

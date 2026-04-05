@@ -33,15 +33,22 @@ const METADATA_SAMPLE_PAGES = 3;
 
 interface ProcessRequest {
   record_source_id: string;
+  /** When true, the client pre-rendered page images via PDFium WASM and
+   *  uploaded them to Storage. Skip Mistral image extraction entirely. */
+  page_images_pre_uploaded?: boolean;
 }
 
-interface MistralOcrImage {
-  id?: string;
-  top_left_x?: number;
-  top_left_y?: number;
-  bottom_right_x?: number;
-  bottom_right_y?: number;
-  image_base64?: string; // stripped before DB storage; used only for thumbnail upload
+interface MistralBoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface MistralOcrWord {
+  text: string;
+  bbox: MistralBoundingBox;
+  confidence?: number;
 }
 
 interface MistralOcrPage {
@@ -49,7 +56,17 @@ interface MistralOcrPage {
   markdown?: string;
   text?: string;
   confidence?: number;
-  images?: MistralOcrImage[];
+  // Mistral OCR returns page dimensions and image data when requested
+  dimensions?: { width: number; height: number; dpi?: number };
+  images?: Array<{ id: string; image_base64?: string }>;
+  // Word/block-level bounding boxes (if available in response)
+  words?: MistralOcrWord[];
+  // Some Mistral versions return blocks instead of words
+  blocks?: Array<{
+    text: string;
+    bbox: MistralBoundingBox;
+    words?: MistralOcrWord[];
+  }>;
 }
 
 interface MistralOcrResponse {
@@ -60,6 +77,53 @@ interface ExtractedMetadata {
   date_range_start: string | null;
   date_range_end: string | null;
   observed_registration: string | null;
+}
+
+// ─── Codec detection ─────────────────────────────────────────────────────────
+
+/**
+ * Streams the PDF from its URL and scans for /JBIG2Decode or /CCITTFaxDecode
+ * filter declarations. These compression codecs are used in scanned aviation
+ * documents and cannot be rendered by PDF.js — when detected, the pipeline
+ * stores pre-rendered page images as a rendering backup.
+ *
+ * Streams in chunks to avoid holding the full PDF in memory. Cancels the
+ * download as soon as a match is found.
+ */
+async function pdfHasProblematicCodec(url: string): Promise<{ found: boolean; codec: string | null }> {
+  const needles = ["/JBIG2Decode", "/CCITTFaxDecode"];
+  const maxNeedleLen = Math.max(...needles.map((n) => n.length));
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok || !resp.body) return { found: false, codec: null };
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("ascii", { fatal: false });
+    let overlap = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Decode chunk as ASCII (PDF structure tokens are ASCII)
+      const chunk = overlap + decoder.decode(value, { stream: true });
+
+      for (const needle of needles) {
+        if (chunk.includes(needle)) {
+          await reader.cancel();
+          return { found: true, codec: needle.slice(1) }; // strip leading "/"
+        }
+      }
+
+      // Keep tail overlap so needles split across chunk boundaries are caught
+      overlap = chunk.slice(-maxNeedleLen);
+    }
+  } catch (err) {
+    console.warn("[process-record-source] Codec scan failed, assuming standard PDF:", err);
+  }
+
+  return { found: false, codec: null };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -188,7 +252,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return jsonResp(400, { error: "Invalid JSON body" });
   }
 
-  const { record_source_id } = body;
+  const { record_source_id, page_images_pre_uploaded } = body;
   if (!record_source_id) return jsonResp(400, { error: "record_source_id required" });
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -235,9 +299,42 @@ Deno.serve(async (req: Request): Promise<Response> => {
       throw new Error(`Failed to generate signed URL: ${signErr?.message}`);
     }
 
-    await log("ocr_submitted", "PDF URL sent to Mistral OCR — awaiting response");
+    // Detect file type — images use image_url, PDFs use document_url
+    const lowerFilename = source.original_filename.toLowerCase();
+    const isImage = /\.(jpg|jpeg|png|tiff|tif|webp|bmp)$/.test(lowerFilename);
 
-    // ── 3. Call Mistral OCR ────────────────────────────────────────────────
+    // ── 2b. Scan PDF for problematic compression codecs ───────────────────
+    // JBIG2 and CCITTFax are used in scanned aviation documents but PDF.js
+    // cannot decode them. When detected, we request page images from Mistral
+    // and store them as the rendering backup path.
+    let needsPageImages = false;
+    let detectedCodec: string | null = null;
+    const imagesAlreadyUploaded = !!page_images_pre_uploaded;
+
+    if (!isImage) {
+      const codecResult = await pdfHasProblematicCodec(signedData.signedUrl);
+      needsPageImages = codecResult.found;
+      detectedCodec = codecResult.codec;
+
+      if (imagesAlreadyUploaded) {
+        await log("codec_scan", `${detectedCodec ?? "Codec"} detected — page images pre-rendered by client (PDFium WASM), skipping Mistral images`);
+      } else if (needsPageImages) {
+        await log("codec_scan", `⚠ ${detectedCodec} compression detected — will store page images as rendering backup`);
+      } else {
+        await log("codec_scan", `Standard PDF compression — PDF.js will handle rendering directly`);
+      }
+    } else {
+      // Single images always need the image stored for viewing
+      needsPageImages = true;
+    }
+
+    await log("ocr_submitted", `${isImage ? "Image" : "PDF"} URL sent to Mistral OCR — awaiting response`);
+
+    // ── 3. Call Mistral OCR ───��──────────────────���─────────────────────────
+    const documentPayload = isImage
+      ? { type: "image_url", image_url: signedData.signedUrl }
+      : { type: "document_url", document_url: signedData.signedUrl };
+
     const mistralResponse = await fetch(MISTRAL_OCR_URL, {
       method: "POST",
       headers: {
@@ -246,11 +343,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
       },
       body: JSON.stringify({
         model: "mistral-ocr-latest",
-        document: {
-          type: "document_url",
-          document_url: signedData.signedUrl,
-        },
-        include_image_base64: true,
+        document: documentPayload,
+        // Only request page images when the PDF uses codecs PDF.js can't handle
+        // AND the client hasn't already pre-rendered them with PDFium WASM.
+        include_image_base64: needsPageImages && !imagesAlreadyUploaded,
       }),
     });
 
@@ -318,54 +414,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
     for (let i = 0; i < pages.length; i += PAGE_INSERT_CHUNK) {
       const chunk = pages.slice(i, i + PAGE_INSERT_CHUNK);
 
-      // Upload any embedded page images to Storage for use as thumbnails.
-      // Images are uploaded concurrently per chunk; failures are non-fatal.
-      const imageUploadPromises = chunk.map(async (page) => {
-        if (!page.images || page.images.length === 0) return null;
-        // Take the first image on the page (typically the page render or primary figure)
-        const img = page.images[0];
-        if (!img.image_base64) return null;
-
-        try {
-          // Decode base64 — strip data URI prefix if present
-          const b64 = img.image_base64.replace(/^data:[^;]+;base64,/, "");
-          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-          const storagePath = `${source.id}/pages/${page.index + 1}.jpg`;
-
-          const { error: uploadErr } = await supabase.storage
-            .from("records-vault")
-            .upload(storagePath, bytes, {
-              contentType:  "image/jpeg",
-              upsert:       true,
-            });
-
-          if (uploadErr) {
-            console.warn(`[process-record-source] Image upload failed for page ${page.index + 1}:`, uploadErr.message);
-            return null;
-          }
-
-          return { pageIndex: page.index, storagePath };
-        } catch {
-          return null;
-        }
-      });
-
-      const imageResults = await Promise.all(imageUploadPromises);
-      const imagePathByIndex = new Map(
-        imageResults
-          .filter((r): r is { pageIndex: number; storagePath: string } => r !== null)
-          .map((r) => [r.pageIndex, r.storagePath])
-      );
-
       const rows = chunk.map((page) => {
         const conf = page.confidence ?? null;
         if (conf !== null) { totalConfidence += conf; confidenceCount++; }
 
-        // Store bbox coordinates without base64 data (images live in Storage)
-        const bboxData = page.images && page.images.length > 0
-          ? page.images.map(({ image_base64: _drop, ...coords }) => coords)
-          : null;
+        // Extract word/block-level bounding boxes for search highlighting
+        let wordPositions: MistralOcrWord[] | null = null;
+        if (page.words && page.words.length > 0) {
+          wordPositions = page.words;
+        } else if (page.blocks && page.blocks.length > 0) {
+          // Flatten blocks → words if Mistral returns block-level data
+          wordPositions = page.blocks.flatMap((block) =>
+            block.words && block.words.length > 0
+              ? block.words
+              : [{ text: block.text, bbox: block.bbox }]
+          );
+        }
 
+        // Only include word_positions/page_dimensions if Mistral actually returned them.
+        // When null, omit from upsert so client-uploaded Tesseract data is preserved.
         return {
           record_source_id: source.id,
           aircraft_id:      source.aircraft_id,
@@ -373,8 +440,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           raw_ocr_text:     page.markdown ?? page.text ?? "",
           ocr_confidence:   conf,
           ocr_status:       "extracted" as const,
-          page_image_path:  imagePathByIndex.get(page.index) ?? null,
-          ocr_bbox_data:    bboxData,
+          ...(page.dimensions ? { page_dimensions: page.dimensions } : {}),
+          ...(wordPositions  ? { word_positions: wordPositions }     : {}),
         };
       });
 
@@ -387,6 +454,101 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
 
       insertedCount += rows.length;
+    }
+
+    // ── 5b. Upload page images to Storage (only for problematic codecs) ──
+    // Only runs when step 2b detected JBIG2/CCITTFax compression that PDF.js
+    // cannot decode. For standard PDFs, page images are skipped entirely —
+    // PDF.js handles rendering directly with full text-layer highlighting.
+    //
+    // When the client pre-rendered images with PDFium WASM, we skip Mistral
+    // image extraction entirely and just set page_image_path on the pages.
+    let pageImagesUploaded = 0;
+
+    if (imagesAlreadyUploaded) {
+      // Client already uploaded page images — just update rv_pages with paths
+      for (let i = 0; i < pages.length; i++) {
+        const imagePath = `${source.id}/pages/${i + 1}.jpg`;
+        await supabase
+          .from("rv_pages")
+          .update({ page_image_path: imagePath })
+          .eq("record_source_id", source.id)
+          .eq("page_number", i + 1);
+        pageImagesUploaded++;
+      }
+      await log("render_decision",
+        `Rendering: ${detectedCodec ?? "problematic codec"} detected → ${pageImagesUploaded} page images pre-rendered by client (PDFium WASM). Viewer will use images with text overlay highlighting.`,
+        pageImagesUploaded);
+    }
+
+    for (const page of pages) {
+      if (imagesAlreadyUploaded) break; // Already handled above
+      if (!needsPageImages) break; // Skip entirely for standard PDFs
+      if (!page.images || page.images.length === 0) continue;
+
+      // Use the first image (for scanned docs, this is the full page scan)
+      const img = page.images[0];
+      const raw = img.image_base64;
+      if (!raw) continue;
+
+      try {
+        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
+        const base64Data = raw.includes(",") ? raw.split(",")[1] : raw;
+        const binaryStr = atob(base64Data);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let j = 0; j < binaryStr.length; j++) {
+          bytes[j] = binaryStr.charCodeAt(j);
+        }
+
+        // Detect format from first bytes (JPEG: FF D8, PNG: 89 50 4E 47)
+        const isPng = bytes[0] === 0x89 && bytes[1] === 0x50;
+        const ext = isPng ? "png" : "jpg";
+        const contentType = isPng ? "image/png" : "image/jpeg";
+
+        const imagePath = `${source.id}/pages/${page.index + 1}.${ext}`;
+        const { error: uploadErr } = await supabase.storage
+          .from("records-vault")
+          .upload(imagePath, bytes, { contentType, upsert: true });
+
+        if (uploadErr) {
+          console.warn(`[process-record-source] Image upload failed for page ${page.index + 1}:`, uploadErr.message);
+          continue;
+        }
+
+        // Update the page row with the image path
+        await supabase
+          .from("rv_pages")
+          .update({ page_image_path: imagePath })
+          .eq("record_source_id", source.id)
+          .eq("page_number", page.index + 1);
+
+        pageImagesUploaded++;
+      } catch (imgErr) {
+        console.warn(`[process-record-source] Image processing failed for page ${page.index + 1}:`, imgErr);
+      }
+    }
+
+    // ── 5c. Log rendering decision ────────────────────────────────────────
+    // Make the rendering path visible in pipeline logs so operators can see
+    // exactly how each document will be displayed in the viewer.
+    const totalPages = pages.length;
+
+    if (!imagesAlreadyUploaded) {
+      // Only log if we haven't already logged in the pre-uploaded branch above
+      if (needsPageImages && pageImagesUploaded > 0) {
+        const codecLabel = detectedCodec ?? "problematic codec";
+        await log("render_decision",
+          `Rendering: ${codecLabel} detected → ${pageImagesUploaded}/${totalPages} page images stored as backup. PDF.js cannot decode this format; viewer will use images with text overlay highlighting.`,
+          pageImagesUploaded);
+      } else if (needsPageImages && pageImagesUploaded === 0) {
+        await log("render_decision",
+          `Rendering: problematic codec detected but no page images returned by OCR — pages may not render correctly. Consider re-ingesting.`,
+          0);
+      } else {
+        await log("render_decision",
+          `Rendering: standard PDF → all ${totalPages} pages use PDF.js with native text-layer highlighting`,
+          totalPages);
+      }
     }
 
     // ── 6. Verify ─────────────────────────────────────────────────────────
@@ -417,12 +579,62 @@ Deno.serve(async (req: Request): Promise<Response> => {
         page_count:             pages.length,
         pages_extracted:        pages.length,
         pages_inserted:         pagesInDb ?? insertedCount,
+        // When images were pre-uploaded by the client, preserve that count
+        // instead of overwriting with Mistral's (partial) image count.
+        ...(imagesAlreadyUploaded ? {} : { page_images_stored: pageImagesUploaded }),
         verification_status:    verificationStatus,
         ocr_quality_score:      avgConfidence,
         ingestion_error:        null,
         ingestion_completed_at: new Date().toISOString(),
       })
       .eq("id", record_source_id);
+
+    // ── 8. Chain post-OCR pipeline: events THEN embeddings (sequential) ──
+    // Both are independent consumers of rv_pages but they hit different
+    // AI APIs (Claude Haiku for events, Voyage AI for embeddings). Running
+    // them sequentially prevents rate-limit collisions when multiple
+    // documents are processing concurrently.
+    // EdgeRuntime.waitUntil keeps the work alive after the HTTP response.
+    const postOcrHeaders = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+    };
+    const postOcrBody = JSON.stringify({ record_source_id });
+    const edgeBase    = `${SUPABASE_URL}/functions/v1`;
+
+    const postOcrWork = (async () => {
+      // Phase 1: Event extraction (Claude Haiku)
+      try {
+        const evtResp = await fetch(`${edgeBase}/extract-record-events`, {
+          method: "POST", headers: postOcrHeaders, body: postOcrBody,
+        });
+        if (!evtResp.ok) {
+          console.error(`[process-record-source] extract-record-events HTTP ${evtResp.status}`);
+        }
+      } catch (err) {
+        console.error(`[process-record-source] extract-record-events trigger failed:`, err);
+      }
+
+      // Phase 2: Embedding generation (Voyage AI) — starts after events finish
+      try {
+        const embResp = await fetch(`${edgeBase}/generate-page-embeddings`, {
+          method: "POST", headers: postOcrHeaders, body: postOcrBody,
+        });
+        if (!embResp.ok) {
+          console.error(`[process-record-source] generate-page-embeddings HTTP ${embResp.status}`);
+        }
+      } catch (err) {
+        console.error(`[process-record-source] generate-page-embeddings trigger failed:`, err);
+      }
+    })();
+
+    try {
+      // @ts-ignore — EdgeRuntime.waitUntil is available in Supabase Edge Function runtime
+      EdgeRuntime.waitUntil(postOcrWork);
+    } catch {
+      // Local dev fallback — don't block the response
+      postOcrWork.catch(() => {});
+    }
 
     return jsonResp(200, {
       success: true,

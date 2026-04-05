@@ -12,6 +12,7 @@ import {
   Trash2,
   Brain,
   Layers,
+  Image,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { useToast } from "@/hooks/use-toast"
@@ -92,6 +93,31 @@ function PipelineSeparator({ active }: { active: boolean }) {
   )
 }
 
+function RenderModeBadge({ source }: { source: PipelineSource }) {
+  // Only show once OCR is done
+  if (source.ingestion_status !== "indexed") return null
+
+  const total = source.page_count ?? source.pages_inserted ?? 0
+  const images = source.page_images_stored
+  if (images == null || images === 0 || total === 0) return null
+
+  if (images === total) {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-medium text-amber-500 dark:text-amber-400" title="All pages use pre-rendered images (scanned document)">
+        <Image className="h-3 w-3 shrink-0" />
+        IMG {images}/{total}
+      </span>
+    )
+  }
+
+  return (
+    <span className="flex items-center gap-1 text-[10px] font-medium text-sky-500 dark:text-sky-400" title={`${images} pages use images, ${total - images} use PDF.js`}>
+      <Image className="h-3 w-3 shrink-0" />
+      IMG {images}/{total}
+    </span>
+  )
+}
+
 function StatusIndicator({ source }: { source: PipelineSource }) {
   const {
     ingestion_status, verification_status, pages_extracted, pages_inserted,
@@ -139,6 +165,7 @@ function StatusIndicator({ source }: { source: PipelineSource }) {
       <StageChip icon={Brain}    label="Events" detail={evDetail} state={evState} />
       <PipelineSeparator active={evState === "done"} />
       <StageChip icon={Layers}   label="Vectors" detail={vecDetail} state={vecState} />
+      <RenderModeBadge source={source} />
       {verification_status === "partial" && (
         <span className="flex items-center gap-1 text-[11px] text-yellow-600 dark:text-yellow-400 font-medium">
           <AlertTriangle className="h-3 w-3" />
@@ -281,6 +308,8 @@ function SourceRow({
                     ? "text-green-600 dark:text-green-400"
                     : entry.step === "failed" || entry.step === "partial"
                     ? "text-destructive"
+                    : entry.step === "render_decision"
+                    ? "text-amber-500 dark:text-amber-400"
                     : "text-foreground"
                 }
               >
