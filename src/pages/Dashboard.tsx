@@ -25,7 +25,7 @@ const coreValues = [
   {
     number: "04",
     name: "Team Alignment",
-    body: "We know exactly where we fit in, and we take pride in it. We are a support department, and that means we show up for the rest of the operation every single day.\n\nWe stay aligned with pilots, SkyOps, and Safety — all working toward the same goal of delivering world class private aviation. When the company moves, we move with it. When they need us, we're already there.",
+    body: "We know exactly where we fit in, and we take pride in it. We are a support department, and that means we show up for the rest of the operation every single day.\n\nWe stay aligned with Safety, pilots, SkyOps, and Accounting — all working toward the same goal of delivering world class private aviation. When the company moves, we move with it. When they need us, we're already there.",
   },
 ]
 

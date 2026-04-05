@@ -43,7 +43,7 @@ function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftB
           cursor: "pointer",
           position: "relative",
           overflow: "hidden",
-          padding: "10px 14px 12px",
+          padding: "7px 10px 9px",
           gap: 0,
           border: `1px solid ${hovered ? "rgba(212,160,23,0.55)" : "rgba(255,255,255,0.08)"}`,
           transition: "transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease",
@@ -73,7 +73,7 @@ function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftB
         />
 
         {/* ── Navigation lights — port (red) left, starboard (green) right ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
           {/* Port — red, left wing */}
           <span
             title="Port"
@@ -91,7 +91,7 @@ function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftB
           <div
             style={{
               fontFamily: "var(--font-heading)",
-              fontSize: "1.05rem",
+              fontSize: "0.95rem",
               fontWeight: 600,
               color: hovered ? "#f2c040" : "var(--skyshare-gold)",
               letterSpacing: hovered ? "0.2em" : "0.12em",
@@ -139,7 +139,7 @@ function AircraftCard({ ac, onOpen }: { ac: AircraftBase; onOpen: (ac: AircraftB
           style={{
             height: "0.5px",
             background: hovered ? "rgba(212,160,23,0.6)" : "rgba(212,160,23,0.2)",
-            margin: "5px 0",
+            margin: "3px 0",
             transition: "background 0.25s ease",
             position: "relative",
             zIndex: 1,
@@ -200,7 +200,7 @@ function FamilyBlock({ family, label, onOpen }: {
           · {family.length} aircraft
         </span>
       </div>
-      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))" }}>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))" }}>
         {family.map(ac => (
           <AircraftCard key={ac.tailNumber} ac={ac} onOpen={onOpen} />
         ))}
@@ -271,7 +271,7 @@ function FleetSkeleton() {
             <div className="h-6 w-48 rounded animate-pulse" style={{ background: "rgba(255,255,255,0.07)" }} />
             <div style={{ height: "1px", marginTop: "0.5rem", background: "rgba(212,160,23,0.15)" }} />
           </div>
-          <div className="grid gap-2 pl-1" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))" }}>
+          <div className="grid gap-2 pl-1" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))" }}>
             {Array.from({ length: 6 }).map((_, j) => (
               <div key={j} className="rounded-md px-4 py-3 h-20 animate-pulse" style={{ background: "rgba(255,255,255,0.05)" }} />
             ))}

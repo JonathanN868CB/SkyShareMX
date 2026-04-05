@@ -8,7 +8,7 @@ import { MANAGER_ROLES } from "./constants"
 
 const NAV_ITEMS = [
   { label: "Search",         path: "/app/records-vault/search",   icon: Search     },
-  { label: "Browse Sources", path: "/app/records-vault/browse",   icon: FolderOpen },
+  { label: "Browse",         path: "/app/records-vault/browse",   icon: FolderOpen },
   { label: "Pipeline",       path: "/app/records-vault/pipeline", icon: Activity   },
 ]
 
@@ -26,45 +26,14 @@ export function RecordsVaultSidebar() {
       className="flex flex-col h-screen w-64 flex-shrink-0"
       style={{ background: "hsl(0 0% 9%)", borderRight: "1px solid hsl(0 0% 14%)" }}
     >
-      {/* Brand row */}
-      <div
-        className="flex items-start gap-3 px-4 pt-5 pb-4"
-        style={{ borderBottom: "1px solid hsl(0 0% 14%)" }}
-      >
-        <Archive
-          className="w-7 h-7 flex-shrink-0 mt-0.5"
-          style={{ color: "var(--skyshare-gold)" }}
-        />
-        <div className="flex flex-col flex-shrink-0">
-          <span
-            className="text-white/90 uppercase leading-tight whitespace-nowrap"
-            style={{ fontFamily: "var(--font-display)", fontSize: "16px", letterSpacing: "0.08em" }}
-          >
-            Records Vault
-          </span>
-          <span
-            className="uppercase whitespace-nowrap"
-            style={{
-              fontFamily: "var(--font-heading)",
-              fontSize: "9px",
-              color: "var(--skyshare-gold)",
-              opacity: 0.65,
-              letterSpacing: "0.25em",
-            }}
-          >
-            SkyShare MX
-          </span>
-        </div>
-
-        <div className="flex-1" />
-
-        {/* Back to portal */}
+      {/* Back to portal strip */}
+      <div className="flex justify-end px-3 pt-3 pb-2">
         <button
           onClick={() => navigate("/app")}
           onMouseEnter={() => setPortalHovered(true)}
           onMouseLeave={() => setPortalHovered(false)}
           title="Back to Portal"
-          className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm mr-1"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm"
           style={{
             border: portalHovered
               ? "1px solid rgba(212,160,23,0.65)"
@@ -108,9 +77,40 @@ export function RecordsVaultSidebar() {
               transition: "color 0.2s ease, letter-spacing 0.2s ease",
             }}
           >
-            SkyShareMX
+            SkyShare MX
           </span>
         </button>
+      </div>
+
+      {/* Brand row */}
+      <div
+        className="flex items-start gap-3 px-4 pb-4"
+        style={{ borderBottom: "1px solid hsl(0 0% 14%)" }}
+      >
+        <Archive
+          className="w-7 h-7 flex-shrink-0 mt-0.5"
+          style={{ color: "var(--skyshare-gold)" }}
+        />
+        <div className="flex flex-col">
+          <span
+            className="text-white/90 uppercase leading-tight whitespace-nowrap"
+            style={{ fontFamily: "var(--font-display)", fontSize: "16px", letterSpacing: "0.08em" }}
+          >
+            Records Vault
+          </span>
+          <span
+            className="uppercase whitespace-nowrap"
+            style={{
+              fontFamily: "var(--font-heading)",
+              fontSize: "9px",
+              color: "var(--skyshare-gold)",
+              opacity: 0.65,
+              letterSpacing: "0.25em",
+            }}
+          >
+            SkyShare MX
+          </span>
+        </div>
       </div>
 
       <div className="stripe-divider" />
@@ -131,7 +131,7 @@ export function RecordsVaultSidebar() {
             opacity: 0.55,
           }}
         >
-          Aircraft Scope
+          Aircraft
         </p>
         <div className="px-1 mb-5">
           <select
@@ -150,7 +150,7 @@ export function RecordsVaultSidebar() {
               cursor: "pointer",
             }}
           >
-            <option value="fleet">All Aircraft — Fleet-wide</option>
+            <option value="fleet">All Aircraft</option>
             {allAircraft.map((ac) => (
               <option key={ac.id} value={ac.id}>
                 {ac.tailNumber} — {ac.model}
