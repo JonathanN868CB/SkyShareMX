@@ -57,7 +57,7 @@ function RoleBadge({ role }: { role: AppRole }) {
     "Admin":       "bg-[rgba(70,100,129,0.2)] text-[var(--skyshare-blue-mid)] border-[rgba(70,100,129,0.3)]",
     "Manager":     "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
     "Technician":  "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    "Read-Only":   "bg-white/8 text-white/40 border-white/10",
+    "Guest":       "bg-white/8 text-white/40 border-white/10",
   }
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border tracking-wider uppercase ${styles[role]}`}
@@ -343,12 +343,12 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
   const { profile: me, session } = useAuth()
   const qc = useQueryClient()
   const [raw, setRaw] = useState("")
-  const [role, setRole] = useState<AppRole>("Technician")
+  const [role, setRole] = useState<AppRole>("Guest")
   const [sending, setSending] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (open) { setRaw(""); setRole("Technician") }
+    if (open) { setRaw(""); setRole("Guest") }
   }, [open])
 
   const emails = parseEmails(raw)

@@ -56,14 +56,14 @@ const HARDCODED_RULES: {
   },
 ]
 
-const ROLE_ORDER: AppRole[] = ["Super Admin", "Admin", "Manager", "Technician", "Read-Only"]
+const ROLE_ORDER: AppRole[] = ["Super Admin", "Admin", "Manager", "Technician", "Guest"]
 
 const ROLE_COLORS: Record<AppRole, { bg: string; text: string; border: string }> = {
   "Super Admin": { bg: "rgba(212,160,23,0.12)", text: "var(--skyshare-gold)",       border: "rgba(212,160,23,0.3)"  },
   "Admin":       { bg: "rgba(70,100,129,0.18)", text: "hsl(210 50% 65%)",           border: "rgba(70,100,129,0.35)" },
   "Manager":     { bg: "rgba(52,211,153,0.1)",  text: "rgb(52,211,153)",            border: "rgba(52,211,153,0.25)" },
   "Technician":  { bg: "rgba(96,165,250,0.1)",  text: "rgb(96,165,250)",            border: "rgba(96,165,250,0.25)" },
-  "Read-Only":   { bg: "rgba(255,255,255,0.05)", text: "rgba(255,255,255,0.35)",    border: "rgba(255,255,255,0.1)" },
+  "Guest":       { bg: "rgba(255,255,255,0.05)", text: "rgba(255,255,255,0.35)",    border: "rgba(255,255,255,0.1)" },
 }
 
 function RolePill({ role }: { role: AppRole }) {
