@@ -76,17 +76,3 @@ export function InvoiceStatusBadge({ status, className }: { status: InvoiceStatu
     </span>
   )
 }
-
-export function PriorityBadge({ priority, className }: { priority: "routine" | "urgent" | "aog"; className?: string }) {
-  const styles = {
-    routine: "bg-zinc-800 text-zinc-400 border border-zinc-700",
-    urgent:  "bg-amber-900/40 text-amber-300 border border-amber-800/60",
-    aog:     "bg-red-600/80 text-white border border-red-500",
-  }
-  const labels = { routine: "Routine", urgent: "Urgent", aog: "AOG" }
-  return (
-    <span className={cn(BASE, styles[priority], className)}>
-      {labels[priority]}
-    </span>
-  )
-}
