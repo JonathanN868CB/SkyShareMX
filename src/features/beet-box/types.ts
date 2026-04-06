@@ -14,7 +14,6 @@ export type WOItemStatus =
 export type LogbookSection =
   | "Airframe" | "Engine 1" | "Engine 2" | "Propeller" | "APU" | "Other"
 
-export type Priority = "routine" | "urgent" | "aog"
 export type PartCondition = "new" | "overhauled" | "serviceable" | "as_removed"
 export type TransactionType = "receipt" | "issue" | "return" | "adjustment" | "scrap"
 export type POStatus = "draft" | "sent" | "partial" | "received" | "closed" | "voided"
@@ -81,7 +80,6 @@ export interface WorkOrder {
   // Resolved display ref (populated by join in service)
   aircraft: AircraftRef | null
   status: WOStatus
-  priority: Priority
   woType: string
   description: string | null
   openedBy: string | null       // profile id
@@ -96,6 +94,7 @@ export interface WorkOrder {
   mechanics: Mechanic[]
   items: WOItem[]
   statusHistory: WOStatusChange[]
+  auditTrail: AuditEntry[]
   createdAt: string
   updatedAt: string
 }
@@ -158,6 +157,35 @@ export interface WOStatusChange {
   changedBy: string | null
   changedAt: string
   notes: string | null
+}
+
+export type AuditEntryType =
+  | "status_change"
+  | "sign_off"
+  | "sign_off_cleared"
+  | "labor_added"
+  | "labor_removed"
+  | "part_added"
+  | "part_removed"
+  | "item_status_change"
+  | "text_edit"
+  | "item_created"
+  | "wo_created"
+
+export interface AuditEntry {
+  id: string
+  workOrderId: string
+  entryType: AuditEntryType
+  actorId: string | null
+  actorName: string | null
+  summary: string
+  detail: string | null
+  fieldName: string | null
+  oldValue: string | null
+  newValue: string | null
+  itemId: string | null
+  itemNumber: number | null
+  createdAt: string
 }
 
 // ─── Inventory ────────────────────────────────────────────────────────────────

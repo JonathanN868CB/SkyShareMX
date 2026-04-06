@@ -1,10 +1,12 @@
 import { useState, useRef, useMemo, useEffect, useCallback, Fragment } from "react"
+import { createPortal } from "react-dom"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
-  ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight,
+  ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight, ChevronLeft,
   Plus, X, Clock, UserX, Package,
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
   BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
+  ShieldCheck, Wrench, ChevronDown,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
@@ -16,15 +18,16 @@ import {
   addItemPart, removeItemPart, clockLabor, deleteLabor,
   getParts, getTechnicians, getMyProfileId, getMyProfile,
   getLogbookEntries, getOrCreateDraftLogbookEntry, upsertEntrySignatory, addSignatoryLine, updateLogbookEntry,
+  addAuditEntry,
 } from "../../services"
 import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS } from "../../constants"
 import type {
   WorkOrder, WOStatus, WOItem, WOItemPart,
   WOItemLabor, WOItemStatus, LogbookSection,
-  InventoryPart, Mechanic, LogbookEntry,
+  InventoryPart, Mechanic, LogbookEntry, AuditEntry, AuditEntryType,
 } from "../../types"
 import { supabase } from "@/lib/supabase"
-import { WOStatusBadge, PriorityBadge } from "../../shared/StatusBadge"
+import { WOStatusBadge } from "../../shared/StatusBadge"
 
 // ─── Status pipeline ──────────────────────────────────────────────────────────
 const NEXT_STATUS: Partial<Record<WOStatus, WOStatus>> = {
@@ -36,6 +39,15 @@ const NEXT_STATUS_LABEL: Partial<Record<WOStatus, string>> = {
 }
 const PREV_STATUS: Partial<Record<WOStatus, WOStatus>> = {
   open: "draft", in_review: "open", billing: "in_review",
+}
+const STATUS_GLOW_COLOR: Record<WOStatus, string> = {
+  draft:            "rgba(161,161,170,0.55)",
+  open:             "rgba(147,197,253,0.55)",
+  waiting_on_parts: "rgba(252,211,77,0.55)",
+  in_review:        "rgba(216,180,254,0.55)",
+  billing:          "rgba(253,186,116,0.55)",
+  completed:        "rgba(110,231,183,0.55)",
+  void:             "rgba(252,165,165,0.55)",
 }
 
 // ─── Section config ───────────────────────────────────────────────────────────
@@ -161,13 +173,264 @@ function Toolbar({ textareaRef, onUpdate, noBorder }: {
   )
 }
 
+// ─── Audit Trail Panel ────────────────────────────────────────────────────────
+
+const AUDIT_ENTRY_STYLE: Record<string, { dot: string; icon: React.ElementType; iconColor: string }> = {
+  status_change:    { dot: "#d4a017", icon: ChevronRight,  iconColor: "#d4a017" },
+  sign_off:         { dot: "#34d399", icon: CheckCircle2,  iconColor: "#34d399" },
+  sign_off_cleared: { dot: "#fb923c", icon: AlertCircle,   iconColor: "#fb923c" },
+  labor_added:      { dot: "#60a5fa", icon: Clock,         iconColor: "#60a5fa" },
+  labor_removed:    { dot: "#6b7280", icon: Clock,         iconColor: "#6b7280" },
+  part_added:       { dot: "#2dd4bf", icon: Package,       iconColor: "#2dd4bf" },
+  part_removed:     { dot: "#6b7280", icon: Package,       iconColor: "#6b7280" },
+  item_status_change:{ dot: "#c084fc", icon: Circle,       iconColor: "#c084fc" },
+  text_edit:        { dot: "#6b7280", icon: FileText,      iconColor: "#6b7280" },
+  item_created:     { dot: "#93c5fd", icon: Plus,          iconColor: "#93c5fd" },
+  wo_created:       { dot: "#d4a017", icon: FileText,      iconColor: "#d4a017" },
+}
+
+function fmtAuditTime(iso: string) {
+  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+function AuditTrailPanel({ entries }: { entries: AuditEntry[] }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  // Group consecutive text_edit entries by itemId into collapsible blocks
+  type DisplayItem =
+    | { type: "entry"; entry: AuditEntry }
+    | { type: "text_group"; key: string; itemNumber: number | null; itemId: string | null; entries: AuditEntry[] }
+
+  const display: DisplayItem[] = []
+  let i = 0
+  while (i < entries.length) {
+    const e = entries[i]
+    if (e.entryType === "text_edit") {
+      // Collect consecutive text_edits for the same item
+      const groupEntries: AuditEntry[] = [e]
+      let j = i + 1
+      while (j < entries.length && entries[j].entryType === "text_edit" && entries[j].itemId === e.itemId) {
+        groupEntries.push(entries[j])
+        j++
+      }
+      if (groupEntries.length === 1) {
+        display.push({ type: "entry", entry: e })
+      } else {
+        const key = `tg-${e.itemId}-${e.createdAt}`
+        display.push({ type: "text_group", key, itemNumber: e.itemNumber, itemId: e.itemId, entries: groupEntries })
+      }
+      i = j
+    } else {
+      display.push({ type: "entry", entry: e })
+      i++
+    }
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex-1 overflow-y-auto p-8 flex items-center justify-center">
+        <div className="text-center">
+          <ShieldCheck className="w-10 h-10 text-white/10 mx-auto mb-3" />
+          <p className="text-white/25 text-sm">No audit entries yet.</p>
+          <p className="text-white/15 text-xs mt-1">Actions on this work order will be recorded here.</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-8 max-w-2xl">
+      <div className="flex items-center gap-2 mb-6">
+        <ShieldCheck className="w-4 h-4" style={{ color: "var(--skyshare-gold)" }} />
+        <span className="text-white/40 text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>
+          Audit Trail — {entries.length} event{entries.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      <div className="relative pl-7">
+        <div className="absolute left-2.5 top-1 bottom-1 w-px bg-white/8" />
+        <div className="space-y-5">
+          {display.map((item, idx) => {
+            if (item.type === "text_group") {
+              const expanded = expandedGroups.has(item.key)
+              const newest = item.entries[0]
+              return (
+                <div key={item.key} className="relative">
+                  <div className="absolute -left-5 top-1.5 w-2.5 h-2.5 rounded-full border border-white/20 bg-zinc-800" />
+                  <button
+                    className="w-full text-left flex items-center gap-2 group"
+                    onClick={() => setExpandedGroups(prev => {
+                      const next = new Set(prev)
+                      expanded ? next.delete(item.key) : next.add(item.key)
+                      return next
+                    })}
+                  >
+                    <FileText className="w-3 h-3 flex-shrink-0 text-white/25" />
+                    <span className="text-xs text-white/40 group-hover:text-white/60 transition-colors">
+                      {item.entries.length} field change{item.entries.length !== 1 ? "s" : ""} on Item #{item.itemNumber ?? "?"}
+                    </span>
+                    <ChevronDown className={cn("w-3 h-3 text-white/25 transition-transform ml-auto flex-shrink-0", expanded && "rotate-180")} />
+                    <span className="text-white/20 text-xs flex-shrink-0">{fmtAuditTime(newest.createdAt)}</span>
+                  </button>
+                  {expanded && (
+                    <div className="mt-2 ml-5 space-y-2 border-l border-white/[0.07] pl-3">
+                      {item.entries.map(e => (
+                        <div key={e.id} className="text-xs">
+                          <span className="text-white/40 font-medium">{e.fieldName?.replace(/_/g, " ") ?? "field"}</span>
+                          {e.oldValue !== null && (
+                            <span className="ml-2">
+                              <span className="text-white/25 line-through">{e.oldValue.slice(0, 60)}{e.oldValue.length > 60 ? "…" : ""}</span>
+                              <span className="text-white/25 mx-1">→</span>
+                              <span className="text-white/50">{(e.newValue ?? "").slice(0, 60)}{(e.newValue?.length ?? 0) > 60 ? "…" : ""}</span>
+                            </span>
+                          )}
+                          <span className="text-white/20 ml-2">{fmtAuditTime(e.createdAt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            }
+
+            const e = item.entry
+            const style = AUDIT_ENTRY_STYLE[e.entryType] ?? AUDIT_ENTRY_STYLE.text_edit
+            const Icon = style.icon
+            const isFirst = idx === 0
+            return (
+              <div key={e.id} className="relative">
+                <div
+                  className="absolute -left-5 top-1.5 w-2.5 h-2.5 rounded-full"
+                  style={{ background: isFirst ? style.dot : "hsl(0,0%,28%)", boxShadow: isFirst ? `0 0 6px ${style.dot}` : "none" }}
+                />
+                <div className="flex items-start gap-3">
+                  <Icon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: style.iconColor, opacity: isFirst ? 1 : 0.55 }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white/75 text-sm leading-snug">{e.summary}</p>
+                    {e.detail && <p className="text-white/35 text-xs mt-0.5 truncate">{e.detail}</p>}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    {e.actorName && <p className="text-white/45 text-xs font-medium">{e.actorName}</p>}
+                    <p className="text-white/25 text-xs">{fmtAuditTime(e.createdAt)}</p>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Mechanic Select ─────────────────────────────────────────────────────────
+function MechanicSelect({ mechanics, value, onChange }: { mechanics: Mechanic[]; value: string; onChange: (name: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [rect, setRect] = useState<DOMRect | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      const t = e.target as Node
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(t) &&
+        triggerRef.current  && !triggerRef.current.contains(t)
+      ) setOpen(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [])
+
+  function handleToggle() {
+    if (!open && triggerRef.current) setRect(triggerRef.current.getBoundingClientRect())
+    setOpen(o => !o)
+  }
+
+  const selected = mechanics.find(m => m.name === value)
+
+  const dropdown = open && rect ? createPortal(
+    <div
+      ref={dropdownRef}
+      style={{
+        position: "fixed",
+        bottom: window.innerHeight - rect.top + 4,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 9999,
+        background: "hsl(0,0%,12%)",
+        border: "1px solid hsl(0,0%,26%)",
+        borderRadius: "10px",
+        overflow: "hidden",
+        boxShadow: "0 12px 32px rgba(0,0,0,0.7), 0 2px 8px rgba(0,0,0,0.4)",
+      }}
+    >
+      {mechanics.length === 0 ? (
+        <div className="px-3 py-3 text-white/30 text-xs text-center">No mechanics on file</div>
+      ) : mechanics.map(m => (
+        <button
+          key={m.id}
+          type="button"
+          onClick={() => { onChange(m.name); setOpen(false) }}
+          className="w-full text-left px-3 py-2.5 flex items-center gap-2.5 transition-colors"
+          style={{
+            background: value === m.name ? "rgba(255,255,255,0.08)" : "transparent",
+            color: value === m.name ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.65)",
+            borderBottom: "1px solid hsl(0,0%,18%)",
+          }}
+          onMouseEnter={e => { if (value !== m.name) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)" }}
+          onMouseLeave={e => { if (value !== m.name) (e.currentTarget as HTMLElement).style.background = "transparent" }}
+        >
+          {m.certType && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+              style={{ background: "rgba(212,160,23,0.18)", color: "var(--skyshare-gold)" }}>
+              {m.certType}
+            </span>
+          )}
+          <span className="text-sm">{m.name}</span>
+          {value === m.name && <Check className="w-3.5 h-3.5 ml-auto flex-shrink-0 text-emerald-400" />}
+        </button>
+      ))}
+    </div>,
+    document.body
+  ) : null
+
+  return (
+    <div>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={handleToggle}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors"
+        style={{
+          background: "hsl(0,0%,11%)",
+          border: `1px solid ${open ? "hsl(0,0%,32%)" : "hsl(0,0%,22%)"}`,
+          color: value ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.28)",
+        }}
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          {selected?.certType && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+              style={{ background: "rgba(212,160,23,0.18)", color: "var(--skyshare-gold)" }}>
+              {selected.certType}
+            </span>
+          )}
+          <span className="truncate">{selected?.name ?? "Select mechanic…"}</span>
+        </span>
+        <ChevronDown className={cn("w-3.5 h-3.5 flex-shrink-0 text-white/25 transition-transform duration-150", !open && "rotate-180")} />
+      </button>
+      {dropdown}
+    </div>
+  )
+}
+
 // ─── Item Detail Panel ────────────────────────────────────────────────────────
 interface ItemDetailPanelProps {
   item: WOItem
   isLocked: boolean
   sectionColor: string
   onPatch: (patch: Partial<WOItem>) => void
-  onPersist: (fields: Partial<WOItem>) => void
+  onPersist: (fields: Partial<WOItem>, oldFields?: Partial<WOItem>) => void
   onSignOff: () => void
   signOffError: string | null
   onClearSignOffError: () => void
@@ -196,6 +459,7 @@ function ItemDetailPanel({
 }: ItemDetailPanelProps) {
   const discRef = useRef<HTMLTextAreaElement>(null)
   const corrRef = useRef<HTMLTextAreaElement>(null)
+  const savedOnFocus = useRef<Partial<WOItem>>({})
   const [showInventoryPicker, setShowInventoryPicker] = useState(false)
   const [invSearch, setInvSearch] = useState("")
 
@@ -244,9 +508,9 @@ function ItemDetailPanel({
   return (
     <div className="flex flex-col h-full">
 
-      {/* ── Status selector — centered, full-size ────────────────────── */}
+      {/* ── Status selector + sign-off ────────────────────────────────── */}
       <div
-        className="px-5 py-4 flex items-center justify-center gap-2.5 flex-shrink-0"
+        className="px-4 py-2.5 flex items-center justify-start gap-1.5 flex-shrink-0"
         style={{ background: "hsl(0,0%,10%)", borderBottom: "1px solid hsl(0,0%,17%)" }}
       >
         {(Object.entries(ITEM_STATUS_CONFIG) as [WOItemStatus, typeof ITEM_STATUS_CONFIG[WOItemStatus]][]).map(([key, cfg]) => {
@@ -256,21 +520,74 @@ function ItemDetailPanel({
             <button
               key={key}
               disabled={isLocked}
-              onClick={() => { onPatch({ itemStatus: key }); onPersist({ itemStatus: key }) }}
+              onClick={() => { const prev = item.itemStatus; onPatch({ itemStatus: key }); onPersist({ itemStatus: key }, { itemStatus: prev }) }}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all",
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
                 active
                   ? cn(cfg.activeBg, cfg.color, cfg.border)
                   : "bg-transparent text-white/30 border-white/[0.07] hover:border-white/20 hover:text-white/55",
                 isLocked && "opacity-50 cursor-default"
               )}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-3.5 h-3.5" />
               {cfg.label}
             </button>
           )
         })}
+
+        {/* ── Sign-off — right side ── */}
+        {item.signOffRequired && (
+          <div className="ml-auto flex items-center gap-2">
+            {item.signedOffBy ? (
+              <>
+                <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "rgba(52,211,153,0.85)" }}>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  {item.signedOffBy}
+                </span>
+                {!isLocked && (
+                  <button
+                    onClick={onSignOff}
+                    className="text-white/25 hover:text-white/55 text-xs transition-colors"
+                  >
+                    Undo
+                  </button>
+                )}
+              </>
+            ) : !isLocked ? (() => {
+              const missingCode = !item.refCode?.trim()
+              return (
+                <button
+                  onClick={missingCode ? undefined : onSignOff}
+                  disabled={missingCode}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition-all disabled:cursor-not-allowed"
+                  style={missingCode ? {
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(255,255,255,0.03)",
+                    color: "rgba(255,255,255,0.2)",
+                  } : {
+                    border: "1px solid rgba(52,211,153,0.35)",
+                    background: "rgba(52,211,153,0.07)",
+                    color: "rgba(52,211,153,0.85)",
+                  }}
+                  title={missingCode ? "Add a Ref / Task Code before signing off" : undefined}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Sign Off
+                </button>
+              )
+            })() : null}
+          </div>
+        )}
       </div>
+
+      {/* ── Sign-off error strip ─────────────────────────────────────── */}
+      {signOffError && (
+        <div className="flex items-center gap-2 px-4 py-1.5 text-xs flex-shrink-0" style={{ background: "rgba(239,68,68,0.08)", borderBottom: "1px solid rgba(239,68,68,0.2)", color: "rgba(239,68,68,0.85)" }}>
+          <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+          <span className="flex-1">{signOffError}</span>
+          <button onClick={onClearSignOffError} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+        </div>
+      )}
 
       {/* ── Scrollable body ───────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
@@ -290,6 +607,8 @@ function ItemDetailPanel({
                 borderBottom: "1px solid rgba(251,146,60,0.2)",
               }}
             >
+              <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(251,146,60,0.9)" }} />
+              <span className="text-sm font-bold uppercase tracking-widest" style={{ color: "rgba(251,146,60,0.9)" }}>Item / Discrepancy</span>
               <span
                 className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded"
                 style={{ background: sectionColor + "22", color: sectionColor }}
@@ -308,12 +627,49 @@ function ItemDetailPanel({
                 <span className="text-white/35 text-xs ml-auto">{clockedTotal.toFixed(1)} hrs</span>
               )}
             </div>
-            {!isLocked && <Toolbar textareaRef={discRef} onUpdate={v => onPatch({ discrepancy: v })} />}
+            {!isLocked && (
+              <div className="flex items-center border-b border-white/[0.07]">
+                <div className="flex items-center gap-3 px-4 py-2.5 border-r border-white/[0.07]">
+                  <div className="flex flex-col gap-0.5">
+                    <label
+                      htmlFor={`ref-code-disc-${item.id}`}
+                      className="text-[9px] font-bold uppercase tracking-[0.2em] whitespace-nowrap"
+                      style={{ color: item.refCode?.trim() ? "rgba(251,146,60,0.45)" : "rgba(251,146,60,0.75)", fontFamily: "var(--font-heading)" }}
+                    >
+                      Ref / Task Code
+                    </label>
+                    {!item.refCode?.trim() && (
+                      <span className="text-[8px] whitespace-nowrap" style={{ color: "rgba(251,146,60,0.4)" }}>
+                        Required to sign off
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    id={`ref-code-disc-${item.id}`}
+                    type="text"
+                    value={item.refCode}
+                    onChange={e => onPatch({ refCode: e.target.value })}
+                    onFocus={() => { savedOnFocus.current.refCode = item.refCode }}
+                    onBlur={e => onPersist({ refCode: e.target.value }, { refCode: savedOnFocus.current.refCode })}
+                    placeholder="05-CUS-14"
+                    className="text-sm font-mono font-semibold rounded-md px-3 py-1.5 focus:outline-none transition-all"
+                    style={{
+                      width: "148px",
+                      background: item.refCode?.trim() ? "rgba(251,146,60,0.05)" : "rgba(251,146,60,0.07)",
+                      color: item.refCode?.trim() ? "rgba(251,146,60,0.95)" : "rgba(255,255,255,0.55)",
+                      border: "1px solid transparent",
+                    }}
+                  />
+                </div>
+                <Toolbar textareaRef={discRef} onUpdate={v => onPatch({ discrepancy: v })} noBorder />
+              </div>
+            )}
             <textarea
               ref={discRef}
               value={item.discrepancy}
               onChange={e => onPatch({ discrepancy: e.target.value })}
-              onBlur={e => onPersist({ discrepancy: e.target.value })}
+              onFocus={() => { savedOnFocus.current.discrepancy = item.discrepancy }}
+              onBlur={e => onPersist({ discrepancy: e.target.value }, { discrepancy: savedOnFocus.current.discrepancy })}
               disabled={isLocked}
               rows={6}
               placeholder="Describe the discrepancy or task…"
@@ -373,7 +729,8 @@ function ItemDetailPanel({
                     type="text"
                     value={item.refCode}
                     onChange={e => onPatch({ refCode: e.target.value })}
-                    onBlur={e => onPersist({ refCode: e.target.value })}
+                    onFocus={() => { savedOnFocus.current.refCode = item.refCode }}
+                    onBlur={e => onPersist({ refCode: e.target.value }, { refCode: savedOnFocus.current.refCode })}
                     placeholder="05-CUS-14"
                     className={cn(
                       "text-sm font-mono font-semibold rounded-md px-3 py-1.5 focus:outline-none transition-all",
@@ -394,7 +751,8 @@ function ItemDetailPanel({
               ref={corrRef}
               value={item.correctiveAction}
               onChange={e => onPatch({ correctiveAction: e.target.value })}
-              onBlur={e => onPersist({ correctiveAction: e.target.value })}
+              onFocus={() => { savedOnFocus.current.correctiveAction = item.correctiveAction }}
+              onBlur={e => onPersist({ correctiveAction: e.target.value }, { correctiveAction: savedOnFocus.current.correctiveAction })}
               disabled={isLocked}
               rows={6}
               placeholder={isLocked ? "No corrective action recorded." : "What was done to correct the discrepancy…"}
@@ -538,14 +896,11 @@ function ItemDetailPanel({
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Mechanic</label>
-                  <select
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30"
+                  <MechanicSelect
+                    mechanics={mechanics}
                     value={newLabor.mechName}
-                    onChange={e => setNewLabor(n => ({ ...n, mechName: e.target.value }))}
-                  >
-                    <option value="">Select…</option>
-                    {mechanics.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                  </select>
+                    onChange={name => setNewLabor(n => ({ ...n, mechName: name }))}
+                  />
                 </div>
                 <div>
                   <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Hours</label>
@@ -868,84 +1223,6 @@ function ItemDetailPanel({
         </div>{/* end parts card */}
         </div>{/* end parts outer wrapper */}
 
-        {/* Sign-off */}
-        {item.signOffRequired && (
-          <div className="px-6 py-5 space-y-3">
-            {signOffError && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "rgba(239,68,68,0.9)" }}>
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <span className="font-semibold">Sign-off error: </span>{signOffError}
-                </div>
-                <button onClick={onClearSignOffError} className="opacity-50 hover:opacity-100 flex-shrink-0"><X className="w-3 h-3" /></button>
-              </div>
-            )}
-            <div>
-            {item.signedOffBy ? (
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                  <div>
-                    <p className="text-emerald-400 font-semibold text-base">Signed Off</p>
-                    <p className="text-white/50 text-sm">
-                      {item.signedOffBy}{item.signedOffAt ? ` — ${fmtDate(item.signedOffAt)}` : ""}
-                    </p>
-                  </div>
-                </div>
-                {!isLocked && (
-                  <button
-                    onClick={onSignOff}
-                    className="text-white/30 hover:text-white/60 text-sm transition-colors"
-                  >
-                    Undo sign-off
-                  </button>
-                )}
-              </div>
-            ) : (
-              !isLocked && (() => {
-                const missingCode = !item.refCode?.trim()
-                return (
-                  <div className="space-y-2">
-                    {missingCode && (
-                      <p className="flex items-center gap-2 text-xs px-1" style={{ color: "rgba(251,146,60,0.8)" }}>
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                        A Ref Code (TRACSALL / CAMP) is required before signing off.
-                      </p>
-                    )}
-                    <button
-                      onClick={missingCode ? undefined : onSignOff}
-                      disabled={missingCode}
-                      className="w-full flex items-center justify-center gap-3 py-5 rounded-xl text-base font-bold transition-all disabled:cursor-not-allowed"
-                      style={missingCode ? {
-                        border: "2px solid rgba(255,255,255,0.08)",
-                        background: "rgba(255,255,255,0.03)",
-                        color: "rgba(255,255,255,0.2)",
-                      } : {
-                        border: "2px solid rgba(52,211,153,0.4)",
-                        background: "rgba(52,211,153,0.06)",
-                        color: "rgba(52,211,153,0.85)",
-                      }}
-                      onMouseEnter={e => { if (!missingCode) {
-                        (e.currentTarget as HTMLButtonElement).style.border = "2px solid rgba(52,211,153,0.7)"
-                        ;(e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.12)"
-                        ;(e.currentTarget as HTMLButtonElement).style.color = "#6ee7b7"
-                      }}}
-                      onMouseLeave={e => { if (!missingCode) {
-                        (e.currentTarget as HTMLButtonElement).style.border = "2px solid rgba(52,211,153,0.4)"
-                        ;(e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.06)"
-                        ;(e.currentTarget as HTMLButtonElement).style.color = "rgba(52,211,153,0.85)"
-                      }}}
-                    >
-                      <CheckCircle2 className="w-6 h-6" />
-                      Sign Off This Item
-                    </button>
-                  </div>
-                )
-              })()
-            )}
-            </div>
-          </div>
-        )}
 
         <div className="h-8" />
       </div>
@@ -984,7 +1261,6 @@ export default function WorkOrderDetail() {
       status:            "draft",
       woType:            importState?.woType ?? "Scheduled Maintenance — Traxxall Import",
       description:       importState?.description ?? null,
-      priority:          "routine",
       openedBy:          null,
       openedByName:      "Traxxall Import",
       openedAt:          new Date().toISOString(),
@@ -1018,7 +1294,8 @@ export default function WorkOrderDetail() {
   const [mechanics, setMechanics] = useState<Mechanic[]>([])
   const [showCompleteModal, setShowCompleteModal] = useState(false)
   const [notes, setNotes] = useState("")
-  const [activeTab, setActiveTab] = useState<"items" | "history" | "notes" | "logbook" | "invoice">("items")
+  const [activeTab, setActiveTab] = useState<"items" | "notes" | "logbook" | "invoice" | "audit_trail">("items")
+  const [myProfile, setMyProfile] = useState<{ id: string; name: string } | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [visibleSections, setVisibleSections] = useState<LogbookSection[]>(
     importedSections ?? ["Airframe", "Engine 1", "Propeller"]
@@ -1032,6 +1309,10 @@ export default function WorkOrderDetail() {
   const invoicePrintRef = useRef<HTMLDivElement>(null)
   const [pdfExporting, setPdfExporting] = useState<"logbook" | "invoice" | null>(null)
   const [pdfPreview,   setPdfPreview]   = useState<{ url: string; filename: string } | null>(null)
+  const [slideDir, setSlideDir] = useState<"left" | "right" | null>(null)
+  const slideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [isTransitioning, setIsTransitioning] = useState(false)
+  const [transitionColor, setTransitionColor] = useState<string>("rgba(255,255,255,0.3)")
 
   async function handlePreviewPdf(type: "logbook" | "invoice", woNumber: string) {
     if (type === "logbook" && !logbookPrintRef.current) return
@@ -1111,6 +1392,7 @@ export default function WorkOrderDetail() {
     Promise.all([getParts(), getTechnicians()])
       .then(([parts, techs]) => { setInventoryParts(parts); setMechanics(techs) })
       .catch(() => {})
+    getMyProfile().then(p => { if (p) setMyProfile({ id: p.id, name: p.name }) }).catch(() => {})
   }, [loadWO, loadDraftLogbookEntries])
 
   const [addingToSection, setAddingToSection] = useState<LogbookSection | null>(null)
@@ -1169,8 +1451,40 @@ export default function WorkOrderDetail() {
     setWO(prev => prev ? { ...prev, items: prev.items.map(i => i.id === itemId ? { ...i, ...patch } : i) } : prev)
   }
 
+  // ── Audit trail helper ────────────────────────────────────────────────────────
+  function auditLog(params: {
+    entryType: string; summary: string; detail?: string | null
+    fieldName?: string | null; oldValue?: string | null; newValue?: string | null
+    itemId?: string | null; itemNumber?: number | null
+  }) {
+    if (!wo) return
+    // Optimistic: show entry immediately in local state
+    const optimistic: AuditEntry = {
+      id:          `opt-${Date.now()}-${Math.random()}`,
+      workOrderId: wo.id,
+      entryType:   params.entryType as AuditEntryType,
+      actorId:     myProfile?.id   ?? null,
+      actorName:   myProfile?.name ?? null,
+      summary:     params.summary,
+      detail:      params.detail    ?? null,
+      fieldName:   params.fieldName ?? null,
+      oldValue:    params.oldValue  ?? null,
+      newValue:    params.newValue  ?? null,
+      itemId:      params.itemId    ?? null,
+      itemNumber:  params.itemNumber ?? null,
+      createdAt:   new Date().toISOString(),
+    }
+    setWO(prev => prev ? { ...prev, auditTrail: [optimistic, ...prev.auditTrail] } : prev)
+    // Persist to DB in background (loadWO will later replace the optimistic entry with the real one)
+    void addAuditEntry(wo.id, {
+      ...params,
+      actorId:   myProfile?.id   ?? null,
+      actorName: myProfile?.name ?? null,
+    })
+  }
+
   // Persist specific fields to DB without a full refetch (no loadWO → no data wipe)
-  async function persistItemFields(itemId: string, fields: Partial<WOItem>) {
+  async function persistItemFields(itemId: string, fields: Partial<WOItem>, oldFields?: Partial<WOItem>) {
     if (isLocked) return
     try {
       await updateWOItemFields(itemId, {
@@ -1185,6 +1499,37 @@ export default function WorkOrderDetail() {
         ...(fields.noPartsRequired     !== undefined && { noPartsRequired: fields.noPartsRequired }),
         ...(fields.signOffRequired     !== undefined && { signOffRequired: fields.signOffRequired }),
       })
+
+      if (oldFields) {
+        const item = wo?.items.find(i => i.id === itemId)
+        // Item status change
+        if (fields.itemStatus !== undefined && oldFields.itemStatus !== undefined && fields.itemStatus !== oldFields.itemStatus) {
+          auditLog({
+            entryType: "item_status_change",
+            summary: `Item #${item?.itemNumber ?? "?"} status: ${ITEM_STATUS_CONFIG[oldFields.itemStatus!].label} → ${ITEM_STATUS_CONFIG[fields.itemStatus].label}`,
+            oldValue: oldFields.itemStatus, newValue: fields.itemStatus,
+            itemId, itemNumber: item?.itemNumber ?? null,
+          })
+        }
+        // Text field changes
+        const TEXT_FIELDS: { key: keyof WOItem; label: string; dbName: string }[] = [
+          { key: "refCode",          label: "Ref Code",          dbName: "ref_code"          },
+          { key: "discrepancy",      label: "Discrepancy",       dbName: "discrepancy"       },
+          { key: "correctiveAction", label: "Corrective Action", dbName: "corrective_action" },
+        ]
+        for (const f of TEXT_FIELDS) {
+          const nv = fields[f.key] as string | undefined
+          const ov = oldFields[f.key] as string | undefined
+          if (nv !== undefined && ov !== undefined && nv !== ov) {
+            auditLog({
+              entryType: "text_edit",
+              summary: `${f.label} edited on Item #${item?.itemNumber ?? "?"}`,
+              fieldName: f.dbName, oldValue: ov, newValue: nv,
+              itemId, itemNumber: item?.itemNumber ?? null,
+            })
+          }
+        }
+      }
     } catch (err) {
       console.error("Failed to save item fields:", err)
     }
@@ -1192,14 +1537,29 @@ export default function WorkOrderDetail() {
 
   async function removeLaborEntry(itemId: string, laborId: string) {
     if (isLocked) return
-    patchItem(itemId, { labor: (wo?.items.find(i => i.id === itemId)?.labor ?? []).filter(e => e.id !== laborId) })
+    const item = wo?.items.find(i => i.id === itemId)
+    const entry = item?.labor.find(e => e.id === laborId)
+    patchItem(itemId, { labor: (item?.labor ?? []).filter(e => e.id !== laborId) })
     await deleteLabor(laborId)
+    if (entry) auditLog({
+      entryType: "labor_removed",
+      summary: `${entry.hours}h labor removed from Item #${item?.itemNumber ?? "?"}`,
+      detail: `${entry.mechanicName}`,
+      itemId, itemNumber: item?.itemNumber ?? null,
+    })
   }
 
   async function removePartEntry(itemId: string, partId: string) {
     if (isLocked) return
-    patchItem(itemId, { parts: (wo?.items.find(i => i.id === itemId)?.parts ?? []).filter(p => p.id !== partId) })
+    const item = wo?.items.find(i => i.id === itemId)
+    const part = item?.parts.find(p => p.id === partId)
+    patchItem(itemId, { parts: (item?.parts ?? []).filter(p => p.id !== partId) })
     await removeItemPart(partId)
+    if (part) auditLog({
+      entryType: "part_removed",
+      summary: `Part ${part.partNumber} removed from Item #${item?.itemNumber ?? "?"}`,
+      itemId, itemNumber: item?.itemNumber ?? null,
+    })
   }
 
   async function toggleSignOff(itemId: string) {
@@ -1212,6 +1572,7 @@ export default function WorkOrderDetail() {
       // Unsign
       patchItem(itemId, { signedOffBy: null, signedOffAt: null, itemStatus: "done" })
       await clearSignOff(itemId)
+      auditLog({ entryType: "sign_off_cleared", summary: `Sign-off cleared on Item #${item.itemNumber}`, detail: `Previously signed by ${item.signedOffBy}`, itemId, itemNumber: item.itemNumber })
       return
     }
 
@@ -1258,6 +1619,12 @@ export default function WorkOrderDetail() {
         await addSignatoryLine(entry.id, lineText, signatory.id, item.id, item.refCode?.trim() ?? "")
         await loadDraftLogbookEntries()
       }
+      auditLog({
+        entryType: "sign_off",
+        summary: `Item #${item.itemNumber} signed off`,
+        detail: `Ref: ${item.refCode || "—"} · ${item.category}`,
+        itemId, itemNumber: item.itemNumber,
+      })
     } catch (err: any) {
       console.error("Sign-off failed:", err)
       setSignOffError(err?.message ?? "Sign-off failed — check console for details")
@@ -1285,6 +1652,7 @@ export default function WorkOrderDetail() {
     setSelectedItemId(savedItem.id)
     setNewItem({ category: "", taskNumber: "", discrepancy: "", correctiveAction: "", hours: "", laborRate: "125", shippingCost: "0", outsideServicesCost: "0" })
     setAddingToSection(null)
+    auditLog({ entryType: "item_created", summary: `Item #${savedItem.itemNumber} created`, detail: savedItem.category, itemId: savedItem.id, itemNumber: savedItem.itemNumber })
   }
 
   async function addPart(itemId: string) {
@@ -1295,9 +1663,16 @@ export default function WorkOrderDetail() {
       qty: parseFloat(newPart.qty) || 1,
       unitPrice: parseFloat(newPart.unitPrice) || 0,
     })
-    patchItem(itemId, { parts: [...(wo.items.find(i => i.id === itemId)?.parts ?? []), saved] })
+    const item = wo.items.find(i => i.id === itemId)
+    patchItem(itemId, { parts: [...(item?.parts ?? []), saved] })
     setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" })
     setAddingPartToItem(null)
+    auditLog({
+      entryType: "part_added",
+      summary: `Part ${saved.partNumber} added to Item #${item?.itemNumber ?? "?"}`,
+      detail: `${saved.qty}× ${saved.description || saved.partNumber} @ $${saved.unitPrice.toFixed(2)}`,
+      itemId, itemNumber: item?.itemNumber ?? null,
+    })
   }
 
   async function addLaborEntry(itemId: string) {
@@ -1320,32 +1695,66 @@ export default function WorkOrderDetail() {
     }
     setNewLabor({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
     setAddingLaborToItem(null)
+    auditLog({
+      entryType: "labor_added",
+      summary: `${saved.hours}h labor logged on Item #${item?.itemNumber ?? "?"}`,
+      detail: saved.mechanicName,
+      itemId, itemNumber: item?.itemNumber ?? null,
+    })
+  }
+
+  function triggerSlide(dir: "left" | "right") {
+    if (slideTimerRef.current) clearTimeout(slideTimerRef.current)
+    setSlideDir(dir)
+    slideTimerRef.current = setTimeout(() => setSlideDir(null), 280)
   }
 
   async function advanceStatus() {
-    if (!wo) return
+    if (!wo || isTransitioning) return
     const next = NEXT_STATUS[wo.status]
     if (!next) return
     if (next === "completed") { setShowCompleteModal(true); return }
-    const profileId = await getMyProfileId()
-    await updateWorkOrderStatus(wo.id, next, profileId ?? "", `Advanced to ${WO_STATUS_LABELS[next]}`)
-    await loadWO()
+    triggerSlide("right")
+    setTransitionColor(STATUS_GLOW_COLOR[next])
+    setIsTransitioning(true)
+    setWO(prev => prev ? { ...prev, status: next } : prev)   // optimistic
+    const fromStatus = wo.status
+    try {
+      const profileId = await getMyProfileId()
+      await updateWorkOrderStatus(wo.id, next, profileId ?? "", `Advanced to ${WO_STATUS_LABELS[next]}`)
+      auditLog({ entryType: "status_change", summary: `Status: ${WO_STATUS_LABELS[fromStatus]} → ${WO_STATUS_LABELS[next]}`, oldValue: fromStatus, newValue: next })
+    } finally {
+      setIsTransitioning(false)
+    }
+    loadWO()  // background sync — no await, UI already updated
   }
 
   async function regressStatus() {
-    if (!wo) return
+    if (!wo || isTransitioning) return
     const prev = PREV_STATUS[wo.status]
     if (!prev) return
-    const profileId = await getMyProfileId()
-    await updateWorkOrderStatus(wo.id, prev, profileId ?? "", `Returned to ${WO_STATUS_LABELS[prev]}`)
-    await loadWO()
+    triggerSlide("left")
+    setTransitionColor(STATUS_GLOW_COLOR[prev])
+    setIsTransitioning(true)
+    const fromStatus = wo.status
+    setWO(w => w ? { ...w, status: prev } : w)               // optimistic
+    try {
+      const profileId = await getMyProfileId()
+      await updateWorkOrderStatus(wo.id, prev, profileId ?? "", `Returned to ${WO_STATUS_LABELS[prev]}`)
+      auditLog({ entryType: "status_change", summary: `Status: ${WO_STATUS_LABELS[fromStatus]} → ${WO_STATUS_LABELS[prev]}`, oldValue: fromStatus, newValue: prev })
+    } finally {
+      setIsTransitioning(false)
+    }
+    loadWO()  // background sync — no await, UI already updated
   }
 
   async function completeAndGenerate() {
     if (!wo) return
     setShowCompleteModal(false)
+    const fromStatus = wo.status
     const profileId = await getMyProfileId()
     await updateWorkOrderStatus(wo.id, "completed", profileId ?? "", "Work order completed and closed.")
+    auditLog({ entryType: "status_change", summary: `Status: ${WO_STATUS_LABELS[fromStatus]} → Completed`, oldValue: fromStatus, newValue: "completed" })
     await loadWO()
     setActiveTab("logbook")
   }
@@ -1353,8 +1762,10 @@ export default function WorkOrderDetail() {
   async function completeOnly() {
     if (!wo) return
     setShowCompleteModal(false)
+    const fromStatus = wo.status
     const profileId = await getMyProfileId()
     await updateWorkOrderStatus(wo.id, "completed", profileId ?? "", "Work order completed and closed.")
+    auditLog({ entryType: "status_change", summary: `Status: ${WO_STATUS_LABELS[fromStatus]} → Completed`, oldValue: fromStatus, newValue: "completed" })
     await loadWO()
   }
 
@@ -1372,96 +1783,274 @@ export default function WorkOrderDetail() {
         style={{
           background: "hsl(0,0%,10%)",
           borderBottom: "1px solid hsl(0,0%,18%)",
-          borderTop: "3px solid var(--skyshare-gold)",
         }}
       >
-        <div className="px-6 py-2.5 flex items-center gap-6">
-          {/* Left: back + WO ID + badges */}
-          <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-stretch">
+
+          {/* ── Left section — mirrors left rail width ── */}
+          <div className="w-72 flex-shrink-0 flex items-center gap-3 px-3 py-4" style={{ borderRight: "1px solid hsl(0,0%,18%)" }}>
             <button
               onClick={() => navigate("/app/beet-box/work-orders")}
-              className="text-white/40 hover:text-white/80 transition-colors p-1 rounded"
+              className="text-white/70 hover:text-white transition-colors p-2 rounded-lg flex-shrink-0"
+              style={{ border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.05)" }}
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-6 h-6" />
             </button>
-            <span
-              className="text-white text-xl font-bold tracking-wide"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              {wo.woNumber}
-            </span>
-            <WOStatusBadge status={wo.status} />
-            <PriorityBadge priority={wo.priority} />
+            <div className="flex flex-col items-center gap-0.5">
+              <span
+                className="text-white text-xl font-bold tracking-wide leading-none"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                <span className="text-white/40 font-normal text-base mr-1.5">WO#</span>{wo.woNumber}
+              </span>
+            </div>
           </div>
 
-          {/* Center: tabs */}
-          <div className="flex-1 flex items-center justify-center gap-1">
-            {[
-              { id: "items"   as const, label: "Work Items",     icon: FileText   },
-              { id: "history" as const, label: "History",         icon: Clock      },
-              { id: "notes"   as const, label: "Notes",          icon: StickyNote },
-              { id: "logbook" as const, label: "Logbook",        icon: BookOpen   },
-              { id: "invoice" as const, label: "Invoice",        icon: Receipt    },
-            ].map(tab => {
-              const Icon = tab.icon
-              const isActive = activeTab === tab.id
+          {/* ── Right section — triple widget + tabs ── */}
+          <div className="flex-1 flex items-center gap-5 px-5 py-4">
+
+            {/* ── Triple status widget ── */}
+            {(() => {
+              const SC: Record<WOStatus, { text: string; bg: string; border: string; glow: string }> = {
+                draft:            { text: "#a1a1aa", bg: "rgba(113,113,122,0.18)", border: "rgba(161,161,170,0.55)", glow: "rgba(161,161,170,0.2)"  },
+                open:             { text: "#93c5fd", bg: "rgba(96,165,250,0.14)",  border: "rgba(147,197,253,0.55)", glow: "rgba(147,197,253,0.2)"  },
+                waiting_on_parts: { text: "#fcd34d", bg: "rgba(252,211,77,0.13)",  border: "rgba(252,211,77,0.55)",  glow: "rgba(252,211,77,0.2)"   },
+                in_review:        { text: "#d8b4fe", bg: "rgba(216,180,254,0.13)", border: "rgba(216,180,254,0.55)", glow: "rgba(216,180,254,0.2)"  },
+                billing:          { text: "#fdba74", bg: "rgba(253,186,116,0.13)", border: "rgba(253,186,116,0.55)", glow: "rgba(253,186,116,0.2)"  },
+                completed:        { text: "#6ee7b7", bg: "rgba(110,231,183,0.13)", border: "rgba(110,231,183,0.55)", glow: "rgba(110,231,183,0.2)"  },
+                void:             { text: "#fca5a5", bg: "rgba(252,165,165,0.13)", border: "rgba(252,165,165,0.55)", glow: "rgba(252,165,165,0.2)"  },
+              }
+              const c       = SC[wo.status]
+              const hasPrev = !!PREV_STATUS[wo.status] && !isLocked
+              const hasNext = !!NEXT_STATUS[wo.status]
+              const cp      = hasPrev ? SC[PREV_STATUS[wo.status]!] : null
+              const cn2     = hasNext ? SC[NEXT_STATUS[wo.status]!] : null
+              const dimBorder = "rgba(255,255,255,0.1)"
               return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium transition-all rounded-md",
-                    isActive
-                      ? "text-white"
-                      : "text-white/35 hover:text-white/65 hover:bg-white/[0.04]"
-                  )}
-                  style={isActive ? {
-                    background: "rgba(212,160,23,0.1)",
-                    boxShadow: "inset 0 -2px 0 var(--skyshare-gold)",
-                  } : {}}
-                >
-                  <Icon className={cn("w-3.5 h-3.5", isActive && "text-[var(--skyshare-gold)]")} />
-                  {tab.label}
-                  {tab.id === "logbook" && draftLogbookEntries.length > 0 && (
-                    <span
-                      className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none"
-                      style={{ background: "rgba(52,211,153,0.2)", color: "#34d399" }}
-                    >
-                      {draftLogbookEntries.length}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
+                <div className="flex flex-col items-stretch flex-shrink-0 gap-0">
+                  {/* Loading bar — sits above the widget, invisible when idle */}
+                  <div style={{ height: "2px", position: "relative", overflow: "hidden", borderRadius: "1px" }}>
+                    {isTransitioning && (
+                      <div style={{
+                        position: "absolute", inset: 0,
+                        background: transitionColor,
+                        transformOrigin: "left center",
+                        animation: "status-bar-fill 1.8s ease-in-out forwards",
+                      }} />
+                    )}
+                  </div>
 
-          {/* Right: key stats */}
-          <div className="flex items-center gap-6 flex-shrink-0 text-sm">
-            <span style={{ color: "var(--skyshare-gold)" }} className="font-bold">{aircraft?.registration ?? wo.guestRegistration ?? "—"}</span>
-            <span className="text-white/50">{wo.items.length} items · {totalHours.toFixed(1)} hrs</span>
-            <span className="text-white font-semibold">${grandTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
-            {(itemsDone > 0 || itemsInProgress > 0 || itemsReview > 0) && (
-              <div className="flex items-center gap-2">
-                {itemsDone > 0       && <span className="text-emerald-400">✓{itemsDone}</span>}
-                {itemsInProgress > 0 && <span className="text-blue-400">●{itemsInProgress}</span>}
-                {itemsReview > 0     && <span className="text-amber-400">⚠{itemsReview}</span>}
-              </div>
+                  <div className="flex items-center">
+
+                  {/* ← Regress — C-shape opening right, prev status color */}
+                  <button
+                    onClick={hasPrev && !isTransitioning ? regressStatus : undefined}
+                    disabled={!hasPrev || isTransitioning}
+                    className="flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:brightness-125 active:brightness-90"
+                    style={{
+                      width: "92px",
+                      height: "40px",
+                      background: cp ? cp.bg : "rgba(255,255,255,0.02)",
+                      borderTop:    `2px solid ${cp ? cp.border : dimBorder}`,
+                      borderBottom: `2px solid ${cp ? cp.border : dimBorder}`,
+                      borderLeft:   `2px solid ${cp ? cp.border : dimBorder}`,
+                      borderRight:  "none",
+                      borderTopLeftRadius: "10px",
+                      borderBottomLeftRadius: "10px",
+                      opacity: hasPrev ? 1 : 0.28,
+                    }}
+                    title={hasPrev ? `Back to ${WO_STATUS_LABELS[PREV_STATUS[wo.status]!]}` : undefined}
+                  >
+                    <ChevronLeft className="w-5 h-5" style={{ color: cp ? cp.text : "rgba(255,255,255,0.25)" }} />
+                    <span className="text-[9px] font-medium uppercase tracking-wider leading-none" style={{ color: cp ? cp.text : "rgba(255,255,255,0.18)" }}>
+                      {hasPrev ? WO_STATUS_LABELS[PREV_STATUS[wo.status]!] : "—"}
+                    </span>
+                  </button>
+
+                  {/* ● Current status — full rounded rect, taller, z-index raises it over side caps */}
+                  <div
+                    className="flex items-center gap-3 px-7 hover:brightness-110 relative"
+                    style={{
+                      width: "180px",
+                      height: "56px",
+                      background: c.bg,
+                      border: `2px solid ${c.border}`,
+                      borderRadius: "10px",
+                      boxShadow: `inset 0 0 28px ${c.glow}, 0 0 14px ${c.glow}`,
+                      zIndex: 1,
+                      marginLeft: "-2px",
+                      marginRight: "-2px",
+                      overflow: "hidden",
+                      animation: slideDir === "right"
+                        ? "status-slide-right 0.22s ease-out forwards"
+                        : slideDir === "left"
+                          ? "status-slide-left 0.22s ease-out forwards"
+                          : undefined,
+                    }}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ background: c.text, boxShadow: `0 0 8px ${c.text}, 0 0 16px ${c.glow}` }}
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-50" style={{ color: c.text }}>Status</span>
+                      <span className="text-sm font-bold uppercase tracking-widest leading-tight" style={{ color: c.text, fontFamily: "var(--font-heading)" }}>
+                        {WO_STATUS_LABELS[wo.status]}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* → Advance — C-shape opening left, next status color */}
+                  <button
+                    onClick={hasNext && !isTransitioning ? advanceStatus : undefined}
+                    disabled={!hasNext || isTransitioning}
+                    className="flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:brightness-125 active:brightness-90"
+                    style={{
+                      width: "92px",
+                      height: "40px",
+                      background: cn2 ? cn2.bg : "rgba(255,255,255,0.02)",
+                      borderTop:    `2px solid ${cn2 ? cn2.border : dimBorder}`,
+                      borderBottom: `2px solid ${cn2 ? cn2.border : dimBorder}`,
+                      borderRight:  `2px solid ${cn2 ? cn2.border : dimBorder}`,
+                      borderLeft:   "none",
+                      borderTopRightRadius: "10px",
+                      borderBottomRightRadius: "10px",
+                      opacity: hasNext && !isTransitioning ? 1 : 0.28,
+                    }}
+                    title={hasNext ? NEXT_STATUS_LABEL[wo.status] : undefined}
+                  >
+                    <ChevronRight className="w-5 h-5" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.25)" }} />
+                    <span className="text-[9px] font-medium uppercase tracking-wider leading-none" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.18)" }}>
+                      {hasNext ? WO_STATUS_LABELS[NEXT_STATUS[wo.status]!] : "—"}
+                    </span>
+                  </button>
+
+                  </div>{/* end inner flex row */}
+                </div>
+              )
+            })()}
+
+            {/* Waiting on parts — PO shortcut */}
+            {wo.status === "waiting_on_parts" && (
+              <Button
+                variant="ghost" size="sm"
+                onClick={() => navigate("/app/beet-box/purchase-orders")}
+                className="text-amber-400/80 hover:text-amber-300 border border-amber-900/30 h-8 px-3 text-xs flex-shrink-0"
+              >
+                Purchase Orders
+              </Button>
             )}
+
+            {/* ── Tabs ── */}
+            <div className="flex-1 flex items-center justify-center gap-1">
+              {[
+                { id: "items"       as const, label: "Work Items",   icon: FileText    },
+                { id: "notes"       as const, label: "Notes",        icon: StickyNote  },
+                { id: "logbook"     as const, label: "Logbook",      icon: BookOpen    },
+                { id: "invoice"     as const, label: "Invoice",      icon: Receipt     },
+                { id: "audit_trail" as const, label: "Audit Trail",  icon: ShieldCheck },
+              ].map(tab => {
+                const Icon = tab.icon
+                const isActive = activeTab === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium transition-all rounded-md",
+                      isActive ? "text-white" : "text-white/35 hover:text-white/65 hover:bg-white/[0.04]"
+                    )}
+                    style={isActive ? { background: "rgba(212,160,23,0.1)", boxShadow: "inset 0 -2px 0 var(--skyshare-gold)" } : {}}
+                  >
+                    <Icon className={cn("w-3.5 h-3.5", isActive && "text-[var(--skyshare-gold)]")} />
+                    {tab.label}
+                    {tab.id === "logbook" && draftLogbookEntries.length > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none" style={{ background: "rgba(52,211,153,0.2)", color: "#34d399" }}>
+                        {draftLogbookEntries.length}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
           </div>
         </div>
       </div>
 
       {/* ── CONTENT ──────────────────────────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden relative">
 
         {/* ── ITEMS TAB: SPLIT PANEL ──────────────────────────────────────── */}
         {activeTab === "items" && (
           <>
             {/* ── Left rail: always visible ── */}
             <div
-              className="w-72 flex-shrink-0 overflow-y-auto pt-3"
+              className="w-72 flex-shrink-0 flex flex-col"
               style={{ background: "hsl(0,0%,10.5%)", borderRight: "1px solid hsl(0,0%,18%)" }}
             >
+
+              {/* ── Registration anchor block ── */}
+              <style>{`
+                @keyframes status-slide-right {
+                  from { transform: translateX(36px); opacity: 0; }
+                  to   { transform: translateX(0);    opacity: 1; }
+                }
+                @keyframes status-slide-left {
+                  from { transform: translateX(-36px); opacity: 0; }
+                  to   { transform: translateX(0);     opacity: 1; }
+                }
+                @keyframes status-bar-fill {
+                  from { transform: scaleX(0); opacity: 0.55; }
+                  to   { transform: scaleX(1); opacity: 0.25; }
+                }
+                @keyframes reg-glint {
+                  0%    { transform: translateX(-220%) skewX(-18deg); opacity: 0; }
+                  8%    { opacity: 1; }
+                  92%   { opacity: 0.85; }
+                  25%   { transform: translateX(280%) skewX(-18deg); opacity: 0; }
+                  100%  { transform: translateX(-220%) skewX(-18deg); opacity: 0; }
+                }
+              `}</style>
+              <div
+                className="flex-shrink-0 flex items-center justify-center select-none overflow-hidden relative"
+                style={{
+                  height: "63px",
+                  borderBottom: "1px solid hsl(0,0%,17%)",
+                  background: "linear-gradient(175deg, hsl(0,0%,14%) 0%, hsl(0,0%,10%) 50%, hsl(0,0%,12%) 100%)",
+                }}
+              >
+                {/* Glint sweep — same mechanic as AircraftInfo cards */}
+                <span
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    top: 0, bottom: 0, left: 0,
+                    width: "38%",
+                    background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.07), rgba(255,255,255,0.13), rgba(255,255,255,0.07), transparent)",
+                    animation: "reg-glint 5.5s linear infinite",
+                    pointerEvents: "none",
+                  }}
+                />
+                <span
+                  className="font-black leading-none relative"
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    fontSize: "3.335rem",
+                    letterSpacing: "0.08em",
+                    background: "linear-gradient(175deg, #e8f2f8 0%, #c0d2de 18%, #8fa4b2 40%, #7090a0 55%, #90a8b8 72%, #c8dae4 88%, #e0edf4 100%)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundClip: "text",
+                    textShadow: "0 1px 0 rgba(255,255,255,0.35), 0 -1px 0 rgba(0,0,0,0.55), 0 3px 6px rgba(0,0,0,0.7), 0 6px 14px rgba(0,0,0,0.35)",
+                  }}
+                >
+                  {aircraft?.registration ?? wo.guestRegistration ?? "—"}
+                </span>
+              </div>
+
+              {/* ── Scrollable sections list ── */}
+              <div className="flex-1 overflow-y-auto pt-3">
               {visibleSections.map((section, sectionIdx) => {
                 const sectionItems = wo.items.filter(i => i.logbookSection === section)
                 const color = SECTION_COLORS[section]
@@ -1545,7 +2134,8 @@ export default function WorkOrderDetail() {
                   ))}
                 </div>
               )}
-            </div>
+              </div>{/* end scrollable sections */}
+            </div>{/* end left rail */}
 
             {/* Right panel: item detail / add form / empty state */}
             <div className="flex-1 min-w-0 overflow-y-auto pt-3">
@@ -1673,40 +2263,28 @@ export default function WorkOrderDetail() {
           </>
         )}
 
-        {/* ── HISTORY TAB ────────────────────────────────────────────────────── */}
-        {activeTab === "history" && (
-          <div className="flex-1 overflow-y-auto p-8 max-w-2xl">
-            <div className="relative pl-7">
-              <div className="absolute left-2.5 top-1 bottom-1 w-px bg-white/10" />
-              <div className="space-y-7">
-                {[...wo.statusHistory].reverse().map((sh, idx) => (
-                  <div key={sh.id} className="relative">
-                    <div
-                      className="absolute -left-5 top-1.5 w-3 h-3 rounded-full"
-                      style={{ background: idx === 0 ? "var(--skyshare-gold)" : "hsl(0,0%,30%)" }}
-                    />
-                    <div className="flex items-start gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {sh.fromStatus && (
-                            <><WOStatusBadge status={sh.fromStatus} /><ChevronRight className="w-4 h-4 text-white/30" /></>
-                          )}
-                          <WOStatusBadge status={sh.toStatus} />
-                        </div>
-                        <p className="text-white/60 text-sm mt-2">{sh.notes}</p>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-white/60 text-sm font-medium">{sh.changedBy}</p>
-                        <p className="text-white/35 text-sm">
-                          {new Date(sh.changedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+        {/* ── Temp: WO stats below items panel ─────────────────────────────── */}
+        {activeTab === "items" && (
+          <div
+            className="absolute bottom-0 left-0 right-0 flex items-center justify-center gap-6 px-6 py-2.5 text-sm flex-shrink-0"
+            style={{ background: "hsl(0,0%,9%)", borderTop: "1px solid hsl(0,0%,18%)" }}
+          >
+            <span style={{ color: "var(--skyshare-gold)" }} className="font-bold">{aircraft?.registration ?? wo.guestRegistration ?? "—"}</span>
+            <span className="text-white/50">{wo.items.length} items · {totalHours.toFixed(1)} hrs</span>
+            <span className="text-white font-semibold">${grandTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+            {(itemsDone > 0 || itemsInProgress > 0 || itemsReview > 0) && (
+              <div className="flex items-center gap-2">
+                {itemsDone > 0       && <span className="text-emerald-400">✓{itemsDone}</span>}
+                {itemsInProgress > 0 && <span className="text-blue-400">●{itemsInProgress}</span>}
+                {itemsReview > 0     && <span className="text-amber-400">⚠{itemsReview}</span>}
               </div>
-            </div>
+            )}
           </div>
+        )}
+
+        {/* ── AUDIT TRAIL TAB ─────────────────────────────────────────────────── */}
+        {activeTab === "audit_trail" && (
+          <AuditTrailPanel entries={wo.auditTrail} />
         )}
 
         {/* ── NOTES TAB ──────────────────────────────────────────────────────── */}
@@ -2199,46 +2777,6 @@ export default function WorkOrderDetail() {
 
       </div>
 
-      {/* ── STATUS BAR ───────────────────────────────────────────────────────── */}
-      {!isLocked && (NEXT_STATUS[wo.status] || PREV_STATUS[wo.status]) && (
-        <div
-          className="flex-shrink-0 px-6 py-2.5 flex items-center justify-end gap-3"
-          style={{
-            background: "hsl(0,0%,9%)",
-            borderTop: "1px solid hsl(0,0%,18%)",
-          }}
-        >
-          {PREV_STATUS[wo.status] && (
-            <Button
-              variant="ghost" size="sm" onClick={regressStatus}
-              className="text-white/35 hover:text-white/60 border border-white/10 h-8 px-3 text-xs"
-            >
-              ← {WO_STATUS_LABELS[PREV_STATUS[wo.status]!]}
-            </Button>
-          )}
-          {wo.status === "waiting_on_parts" && (
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => navigate("/app/beet-box/purchase-orders")}
-              className="text-amber-400/80 hover:text-amber-300 border border-amber-900/30 h-8 px-3 text-xs"
-            >
-              Purchase Orders
-            </Button>
-          )}
-          {NEXT_STATUS[wo.status] && (
-            <Button
-              size="sm" onClick={advanceStatus}
-              style={wo.status === "billing" ? { background: "var(--skyshare-gold)", color: "#000" } : {}}
-              className={cn(
-                "font-bold h-9 px-5 text-sm",
-                wo.status !== "billing" && "bg-blue-700/40 hover:bg-blue-700/60 text-blue-100 border border-blue-800/40"
-              )}
-            >
-              {NEXT_STATUS_LABEL[wo.status]}
-            </Button>
-          )}
-        </div>
-      )}
 
       {isLocked && (
         <div
