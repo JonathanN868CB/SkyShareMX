@@ -20,8 +20,6 @@ const ToolDashboard      = lazy(() => import("@/features/beet-box/modules/tool-c
 const ToolDetail         = lazy(() => import("@/features/beet-box/modules/tool-calibration/ToolDetail"))
 const InvoiceDashboard   = lazy(() => import("@/features/beet-box/modules/invoicing/InvoiceDashboard"))
 const InvoiceDetail      = lazy(() => import("@/features/beet-box/modules/invoicing/InvoiceDetail"))
-const LogbookDashboard   = lazy(() => import("@/features/beet-box/modules/logbook/LogbookDashboard"))
-const LogbookDetail      = lazy(() => import("@/features/beet-box/modules/logbook/LogbookDetail"))
 const SOPDashboard       = lazy(() => import("@/features/beet-box/modules/sops/SOPDashboard"))
 const SOPDetail          = lazy(() => import("@/features/beet-box/modules/sops/SOPDetail"))
 const TrainingDashboard  = lazy(() => import("@/features/beet-box/modules/training/TrainingDashboard"))
@@ -65,6 +63,7 @@ const RecordsVaultBrowse   = lazy(() => import("@/features/records-vault/pages/R
 const RecordsVaultTimeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultTimelinePage"))
 const RecordsVaultPipeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultPipelinePage"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
+const ProjectsApp = lazy(() => import("@/features/projects/ProjectsApp"))
 
 const fallback = (
   <div className="min-h-screen flex items-center justify-center bg-background">
@@ -129,7 +128,8 @@ const routes: RouteObject[] = [
       { path: "planning",    element: wrap(<ComingSoon name="Maintenance Planning" />) },
       { path: "ten-or-more", element: wrap(<ComingSoon name="Ten or More" />) },
       { path: "terminal-ogd", element: wrap(<ComingSoon name="Terminal-OGD" />) },
-      { path: "projects",    element: wrap(<ComingSoon name="Projects" />) },
+      { path: "projects",           element: wrap(<ProjectsApp />) },
+      { path: "projects/:boardId",  element: wrap(<ProjectsApp />) },
       { path: "compliance",   element: wrap(<Compliance />) },
       { path: "safety",       element: wrap(<SafetyHouse />) },
       { path: "discrepancy-intelligence", element: wrap(<DiscrepancyIntelligence />) },
@@ -193,8 +193,6 @@ const routes: RouteObject[] = [
       { path: "tool-calibration/:id",             element: wrap(<ToolDetail />) },
       { path: "invoicing",                        element: wrap(<InvoiceDashboard />) },
       { path: "invoicing/:id",                    element: wrap(<InvoiceDetail />) },
-      { path: "logbook",                          element: wrap(<LogbookDashboard />) },
-      { path: "logbook/:id",                      element: wrap(<LogbookDetail />) },
       { path: "sop-library",                      element: wrap(<SOPDashboard />) },
       { path: "sop-library/:id",                  element: wrap(<SOPDetail />) },
       { path: "training",                         element: wrap(<TrainingDashboard />) },

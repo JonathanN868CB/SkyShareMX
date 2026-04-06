@@ -1,10 +1,10 @@
-import { useState, useRef, useMemo, useEffect, useCallback } from "react"
+import { useState, useRef, useMemo, useEffect, useCallback, Fragment } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
   ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight,
   Plus, X, Clock, UserX, Package,
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
-  BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download,
+  BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
@@ -14,7 +14,7 @@ import {
   getWorkOrderById, updateWorkOrderStatus, updateWorkOrder,
   upsertWOItem, updateItemStatus, updateWOItemFields, signOffItem, clearSignOff,
   addItemPart, removeItemPart, clockLabor, deleteLabor,
-  getParts, getTechnicians, getMyProfileId,
+  getParts, getTechnicians, getMyProfileId, getMyProfile,
   getLogbookEntries, getOrCreateDraftLogbookEntry, upsertEntrySignatory, addSignatoryLine, updateLogbookEntry,
 } from "../../services"
 import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS } from "../../constants"
@@ -71,24 +71,48 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
-async function downloadPdf(el: HTMLElement, filename: string) {
-  const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: "#1a1a1a" })
+async function buildPdfBlob(el: HTMLElement): Promise<Blob> {
+  const canvas  = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: "#ffffff" })
   const imgData = canvas.toDataURL("image/png")
-  const pdf = new jsPDF({ unit: "px", format: "a4", orientation: "portrait" })
-  const pdfW = pdf.internal.pageSize.getWidth()
-  const pdfH = pdf.internal.pageSize.getHeight()
-  const imgH = canvas.height * (pdfW / canvas.width)
-  let position = 0
-  let remaining = imgH
+  const pdf     = new jsPDF({ unit: "px", format: "a4", orientation: "portrait" })
+  const pdfW    = pdf.internal.pageSize.getWidth()
+  const pdfH    = pdf.internal.pageSize.getHeight()
+  const imgH    = canvas.height * (pdfW / canvas.width)
+  let position = 0, remaining = imgH
   pdf.addImage(imgData, "PNG", 0, 0, pdfW, imgH)
   remaining -= pdfH
   while (remaining > 0) {
-    position += pdfH
-    pdf.addPage()
+    position += pdfH; pdf.addPage()
     pdf.addImage(imgData, "PNG", 0, -position, pdfW, imgH)
     remaining -= pdfH
   }
-  pdf.save(filename)
+  return pdf.output("blob")
+}
+
+// Captures each element as its own PDF page (one page per major assembly section)
+async function buildPdfFromPages(els: HTMLElement[]): Promise<Blob> {
+  const pdf  = new jsPDF({ unit: "px", format: "a4", orientation: "portrait" })
+  const pdfW = pdf.internal.pageSize.getWidth()
+  const pdfH = pdf.internal.pageSize.getHeight()
+
+  for (let i = 0; i < els.length; i++) {
+    const canvas  = await html2canvas(els[i], { scale: 2, useCORS: true, logging: false, backgroundColor: "#ffffff" })
+    const imgData = canvas.toDataURL("image/png")
+    const imgH    = canvas.height * (pdfW / canvas.width)
+
+    if (i > 0) pdf.addPage()
+    pdf.addImage(imgData, "PNG", 0, 0, pdfW, imgH)
+
+    // Handle entries taller than one page
+    let pos = pdfH, remaining = imgH - pdfH
+    while (remaining > 0) {
+      pdf.addPage()
+      pdf.addImage(imgData, "PNG", 0, -pos, pdfW, imgH)
+      pos += pdfH; remaining -= pdfH
+    }
+  }
+
+  return pdf.output("blob")
 }
 
 // ─── Formatting toolbar ───────────────────────────────────────────────────────
@@ -109,12 +133,13 @@ function insertAtCursor(
   })
 }
 
-function Toolbar({ textareaRef, onUpdate }: {
+function Toolbar({ textareaRef, onUpdate, noBorder }: {
   textareaRef: React.RefObject<HTMLTextAreaElement>
   onUpdate: (v: string) => void
+  noBorder?: boolean
 }) {
   return (
-    <div className="flex items-center gap-1 px-4 py-2 border-b border-white/[0.07]">
+    <div className={cn("flex items-center gap-1 px-4 py-2", !noBorder && "border-b border-white/[0.07]")}>
       {[
         { label: "B",  title: "Bold",          before: "**", after: "**" },
         { label: "I",  title: "Italic",         before: "_",  after: "_"  },
@@ -144,6 +169,8 @@ interface ItemDetailPanelProps {
   onPatch: (patch: Partial<WOItem>) => void
   onPersist: (fields: Partial<WOItem>) => void
   onSignOff: () => void
+  signOffError: string | null
+  onClearSignOffError: () => void
   onDeleteLabor: (id: string) => void
   onDeletePart: (id: string) => void
   mechanics: Mechanic[]
@@ -162,7 +189,7 @@ interface ItemDetailPanelProps {
 }
 
 function ItemDetailPanel({
-  item, isLocked, sectionColor, onPatch, onPersist, onSignOff, onDeleteLabor, onDeletePart,
+  item, isLocked, sectionColor, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
   mechanics, inventoryParts, onNavigatePO,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart,
   addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
@@ -217,48 +244,11 @@ function ItemDetailPanel({
   return (
     <div className="flex flex-col h-full">
 
-      {/* ── Item header ───────────────────────────────────────────────────── */}
+      {/* ── Status selector — centered, full-size ────────────────────── */}
       <div
-        className="px-6 py-4 flex items-start justify-between flex-shrink-0"
-        style={{
-          background: "hsl(0,0%,11%)",
-          borderBottom: "1px solid hsl(0,0%,18%)",
-          borderLeft: `4px solid ${sectionColor}`,
-        }}
+        className="px-5 py-4 flex items-center justify-center gap-2.5 flex-shrink-0"
+        style={{ background: "hsl(0,0%,10%)", borderBottom: "1px solid hsl(0,0%,17%)" }}
       >
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span
-              className="text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded"
-              style={{ background: sectionColor + "22", color: sectionColor }}
-            >
-              {item.logbookSection}
-            </span>
-            {item.taskNumber && (
-              <span className="text-white/35 text-xs font-mono">#{item.taskNumber}</span>
-            )}
-          </div>
-          <h2 className="text-white text-xl font-semibold leading-tight">{item.category}</h2>
-          {item.partNumber && (
-            <p className="text-white/35 text-xs mt-1.5 font-mono">
-              P/N: {item.partNumber}{item.serialNumber ? ` · S/N: ${item.serialNumber}` : ""}
-            </p>
-          )}
-        </div>
-        <div className="text-right flex-shrink-0 ml-6">
-          <div className="text-white/30 text-xs mb-1">Item {item.itemNumber}</div>
-          {clockedTotal > 0 && (
-            <div className="text-white/50 text-sm">{clockedTotal.toFixed(1)} hrs logged</div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Status selector ───────────────────────────────────────────────── */}
-      <div
-        className="px-6 py-3 flex items-center gap-2 flex-wrap flex-shrink-0"
-        style={{ background: "hsl(0,0%,10.5%)", borderBottom: "1px solid hsl(0,0%,17%)" }}
-      >
-        <span className="text-white/40 text-sm mr-1">Status:</span>
         {(Object.entries(ITEM_STATUS_CONFIG) as [WOItemStatus, typeof ITEM_STATUS_CONFIG[WOItemStatus]][]).map(([key, cfg]) => {
           const Icon = cfg.icon
           const active = itemStatus === key
@@ -271,7 +261,7 @@ function ItemDetailPanel({
                 "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all",
                 active
                   ? cn(cfg.activeBg, cfg.color, cfg.border)
-                  : "bg-transparent text-white/40 border-white/10 hover:border-white/25 hover:text-white/70",
+                  : "bg-transparent text-white/30 border-white/[0.07] hover:border-white/20 hover:text-white/55",
                 isLocked && "opacity-50 cursor-default"
               )}
             >
@@ -288,21 +278,35 @@ function ItemDetailPanel({
         {/* Task / Discrepancy + Work Performed — boxed cards */}
         <div className="px-5 pt-5 pb-5 space-y-4" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
 
-          {/* Task / Discrepancy box */}
+          {/* Task / Discrepancy box — with section + task metadata in header */}
           <div
             className="rounded-xl overflow-hidden"
             style={{ border: "1px solid rgba(251,146,60,0.35)", borderLeft: "4px solid rgba(251,146,60,0.7)" }}
           >
             <div
-              className="px-4 py-3 flex items-center gap-3"
+              className="px-4 py-3 flex items-center gap-3 flex-wrap"
               style={{
                 background: "linear-gradient(to right, rgba(251,146,60,0.1), rgba(251,146,60,0.04))",
                 borderBottom: "1px solid rgba(251,146,60,0.2)",
               }}
             >
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(251,146,60,0.9)" }} />
-              <span className="text-sm font-bold uppercase tracking-widest" style={{ color: "rgba(251,146,60,0.9)" }}>Task / Discrepancy</span>
-              <span className="text-white/30 text-xs">— what needs to be done, or what was found</span>
+              <span
+                className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded"
+                style={{ background: sectionColor + "22", color: sectionColor }}
+              >
+                {item.logbookSection}
+              </span>
+              {item.taskNumber && (
+                <span className="text-white/30 text-xs font-mono">#{item.taskNumber}</span>
+              )}
+              {item.partNumber && (
+                <span className="text-white/20 text-xs font-mono">
+                  P/N {item.partNumber}{item.serialNumber ? ` · S/N ${item.serialNumber}` : ""}
+                </span>
+              )}
+              {clockedTotal > 0 && (
+                <span className="text-white/35 text-xs ml-auto">{clockedTotal.toFixed(1)} hrs</span>
+              )}
             </div>
             {!isLocked && <Toolbar textareaRef={discRef} onUpdate={v => onPatch({ discrepancy: v })} />}
             <textarea
@@ -346,7 +350,46 @@ function ItemDetailPanel({
                 <span className="text-white/25 text-sm">Awaiting sign-off</span>
               )}
             </div>
-            {!isLocked && <Toolbar textareaRef={corrRef} onUpdate={v => onPatch({ correctiveAction: v })} />}
+            {!isLocked && (
+              <div className="flex items-center border-b border-white/[0.07]">
+                {/* TRACSALL / CAMP code — required before sign-off; populates Code column in logbook */}
+                <div className="flex items-center gap-3 px-4 py-2.5 border-r border-white/[0.07]">
+                  <div className="flex flex-col gap-0.5">
+                    <label
+                      htmlFor={`ref-code-${item.id}`}
+                      className="text-[9px] font-bold uppercase tracking-[0.2em] whitespace-nowrap"
+                      style={{ color: item.refCode?.trim() ? "rgba(110,231,183,0.45)" : "rgba(110,231,183,0.75)", fontFamily: "var(--font-heading)" }}
+                    >
+                      Ref / Task Code
+                    </label>
+                    {!item.refCode?.trim() && (
+                      <span className="text-[8px] whitespace-nowrap" style={{ color: "rgba(52,211,153,0.4)" }}>
+                        Required to sign off
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    id={`ref-code-${item.id}`}
+                    type="text"
+                    value={item.refCode}
+                    onChange={e => onPatch({ refCode: e.target.value })}
+                    onBlur={e => onPersist({ refCode: e.target.value })}
+                    placeholder="05-CUS-14"
+                    className={cn(
+                      "text-sm font-mono font-semibold rounded-md px-3 py-1.5 focus:outline-none transition-all",
+                      item.refCode?.trim() ? "ref-code-input-filled" : "ref-code-input-empty"
+                    )}
+                    style={{
+                      width: "148px",
+                      background: item.refCode?.trim() ? "rgba(52,211,153,0.05)" : "rgba(52,211,153,0.07)",
+                      color: item.refCode?.trim() ? "rgba(110,231,183,0.95)" : "rgba(255,255,255,0.55)",
+                      border: "1px solid transparent",
+                    }}
+                  />
+                </div>
+                <Toolbar textareaRef={corrRef} onUpdate={v => onPatch({ correctiveAction: v })} noBorder />
+              </div>
+            )}
             <textarea
               ref={corrRef}
               value={item.correctiveAction}
@@ -404,16 +447,24 @@ function ItemDetailPanel({
         )}
 
         {/* Labor */}
+        <div className="px-5 pt-4 pb-1" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
         <div
-          className="px-6 py-5"
-          style={{ borderBottom: "1px solid hsl(0,0%,17%)", borderLeft: "3px solid rgba(96,165,250,0.4)" }}
+          className="rounded-xl overflow-hidden"
+          style={{ border: "1px solid rgba(96,165,250,0.2)", borderLeft: "3px solid rgba(96,165,250,0.5)" }}
         >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2.5">
-              <Clock className="w-5 h-5 text-blue-400" />
-              <span className="text-sm font-bold uppercase tracking-wider" style={{ color: "#93c5fd" }}>Labor</span>
+          {/* Labor header */}
+          <div
+            className="px-4 py-2.5 flex items-center justify-between"
+            style={{
+              background: "linear-gradient(to right, rgba(96,165,250,0.07), rgba(96,165,250,0.02))",
+              borderBottom: "1px solid rgba(96,165,250,0.15)",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <Clock className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#93c5fd" }}>Labor</span>
               {clockedTotal > 0 && (
-                <span className="text-white/50 text-sm">{clockedTotal.toFixed(1)} hrs total</span>
+                <span className="text-white/40 text-xs">{clockedTotal.toFixed(1)} hrs</span>
               )}
             </div>
             {!isLocked && addingLaborToItem !== item.id && (
@@ -423,12 +474,13 @@ function ItemDetailPanel({
                   setAddingLaborToItem(item.id)
                   setNewLabor({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
                 }}
-                className="text-white/50 hover:text-white border border-white/15 h-9 px-4 text-sm"
+                className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
               >
-                <Plus className="w-4 h-4 mr-1.5" /> Log Time
+                <Plus className="w-3 h-3 mr-1" /> Log Time
               </Button>
             )}
           </div>
+          <div className="px-4 py-3">
 
           {/* Labor entries */}
           {laborEntries.length > 0 && (
@@ -527,19 +579,29 @@ function ItemDetailPanel({
               </div>
             </div>
           )}
-        </div>
+          </div>{/* end labor inner */}
+        </div>{/* end labor card */}
+        </div>{/* end labor outer wrapper */}
 
         {/* Parts */}
+        <div className="px-5 pt-3 pb-1" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
         <div
-          className="px-6 py-5"
-          style={{ borderBottom: "1px solid hsl(0,0%,17%)", borderLeft: "3px solid rgba(212,160,23,0.45)" }}
+          className="rounded-xl overflow-hidden"
+          style={{ border: "1px solid rgba(212,160,23,0.18)", borderLeft: "3px solid rgba(212,160,23,0.5)" }}
         >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2.5">
-              <Package className="w-5 h-5" style={{ color: "var(--skyshare-gold)" }} />
-              <span className="text-sm font-bold uppercase tracking-wider" style={{ color: "rgba(212,160,23,0.85)" }}>Parts</span>
+          {/* Parts header */}
+          <div
+            className="px-4 py-2.5 flex items-center justify-between"
+            style={{
+              background: "linear-gradient(to right, rgba(212,160,23,0.07), rgba(212,160,23,0.02))",
+              borderBottom: "1px solid rgba(212,160,23,0.14)",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <Package className="w-3.5 h-3.5" style={{ color: "rgba(212,160,23,0.9)" }} />
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(212,160,23,0.85)" }}>Parts</span>
               {item.parts.length > 0 && (
-                <span className="text-white/50 text-sm">{item.parts.length} {item.parts.length === 1 ? "part" : "parts"}</span>
+                <span className="text-white/40 text-xs">{item.parts.length} {item.parts.length === 1 ? "part" : "parts"}</span>
               )}
             </div>
             {!isLocked && (
@@ -550,34 +612,35 @@ function ItemDetailPanel({
                     <Button
                       size="sm" variant="ghost"
                       onClick={() => setShowInventoryPicker(true)}
-                      className="text-white/50 hover:text-white border border-white/15 h-9 px-4 text-sm"
+                      className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
                     >
-                      <Warehouse className="w-4 h-4 mr-1.5" /> From Inventory
+                      <Warehouse className="w-3 h-3 mr-1" /> From Inventory
                     </Button>
                     <Button
                       size="sm" variant="ghost"
                       onClick={() => { setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
-                      className="text-white/50 hover:text-white border border-white/15 h-9 px-4 text-sm"
+                      className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
                     >
-                      <Plus className="w-4 h-4 mr-1.5" /> Add Part
+                      <Plus className="w-3 h-3 mr-1" /> Add Part
                     </Button>
                   </>
                 )}
                 <Button
                   size="sm"
                   onClick={onNavigatePO}
-                  className="h-9 px-4 text-sm font-semibold"
-                  style={{ background: "rgba(212,160,23,0.15)", color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.3)" }}
+                  className="h-7 px-3 text-xs font-semibold"
+                  style={{ background: "rgba(212,160,23,0.12)", color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.25)" }}
                 >
-                  <ShoppingCart className="w-4 h-4 mr-1.5" /> Order Parts
+                  <ShoppingCart className="w-3 h-3 mr-1" /> Order Parts
                 </Button>
               </div>
             )}
-          </div>
+          </div>{/* end parts header */}
+          <div className="px-4 py-3">
 
           {/* No-parts toggle */}
           {!isLocked && (
-            <label className="flex items-center gap-2.5 cursor-pointer mb-4 group">
+            <label className="flex items-center gap-2.5 cursor-pointer mb-3 group">
               <div
                 className={cn(
                   "w-5 h-5 rounded border flex items-center justify-center transition-all flex-shrink-0",
@@ -801,11 +864,23 @@ function ItemDetailPanel({
               </div>
             </div>
           )}
-        </div>
+          </div>{/* end parts body */}
+        </div>{/* end parts card */}
+        </div>{/* end parts outer wrapper */}
 
         {/* Sign-off */}
         {item.signOffRequired && (
-          <div className="px-6 py-5">
+          <div className="px-6 py-5 space-y-3">
+            {signOffError && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "rgba(239,68,68,0.9)" }}>
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-semibold">Sign-off error: </span>{signOffError}
+                </div>
+                <button onClick={onClearSignOffError} className="opacity-50 hover:opacity-100 flex-shrink-0"><X className="w-3 h-3" /></button>
+              </div>
+            )}
+            <div>
             {item.signedOffBy ? (
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -827,31 +902,48 @@ function ItemDetailPanel({
                 )}
               </div>
             ) : (
-              !isLocked && (
-                <button
-                  onClick={onSignOff}
-                  className="w-full flex items-center justify-center gap-3 py-5 rounded-xl text-base font-bold transition-all"
-                  style={{
-                    border: "2px solid rgba(52,211,153,0.4)",
-                    background: "rgba(52,211,153,0.06)",
-                    color: "rgba(52,211,153,0.85)",
-                  }}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLButtonElement).style.border = "2px solid rgba(52,211,153,0.7)"
-                    ;(e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.12)"
-                    ;(e.currentTarget as HTMLButtonElement).style.color = "#6ee7b7"
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLButtonElement).style.border = "2px solid rgba(52,211,153,0.4)"
-                    ;(e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.06)"
-                    ;(e.currentTarget as HTMLButtonElement).style.color = "rgba(52,211,153,0.85)"
-                  }}
-                >
-                  <CheckCircle2 className="w-6 h-6" />
-                  Sign Off This Item
-                </button>
-              )
+              !isLocked && (() => {
+                const missingCode = !item.refCode?.trim()
+                return (
+                  <div className="space-y-2">
+                    {missingCode && (
+                      <p className="flex items-center gap-2 text-xs px-1" style={{ color: "rgba(251,146,60,0.8)" }}>
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                        A Ref Code (TRACSALL / CAMP) is required before signing off.
+                      </p>
+                    )}
+                    <button
+                      onClick={missingCode ? undefined : onSignOff}
+                      disabled={missingCode}
+                      className="w-full flex items-center justify-center gap-3 py-5 rounded-xl text-base font-bold transition-all disabled:cursor-not-allowed"
+                      style={missingCode ? {
+                        border: "2px solid rgba(255,255,255,0.08)",
+                        background: "rgba(255,255,255,0.03)",
+                        color: "rgba(255,255,255,0.2)",
+                      } : {
+                        border: "2px solid rgba(52,211,153,0.4)",
+                        background: "rgba(52,211,153,0.06)",
+                        color: "rgba(52,211,153,0.85)",
+                      }}
+                      onMouseEnter={e => { if (!missingCode) {
+                        (e.currentTarget as HTMLButtonElement).style.border = "2px solid rgba(52,211,153,0.7)"
+                        ;(e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.12)"
+                        ;(e.currentTarget as HTMLButtonElement).style.color = "#6ee7b7"
+                      }}}
+                      onMouseLeave={e => { if (!missingCode) {
+                        (e.currentTarget as HTMLButtonElement).style.border = "2px solid rgba(52,211,153,0.4)"
+                        ;(e.currentTarget as HTMLButtonElement).style.background = "rgba(52,211,153,0.06)"
+                        ;(e.currentTarget as HTMLButtonElement).style.color = "rgba(52,211,153,0.85)"
+                      }}}
+                    >
+                      <CheckCircle2 className="w-6 h-6" />
+                      Sign Off This Item
+                    </button>
+                  </div>
+                )
+              })()
             )}
+            </div>
           </div>
         )}
 
@@ -933,21 +1025,41 @@ export default function WorkOrderDetail() {
   )
   const [draftLogbookEntries, setDraftLogbookEntries] = useState<LogbookEntry[]>([])
   const [logbookDraftError, setLogbookDraftError] = useState<string | null>(null)
+  const [signOffError, setSignOffError]           = useState<string | null>(null)
   // Editable fields for each draft logbook entry (keyed by entry id)
   const [lbEdits, setLbEdits] = useState<Record<string, { returnToService: string; aircraftTime: string; hobbs: string; landings: string }>>({})
   const logbookPrintRef = useRef<HTMLDivElement>(null)
   const invoicePrintRef = useRef<HTMLDivElement>(null)
   const [pdfExporting, setPdfExporting] = useState<"logbook" | "invoice" | null>(null)
+  const [pdfPreview,   setPdfPreview]   = useState<{ url: string; filename: string } | null>(null)
 
-  async function handleDownloadPdf(type: "logbook" | "invoice", woNumber: string) {
-    const ref = type === "logbook" ? logbookPrintRef : invoicePrintRef
-    if (!ref.current) return
+  async function handlePreviewPdf(type: "logbook" | "invoice", woNumber: string) {
+    if (type === "logbook" && !logbookPrintRef.current) return
+    if (type === "invoice" && !invoicePrintRef.current) return
     setPdfExporting(type)
     try {
-      await downloadPdf(ref.current, `${woNumber}-${type}.pdf`)
+      const filename = `${woNumber}-${type}.pdf`
+      let blob: Blob
+      if (type === "logbook") {
+        const pages = Array.from(
+          logbookPrintRef.current!.querySelectorAll("[data-lb-page]")
+        ) as HTMLElement[]
+        blob = pages.length > 0
+          ? await buildPdfFromPages(pages)
+          : await buildPdfBlob(logbookPrintRef.current!)
+      } else {
+        blob = await buildPdfBlob(invoicePrintRef.current!)
+      }
+      const url = URL.createObjectURL(blob)
+      setPdfPreview({ url, filename })
     } finally {
       setPdfExporting(null)
     }
+  }
+
+  function closePdfPreview() {
+    if (pdfPreview) URL.revokeObjectURL(pdfPreview.url)
+    setPdfPreview(null)
   }
 
   const RTS_BOILERPLATE = "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed."
@@ -1064,6 +1176,7 @@ export default function WorkOrderDetail() {
       await updateWOItemFields(itemId, {
         ...(fields.discrepancy         !== undefined && { discrepancy: fields.discrepancy }),
         ...(fields.correctiveAction    !== undefined && { correctiveAction: fields.correctiveAction }),
+        ...(fields.refCode             !== undefined && { refCode: fields.refCode }),
         ...(fields.estimatedHours      !== undefined && { estimatedHours: fields.estimatedHours }),
         ...(fields.laborRate           !== undefined && { laborRate: fields.laborRate }),
         ...(fields.shippingCost        !== undefined && { shippingCost: fields.shippingCost }),
@@ -1093,47 +1206,61 @@ export default function WorkOrderDetail() {
     if (isLocked || !wo) return
     const item = wo.items.find(i => i.id === itemId)
     if (!item) return
+    setSignOffError(null)
+
     if (item.signedOffBy) {
-      // Unsign — only touch sign-off fields, never overwrite other item data
+      // Unsign
       patchItem(itemId, { signedOffBy: null, signedOffAt: null, itemStatus: "done" })
       await clearSignOff(itemId)
-    } else {
-      // Flush any unsaved text to DB before sign-off so loadWO() doesn't wipe it
+      return
+    }
+
+    try {
+      // Flush unsaved text before signing so loadWO() doesn't wipe it
       await updateWOItemFields(itemId, {
         discrepancy: item.discrepancy,
         correctiveAction: item.correctiveAction,
+        refCode: item.refCode,
       })
-      const profileId = await getMyProfileId()
-      await signOffItem(itemId, profileId ?? "")
+
+      // Get profile — try full profile first (has cert data), fall back to ID-only
+      let profile: Awaited<ReturnType<typeof getMyProfile>> = null
+      let profileId: string | null = null
+      try {
+        profile   = await getMyProfile()
+        profileId = profile?.id ?? null
+      } catch {
+        profileId = await getMyProfileId()
+      }
+
+      if (!profileId) {
+        setSignOffError("Could not resolve your profile. Make sure you're logged in.")
+        return
+      }
+
+      await signOffItem(itemId, profileId)
       await loadWO()
 
-      // Auto-draft logbook entry for this section (one per section per WO)
-      if (profileId && id && id !== "wo-traxxall-import") {
-        try {
-          const tech = mechanics.find(m => m.id === profileId)
-          const entry = await getOrCreateDraftLogbookEntry(
-            { id: wo.id, woNumber: wo.woNumber, aircraftId: wo.aircraftId, guestRegistration: wo.guestRegistration, guestSerial: wo.guestSerial },
-            item.logbookSection
-          )
-          const signatory = await upsertEntrySignatory(entry.id, {
-            profileId,
-            mechanicName: tech?.name ?? "Unknown",
-            certType: tech?.certType ?? null,
-            certNumber: tech?.certNumber ?? null,
-          })
-          const lineText = [
-            item.taskNumber?.trim(),
-            item.correctiveAction?.trim() || item.category,
-          ].filter(Boolean).join(" ")
-          await addSignatoryLine(entry.id, lineText, signatory.id, item.id)
-          await loadDraftLogbookEntries()
-        } catch (err: any) {
-          console.error("Logbook draft creation failed:", err)
-          // Non-fatal — sign-off succeeded, logbook draft is best-effort
-          // Surface the error in the logbook tab so it's visible
-          setLogbookDraftError(err?.message ?? "Failed to create logbook draft")
-        }
+      // Build logbook draft entry
+      if (id && id !== "wo-traxxall-import") {
+        const tech = mechanics.find(m => m.id === profileId)
+        const entry = await getOrCreateDraftLogbookEntry(
+          { id: wo.id, woNumber: wo.woNumber, aircraftId: wo.aircraftId, guestRegistration: wo.guestRegistration, guestSerial: wo.guestSerial },
+          item.logbookSection
+        )
+        const signatory = await upsertEntrySignatory(entry.id, {
+          profileId,
+          mechanicName: profile?.name ?? tech?.name ?? "Unknown",
+          certType:     profile?.certType  ?? tech?.certType  ?? null,
+          certNumber:   profile?.certNumber ?? tech?.certNumber ?? null,
+        })
+        const lineText = item.correctiveAction?.trim() || item.category || item.taskNumber || "—"
+        await addSignatoryLine(entry.id, lineText, signatory.id, item.id, item.refCode?.trim() ?? "")
+        await loadDraftLogbookEntries()
       }
+    } catch (err: any) {
+      console.error("Sign-off failed:", err)
+      setSignOffError(err?.message ?? "Sign-off failed — check console for details")
     }
   }
 
@@ -1214,7 +1341,14 @@ export default function WorkOrderDetail() {
     await loadWO()
   }
 
-  function completeAndGenerate() { setShowCompleteModal(false); navigate("/app/beet-box/logbook/new?wo=" + wo!.id) }
+  async function completeAndGenerate() {
+    if (!wo) return
+    setShowCompleteModal(false)
+    const profileId = await getMyProfileId()
+    await updateWorkOrderStatus(wo.id, "completed", profileId ?? "", "Work order completed and closed.")
+    await loadWO()
+    setActiveTab("logbook")
+  }
 
   async function completeOnly() {
     if (!wo) return
@@ -1232,107 +1366,89 @@ export default function WorkOrderDetail() {
   return (
     <div className="h-screen flex flex-col overflow-hidden">
 
-      {/* ── COMPACT HEADER ───────────────────────────────────────────────────── */}
+      {/* ── UNIFIED HEADER ────────────────────────────────────────────────── */}
       <div
-        className="px-6 py-3 flex items-center justify-between flex-shrink-0"
+        className="flex-shrink-0"
         style={{
-          background: "linear-gradient(to right, hsl(0,0%,11%), hsl(0,0%,10%))",
+          background: "hsl(0,0%,10%)",
           borderBottom: "1px solid hsl(0,0%,18%)",
           borderTop: "3px solid var(--skyshare-gold)",
         }}
       >
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate("/app/beet-box/work-orders")}
-            className="text-white/40 hover:text-white/80 transition-colors p-1 rounded"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <div className="flex items-center gap-3">
-              <span
-                className="text-white text-xl font-bold tracking-wide"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                {wo.woNumber}
-              </span>
-              <WOStatusBadge status={wo.status} />
-              <PriorityBadge priority={wo.priority} />
-            </div>
-            <p className="text-white/45 text-sm">{wo.woType}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-8">
-          <div className="text-center">
-            <div className="text-white/35 text-xs uppercase tracking-wider">Aircraft</div>
-            <div className="font-bold text-sm" style={{ color: "var(--skyshare-gold)" }}>{aircraft?.registration ?? wo.guestRegistration ?? "—"}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-white/35 text-xs uppercase tracking-wider">Opened</div>
-            <div className="text-white/70 text-sm">{fmtDate(wo.openedAt)}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-white/35 text-xs uppercase tracking-wider">Items</div>
-            <div className="text-white font-semibold text-sm">
-              {wo.items.length} <span className="text-white/40 font-normal">({totalHours.toFixed(1)} hrs)</span>
-            </div>
-          </div>
-          <div className="text-center">
-            <div className="text-white/35 text-xs uppercase tracking-wider">Est. Total</div>
-            <div className="text-white font-bold">${grandTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
-          </div>
-          {(itemsDone > 0 || itemsInProgress > 0 || itemsReview > 0) && (
-            <div className="flex items-center gap-3 text-sm">
-              {itemsDone > 0       && <span className="text-emerald-400">✓ {itemsDone}</span>}
-              {itemsInProgress > 0 && <span className="text-blue-400">● {itemsInProgress}</span>}
-              {itemsReview > 0     && <span className="text-amber-400">⚠ {itemsReview}</span>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── TAB BAR ──────────────────────────────────────────────────────────── */}
-      <div
-        className="px-4 flex items-center flex-shrink-0 gap-1"
-        style={{ background: "hsl(0,0%,10%)", borderBottom: "1px solid hsl(0,0%,18%)" }}
-      >
-        {[
-          { id: "items"   as const, label: "Work Items",     icon: FileText   },
-          { id: "history" as const, label: "Status History", icon: Clock      },
-          { id: "notes"   as const, label: "Notes",          icon: StickyNote },
-          { id: "logbook" as const, label: "Logbook Entry",  icon: BookOpen   },
-          { id: "invoice" as const, label: "Invoice",        icon: Receipt    },
-        ].map(tab => {
-          const Icon = tab.icon
-          const isActive = activeTab === tab.id
-          return (
+        <div className="px-6 py-2.5 flex items-center gap-6">
+          {/* Left: back + WO ID + badges */}
+          <div className="flex items-center gap-3 flex-shrink-0">
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "flex items-center gap-2 px-4 py-3.5 text-sm font-medium transition-all rounded-t-md border-b-2 -mb-px",
-                isActive
-                  ? "text-white border-[var(--skyshare-gold)]"
-                  : "text-white/40 border-transparent hover:text-white/70 hover:bg-white/[0.04]"
-              )}
-              style={isActive ? {
-                background: "linear-gradient(to bottom, rgba(212,160,23,0.08), transparent)",
-              } : {}}
+              onClick={() => navigate("/app/beet-box/work-orders")}
+              className="text-white/40 hover:text-white/80 transition-colors p-1 rounded"
             >
-              <Icon className={cn("w-4 h-4", isActive && "text-[var(--skyshare-gold)]")} />
-              {tab.label}
-              {tab.id === "logbook" && draftLogbookEntries.length > 0 && (
-                <span
-                  className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-bold leading-none"
-                  style={{ background: "rgba(52,211,153,0.2)", color: "#34d399" }}
-                >
-                  {draftLogbookEntries.length}
-                </span>
-              )}
+              <ArrowLeft className="w-5 h-5" />
             </button>
-          )
-        })}
+            <span
+              className="text-white text-xl font-bold tracking-wide"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              {wo.woNumber}
+            </span>
+            <WOStatusBadge status={wo.status} />
+            <PriorityBadge priority={wo.priority} />
+          </div>
+
+          {/* Center: tabs */}
+          <div className="flex-1 flex items-center justify-center gap-1">
+            {[
+              { id: "items"   as const, label: "Work Items",     icon: FileText   },
+              { id: "history" as const, label: "History",         icon: Clock      },
+              { id: "notes"   as const, label: "Notes",          icon: StickyNote },
+              { id: "logbook" as const, label: "Logbook",        icon: BookOpen   },
+              { id: "invoice" as const, label: "Invoice",        icon: Receipt    },
+            ].map(tab => {
+              const Icon = tab.icon
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium transition-all rounded-md",
+                    isActive
+                      ? "text-white"
+                      : "text-white/35 hover:text-white/65 hover:bg-white/[0.04]"
+                  )}
+                  style={isActive ? {
+                    background: "rgba(212,160,23,0.1)",
+                    boxShadow: "inset 0 -2px 0 var(--skyshare-gold)",
+                  } : {}}
+                >
+                  <Icon className={cn("w-3.5 h-3.5", isActive && "text-[var(--skyshare-gold)]")} />
+                  {tab.label}
+                  {tab.id === "logbook" && draftLogbookEntries.length > 0 && (
+                    <span
+                      className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none"
+                      style={{ background: "rgba(52,211,153,0.2)", color: "#34d399" }}
+                    >
+                      {draftLogbookEntries.length}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Right: key stats */}
+          <div className="flex items-center gap-6 flex-shrink-0 text-sm">
+            <span style={{ color: "var(--skyshare-gold)" }} className="font-bold">{aircraft?.registration ?? wo.guestRegistration ?? "—"}</span>
+            <span className="text-white/50">{wo.items.length} items · {totalHours.toFixed(1)} hrs</span>
+            <span className="text-white font-semibold">${grandTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+            {(itemsDone > 0 || itemsInProgress > 0 || itemsReview > 0) && (
+              <div className="flex items-center gap-2">
+                {itemsDone > 0       && <span className="text-emerald-400">✓{itemsDone}</span>}
+                {itemsInProgress > 0 && <span className="text-blue-400">●{itemsInProgress}</span>}
+                {itemsReview > 0     && <span className="text-amber-400">⚠{itemsReview}</span>}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── CONTENT ──────────────────────────────────────────────────────────── */}
@@ -1343,14 +1459,14 @@ export default function WorkOrderDetail() {
           <>
             {/* ── Left rail: always visible ── */}
             <div
-              className="w-72 flex-shrink-0 overflow-y-auto"
+              className="w-72 flex-shrink-0 overflow-y-auto pt-3"
               style={{ background: "hsl(0,0%,10.5%)", borderRight: "1px solid hsl(0,0%,18%)" }}
             >
-              {visibleSections.map(section => {
+              {visibleSections.map((section, sectionIdx) => {
                 const sectionItems = wo.items.filter(i => i.logbookSection === section)
                 const color = SECTION_COLORS[section]
                 return (
-                  <div key={section}>
+                  <div key={section} className={sectionIdx > 0 ? "mt-2" : ""}>
                     <div
                       className="px-4 py-2.5 flex items-center justify-between sticky top-0 z-10"
                       style={{
@@ -1432,7 +1548,7 @@ export default function WorkOrderDetail() {
             </div>
 
             {/* Right panel: item detail / add form / empty state */}
-            <div className="flex-1 min-w-0 overflow-y-auto">
+            <div className="flex-1 min-w-0 overflow-y-auto pt-3">
               {selectedItem && !addingToSection ? (
                 <ItemDetailPanel
                   item={selectedItem}
@@ -1441,6 +1557,8 @@ export default function WorkOrderDetail() {
                   onPatch={patch => patchItem(selectedItem.id, patch)}
                   onPersist={fields => persistItemFields(selectedItem.id, fields)}
                   onSignOff={() => toggleSignOff(selectedItem.id)}
+                  signOffError={signOffError}
+                  onClearSignOffError={() => setSignOffError(null)}
                   onDeleteLabor={id => removeLaborEntry(selectedItem.id, id)}
                   onDeletePart={id => removePartEntry(selectedItem.id, id)}
                   mechanics={mechanics}
@@ -1632,11 +1750,11 @@ export default function WorkOrderDetail() {
                 <Button
                   size="sm" variant="ghost"
                   disabled={pdfExporting === "logbook"}
-                  onClick={() => handleDownloadPdf("logbook", wo.woNumber)}
+                  onClick={() => handlePreviewPdf("logbook", wo.woNumber)}
                   className="flex items-center gap-2 text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 h-8 px-3 text-xs"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  {pdfExporting === "logbook" ? "Exporting…" : "Download PDF"}
+                  {pdfExporting === "logbook" ? "Generating…" : "Preview PDF"}
                 </Button>
               )}
             </div>
@@ -1648,160 +1766,230 @@ export default function WorkOrderDetail() {
                 <p className="text-sm text-center max-w-xs">Draft entries appear automatically as items are signed off.</p>
               </div>
             ) : (
-              <div ref={logbookPrintRef} className="py-8 px-6 space-y-8" style={{ background: "hsl(0,0%,14%)" }}>
-                {draftLogbookEntries.map(entry => {
+              /* Page wrapper — dark bg; each entry card is white, captured individually by html2canvas */
+              <div ref={logbookPrintRef} className="px-16 py-10 space-y-0" style={{ background: "hsl(0,0%,14%)" }}>
+                {[...draftLogbookEntries].sort((a, b) => {
+                  const ORDER = ["Airframe", "Engine 1", "Engine 2", "Propeller", "APU", "Other"]
+                  return (ORDER.indexOf(a.logbookSection) + 1 || 999) - (ORDER.indexOf(b.logbookSection) + 1 || 999)
+                }).map((entry, idx) => {
                   const edits  = lbEdit(entry.id)
                   const reg    = wo.aircraft?.registration ?? wo.guestRegistration ?? ""
-                  const make   = wo.aircraft?.make ?? ""
-                  const model  = wo.aircraft?.modelFull ?? ""
-                  const serial = wo.aircraft?.serialNumber ?? wo.guestSerial ?? ""
                   const rts    = edits.returnToService || "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed."
+                  const sigs   = entry.signatories.length > 0 ? entry.signatories : [null]
+
+                  // Section-aware left-column fields
+                  const isEngine = entry.logbookSection === "Engine 1" || entry.logbookSection === "Engine 2"
+                  const isProp   = entry.logbookSection === "Propeller"
+                  const isAPU    = entry.logbookSection === "APU"
+                  const leftFields: { label: string; value: string }[] = isEngine ? [
+                    { label: "ENG MFR:",   value: wo.aircraft?.engineManufacturer || "—" },
+                    { label: "ENG MDL:",   value: wo.aircraft?.engineModel        || "—" },
+                    { label: "ENG S/N:",   value: "—" },
+                  ] : isProp ? [
+                    { label: "PROP MFR:",  value: "—" },
+                    { label: "PROP MDL:",  value: "—" },
+                    { label: "PROP S/N:",  value: "—" },
+                  ] : isAPU ? [
+                    { label: "APU MFR:",   value: "—" },
+                    { label: "APU MDL:",   value: "—" },
+                    { label: "APU S/N:",   value: "—" },
+                  ] : [
+                    { label: "MAKE:",      value: wo.aircraft?.make        || "—" },
+                    { label: "MODEL:",     value: wo.aircraft?.modelFull   || "—" },
+                    { label: "S/N:",       value: wo.aircraft?.serialNumber ?? wo.guestSerial ?? "—" },
+                  ]
 
                   return (
+                    <Fragment key={entry.id}>
+                      {idx > 0 && (
+                        <div className="flex items-center gap-2.5 py-5 px-2 select-none" aria-hidden>
+                          <div className="flex-1" style={{ borderTop: "1px dashed rgba(255,255,255,0.10)" }} />
+                          <ChevronsDown className="w-3 h-3 flex-shrink-0" style={{ color: "rgba(255,255,255,0.18)" }} />
+                          <span style={{ fontFamily: "var(--font-heading)", fontSize: "9px", letterSpacing: "0.25em", textTransform: "uppercase", color: "rgba(255,255,255,0.22)" }}>
+                            page break · {entry.logbookSection}
+                          </span>
+                          <ChevronsDown className="w-3 h-3 flex-shrink-0" style={{ color: "rgba(255,255,255,0.18)" }} />
+                          <div className="flex-1" style={{ borderTop: "1px dashed rgba(255,255,255,0.10)" }} />
+                        </div>
+                      )}
                     <div
-                      key={entry.id}
-                      className="mx-auto rounded shadow-2xl overflow-hidden"
-                      style={{ maxWidth: "720px", background: "#fff", color: "#111", fontFamily: "Arial, Helvetica, sans-serif" }}
+                      data-lb-page
+                      className="bg-white border-t-4 border-b-4 border-black text-[13px]"
+                      style={{ fontFamily: "Arial, Helvetica, sans-serif", color: "#111" }}
                     >
-                      {/* ── Top bar ── */}
-                      <div className="flex justify-between items-center px-4 py-1.5 text-xs border-b border-gray-300" style={{ borderTop: "2px solid #555" }}>
-                        <span style={{ fontWeight: 600 }}>{wo.woNumber} ({entry.entryDate})</span>
-                        <span>Page 1 / 1</span>
+                      {/* ── Top strip: WO# + date left, page right ── */}
+                      <div className="flex justify-between items-baseline px-6 py-2 text-[11px]" style={{ borderBottom: "2px solid #9ca3af", marginLeft: "24px", marginRight: "24px" }}>
+                        <span className="font-semibold">{wo.woNumber} ({entry.entryDate})</span>
+                        <span className="text-gray-500">Page 1 / 1</span>
                       </div>
 
                       {/* ── Three-column header ── */}
-                      <div className="grid grid-cols-3 border-b border-gray-300" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-                        {/* Left: aircraft */}
-                        <div className="px-4 py-3 text-xs border-r border-gray-300">
-                          {[
-                            { label: "MAKE",    value: make   || "—" },
-                            { label: "MODEL",   value: model  || "—" },
-                            { label: "S/N",     value: serial || "—" },
-                            { label: "REG. NO", value: reg    || "—" },
-                          ].map(r => (
-                            <div key={r.label} className="flex gap-1 leading-5">
-                              <span style={{ fontWeight: 700, minWidth: "52px" }}>{r.label}:</span>
-                              <span>{r.value}</span>
+                      <div className="flex items-stretch p-5 gap-5 border-b-4 border-black" style={{ borderLeftWidth: 0, borderRightWidth: 0, marginLeft: "24px", marginRight: "24px" }}>
+
+                        {/* Left: section-aware aircraft/component fields */}
+                        <div className="flex-1 text-[12px] space-y-0.5">
+                          {leftFields.map(r => (
+                            <div key={r.label} className="flex gap-1.5 leading-[1.6]">
+                              <span className="font-semibold w-20 flex-shrink-0">{r.label}</span>
+                              <span className="text-gray-800">{r.value}</span>
                             </div>
                           ))}
                         </div>
-                        {/* Center: company */}
-                        <div className="px-4 py-3 flex flex-col items-center justify-center text-center border-r border-gray-300">
-                          <p className="text-sm font-bold leading-tight" style={{ color: "#111" }}>CB Aviation, Inc.</p>
-                          <p className="text-xs" style={{ color: "#555" }}>dba SkyShare</p>
-                          <p className="text-xs mt-1" style={{ color: "#555" }}>3715 Airport Rd.</p>
-                          <p className="text-xs" style={{ color: "#555" }}>Ogden, UT 84116</p>
+
+                        {/* Center: company top, registration pinned to bottom near the dividing line */}
+                        <div className="flex-1 flex flex-col items-center text-center justify-between">
+                          <div>
+                            <div className="font-bold text-base leading-tight">CB Aviation, Inc.</div>
+                            <div className="text-[11px] text-gray-600 leading-tight">dba SkyShare</div>
+                            <div className="text-[11px] text-gray-600 leading-tight mt-0.5">3715 Airport Rd. · Ogden, UT 84116</div>
+                          </div>
+                          <div className="font-black uppercase pb-0.5" style={{ fontSize: "24px", letterSpacing: "0.18em", color: "#111" }}>{reg || "—"}</div>
                         </div>
-                        {/* Right: WO info + editable times */}
-                        <div className="px-4 py-3 text-xs">
-                          {[
-                            { label: "W/O #",    value: wo.woNumber },
-                            { label: "DATE",     value: entry.entryDate },
-                          ].map(r => (
-                            <div key={r.label} className="flex gap-1 leading-5">
-                              <span style={{ fontWeight: 700, minWidth: "60px" }}>{r.label}:</span>
-                              <span>{r.value}</span>
-                            </div>
-                          ))}
-                          {/* Editable A/C TT, Landings, Hobbs — inline inputs styled to look like document fields */}
+
+                        {/* Right: stacked WO fields + editable times */}
+                        <div className="flex-1 text-[12px] space-y-0.5 text-right">
+                          <div className="flex justify-end gap-1.5 leading-[1.6]">
+                            <span className="font-semibold">W/O #:</span>
+                            <span>{wo.woNumber}</span>
+                          </div>
+                          <div className="flex justify-end gap-1.5 leading-[1.6]">
+                            <span className="font-semibold">DATE:</span>
+                            <span>{entry.entryDate}</span>
+                          </div>
                           {([
-                            { label: "A/C TT",   field: "aircraftTime" as const, dbField: "totalAircraftTime" as const, step: "0.1" },
-                            { label: "Landings", field: "landings"     as const, dbField: "landings"          as const, step: "1"   },
-                            { label: "Hobbs",    field: "hobbs"        as const, dbField: "hobbs"             as const, step: "0.1" },
+                            { label: "A/C TT:",   field: "aircraftTime" as const, dbField: "totalAircraftTime" as const, step: "0.1", prev: entry.totalAircraftTime },
+                            { label: "Landings:", field: "landings"     as const, dbField: "landings"          as const, step: "1",   prev: entry.landings },
+                            { label: "Hobbs:",    field: "hobbs"        as const, dbField: "hobbs"             as const, step: "0.1", prev: entry.hobbs },
                           ]).map(f => (
-                            <div key={f.field} className="flex gap-1 items-center leading-5">
-                              <span style={{ fontWeight: 700, minWidth: "60px" }}>{f.label}:</span>
+                            <div key={f.field} className="flex items-center justify-end gap-1.5 leading-[1.6]">
+                              <span className="font-semibold">{f.label}</span>
+                              {f.prev != null && (
+                                <span className="text-gray-400 line-through text-[11px]">{f.prev}</span>
+                              )}
                               <input
-                                type="number" step={f.step} placeholder="___"
+                                type="number" step={f.step} placeholder="—"
                                 value={edits[f.field]}
                                 onChange={e => setLbField(entry.id, f.field, e.target.value)}
                                 onBlur={e => {
                                   const v = e.target.value === "" ? undefined : parseFloat(e.target.value)
                                   updateLogbookEntry(entry.id, { [f.dbField]: v }).catch(console.error)
                                 }}
-                                style={{
-                                  width: "72px", border: "none", borderBottom: "1px solid #aaa",
-                                  background: "transparent", fontSize: "12px", outline: "none",
-                                  color: "#111", padding: "0 2px",
-                                }}
+                                style={{ width: "62px", border: "none", borderBottom: "1px solid #999", background: "transparent", fontSize: "12px", outline: "none", color: "#111", padding: "0 2px", textAlign: "right" }}
                               />
                             </div>
                           ))}
                         </div>
+
                       </div>
 
-                      {/* ── Section header ── */}
-                      <div className="px-4 pt-3 pb-1">
-                        <p className="text-sm font-bold underline" style={{ color: "#111" }}>
+                      {/* ── Section title + entries ── */}
+                      <div className="p-5">
+                        <h2 className="font-bold text-sm uppercase tracking-wide mb-2">
                           {entry.sectionTitle || `${entry.logbookSection} Entries`}
-                        </p>
-                      </div>
+                        </h2>
 
-                      {/* ── Numbered entry lines ── */}
-                      <div className="px-4 pb-3">
                         {entry.lines.length === 0 ? (
-                          <p className="text-xs italic mt-2" style={{ color: "#999" }}>
-                            No entries yet — sign off work order items to populate this logbook page.
+                          <p className="text-[12px] italic text-gray-400 py-2">
+                            Sign off work order items to populate this logbook page.
                           </p>
                         ) : (
-                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                            <tbody>
-                              {entry.lines.map(line => (
-                                <tr key={line.id} style={{ verticalAlign: "top" }}>
-                                  <td style={{ paddingRight: "10px", paddingTop: "3px", width: "20px", textAlign: "right", color: "#555", whiteSpace: "nowrap", fontWeight: 600 }}>
-                                    {line.lineNumber}
-                                  </td>
-                                  <td style={{ paddingTop: "3px", lineHeight: "1.5", color: "#111" }}>
-                                    {line.text}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          <div>
+                            {/* Column headers */}
+                            <div className="grid text-[10px] uppercase tracking-widest text-gray-400 font-semibold mb-1"
+                              style={{ gridTemplateColumns: "36px 110px 1fr" }}>
+                              <div className="text-center">Item</div>
+                              <div className="text-center">Code</div>
+                              <div />
+                            </div>
+                            {/* Rows — no row separators */}
+                            {entry.lines.map(line => (
+                              <div
+                                key={line.id}
+                                className="grid py-1.5"
+                                style={{ gridTemplateColumns: "36px 110px 1fr" }}
+                              >
+                                <div className="text-[13px] text-center">{line.lineNumber}</div>
+                                <div className="text-[13px] font-bold font-mono text-gray-700 text-center break-all leading-snug pt-px">{line.refCode}</div>
+                                <div className="text-[13px] leading-relaxed pl-2">{line.text}</div>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
 
-                      {/* ── Return to service cert ── */}
-                      <div className="px-4 pb-3 pt-2">
-                        <p className="text-xs leading-relaxed" style={{ color: "#111" }}>{rts}</p>
-                      </div>
+                      {/* ── Certification block ── */}
+                      <div className="p-5 bg-gray-50" style={{ borderTop: "4px solid #111", marginLeft: "24px", marginRight: "24px" }}>
+                        <div className="bg-white border-2 border-gray-300 p-4 mb-3">
+                          <p className="text-[11px] leading-snug italic text-gray-700">{rts}</p>
+                        </div>
 
-                      {/* ── Signature blocks ── */}
-                      {(entry.signatories.length > 0 ? entry.signatories : [null]).map((sig, si) => (
-                        <div
-                          key={sig?.id ?? "blank"}
-                          className="px-4 pb-4 pt-1"
-                          style={{ borderTop: si > 0 ? "1px dashed #ccc" : "none" }}
-                        >
-                          <div className="flex items-end justify-between">
-                            <div className="flex items-end gap-6 text-xs">
-                              <div>
-                                <span style={{ fontWeight: 700 }}>DATE: </span>
-                                <span style={{ borderBottom: "1px solid #555", paddingBottom: "1px", minWidth: "90px", display: "inline-block" }}>
+                        {/* Signature rows */}
+                        {sigs.map((sig, si) => (
+                          <div
+                            key={sig?.id ?? "blank"}
+                            style={{ borderTop: si > 0 ? "1px dashed #ccc" : "none", paddingTop: si > 0 ? "10px" : 0, marginTop: si > 0 ? "10px" : 0 }}
+                          >
+                            {/* Four-column horizontal signature bar */}
+                            <div className="grid gap-4 text-[11px]" style={{ gridTemplateColumns: "100px 1fr 1.6fr 160px" }}>
+
+                              {/* 1 — Date */}
+                              <div className="flex flex-col justify-end">
+                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1">Date</div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[12px]">
                                   {entry.entryDate}
-                                </span>
+                                </div>
                               </div>
-                              <div>
-                                <span style={{ fontWeight: 700 }}>SIGNED: </span>
-                                <span style={{ borderBottom: "1px solid #555", minWidth: "160px", display: "inline-block", paddingBottom: "1px" }}>&nbsp;</span>
+
+                              {/* 2 — Name (printed) */}
+                              <div className="flex flex-col justify-end">
+                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1">Name (print)</div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[12px]">
+                                  {sig?.mechanicName || ""}
+                                </div>
                               </div>
+
+                              {/* 3 — Digital Signature */}
+                              <div className="flex flex-col justify-end">
+                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1 flex items-center gap-1.5">
+                                  Signature
+                                  {sig?.mechanicName && (
+                                    <span className="text-[8px] font-normal normal-case tracking-normal px-1.5 py-px rounded-full" style={{ background: "rgba(52,211,153,0.15)", color: "rgba(52,211,153,0.85)" }}>
+                                      digitally signed
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px", minHeight: "28px", display: "flex", alignItems: "flex-end" }}>
+                                  {sig?.mechanicName && (
+                                    <span style={{ fontFamily: "'Dancing Script', cursive", fontSize: "26px", lineHeight: 1, color: "#1a2e4a", letterSpacing: "0.02em" }}>
+                                      {sig.mechanicName}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* 4 — Certificate */}
+                              <div className="flex flex-col justify-end">
+                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1">Certificate</div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[12px]">
+                                  {sig?.certType && sig.certNumber
+                                    ? `${sig.certType} ${sig.certNumber}`
+                                    : sig?.certType ?? "A&P"}
+                                </div>
+                              </div>
+
                             </div>
-                            <div className="text-xs text-right" style={{ color: "#555" }}>
-                              <p>WORK ORDER: {wo.woNumber}</p>
-                              <p>Printed by SkyShare MX</p>
+
+                            {/* W/O + page — flush right, below sig bar */}
+                            <div className="flex justify-end items-center gap-4 mt-2 text-[10px] text-gray-500">
+                              <span className="font-semibold text-[11px] text-gray-700">W/O {wo.woNumber}</span>
+                              <span>Page 1 / 1</span>
                             </div>
                           </div>
-                          {sig && (
-                            <div className="mt-1 text-xs" style={{ marginLeft: "100px", color: "#111" }}>
-                              <p style={{ fontWeight: 600 }}>{sig.mechanicName}</p>
-                              {sig.certType && (
-                                <p>{sig.certType} Number: {sig.certNumber ?? ""}</p>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        ))}
+                      </div>
+
                     </div>
+                    </Fragment>
                   )
                 })}
               </div>
@@ -1838,11 +2026,11 @@ export default function WorkOrderDetail() {
                 <Button
                   size="sm" variant="ghost"
                   disabled={pdfExporting === "invoice"}
-                  onClick={() => handleDownloadPdf("invoice", wo.woNumber)}
+                  onClick={() => handlePreviewPdf("invoice", wo.woNumber)}
                   className="flex items-center gap-2 text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 h-8 px-3 text-xs"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  {pdfExporting === "invoice" ? "Exporting…" : "Download PDF"}
+                  {pdfExporting === "invoice" ? "Generating…" : "Preview PDF"}
                 </Button>
               </div>
 
@@ -2014,50 +2202,41 @@ export default function WorkOrderDetail() {
       {/* ── STATUS BAR ───────────────────────────────────────────────────────── */}
       {!isLocked && (NEXT_STATUS[wo.status] || PREV_STATUS[wo.status]) && (
         <div
-          className="flex-shrink-0 px-6 py-3 flex items-center justify-between gap-4"
+          className="flex-shrink-0 px-6 py-2.5 flex items-center justify-end gap-3"
           style={{
-            background: "linear-gradient(to top, hsl(0,0%,8%), hsl(0,0%,11%))",
-            borderTop: "1px solid hsl(0,0%,22%)",
+            background: "hsl(0,0%,9%)",
+            borderTop: "1px solid hsl(0,0%,18%)",
           }}
         >
-          <div className="flex items-center gap-2 text-sm text-white/40">
-            <span>Status:</span>
-            <WOStatusBadge status={wo.status} />
-            {NEXT_STATUS[wo.status] && (
-              <><ChevronRight className="w-4 h-4" /><WOStatusBadge status={NEXT_STATUS[wo.status]!} /></>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            {PREV_STATUS[wo.status] && (
-              <Button
-                variant="ghost" size="sm" onClick={regressStatus}
-                className="text-white/40 hover:text-white/70 border border-white/10 h-9 px-4 text-sm"
-              >
-                ← Return to {WO_STATUS_LABELS[PREV_STATUS[wo.status]!]}
-              </Button>
-            )}
-            {wo.status === "waiting_on_parts" && (
-              <Button
-                variant="ghost" size="sm"
-                onClick={() => navigate("/app/beet-box/purchase-orders")}
-                className="text-amber-400/80 hover:text-amber-300 border border-amber-900/30 h-9 px-4 text-sm"
-              >
-                View Purchase Orders
-              </Button>
-            )}
-            {NEXT_STATUS[wo.status] && (
-              <Button
-                size="sm" onClick={advanceStatus}
-                style={wo.status === "billing" ? { background: "var(--skyshare-gold)", color: "#000" } : {}}
-                className={cn(
-                  "font-bold h-10 px-6 text-sm",
-                  wo.status !== "billing" && "bg-blue-700/40 hover:bg-blue-700/60 text-blue-100 border border-blue-800/40"
-                )}
-              >
-                {NEXT_STATUS_LABEL[wo.status]}
-              </Button>
-            )}
-          </div>
+          {PREV_STATUS[wo.status] && (
+            <Button
+              variant="ghost" size="sm" onClick={regressStatus}
+              className="text-white/35 hover:text-white/60 border border-white/10 h-8 px-3 text-xs"
+            >
+              ← {WO_STATUS_LABELS[PREV_STATUS[wo.status]!]}
+            </Button>
+          )}
+          {wo.status === "waiting_on_parts" && (
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => navigate("/app/beet-box/purchase-orders")}
+              className="text-amber-400/80 hover:text-amber-300 border border-amber-900/30 h-8 px-3 text-xs"
+            >
+              Purchase Orders
+            </Button>
+          )}
+          {NEXT_STATUS[wo.status] && (
+            <Button
+              size="sm" onClick={advanceStatus}
+              style={wo.status === "billing" ? { background: "var(--skyshare-gold)", color: "#000" } : {}}
+              className={cn(
+                "font-bold h-9 px-5 text-sm",
+                wo.status !== "billing" && "bg-blue-700/40 hover:bg-blue-700/60 text-blue-100 border border-blue-800/40"
+              )}
+            >
+              {NEXT_STATUS_LABEL[wo.status]}
+            </Button>
+          )}
         </div>
       )}
 
@@ -2075,7 +2254,7 @@ export default function WorkOrderDetail() {
           {wo.status === "completed" && (
             <Button
               variant="ghost"
-              onClick={() => navigate("/app/beet-box/logbook")}
+              onClick={() => setActiveTab("logbook")}
               className="text-white/50 hover:text-white/80 text-sm ml-2"
             >
               View Logbook →
@@ -2132,6 +2311,51 @@ export default function WorkOrderDetail() {
                 Cancel
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── PDF Preview Modal ─────────────────────────────────────────────── */}
+      {pdfPreview && (
+        <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "rgba(0,0,0,0.85)" }}>
+          <div
+            className="flex items-center justify-between px-6 py-3 flex-shrink-0"
+            style={{ background: "hsl(0 0% 10%)", borderBottom: "1px solid hsl(0 0% 20%)" }}
+          >
+            <div className="flex items-center gap-3">
+              <BookOpen className="w-4 h-4 text-white/40" />
+              <span className="text-white/70 text-sm font-medium">{pdfPreview.filename}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const a = document.createElement("a")
+                  a.href = pdfPreview.url
+                  a.download = pdfPreview.filename
+                  a.click()
+                }}
+                style={{ background: "var(--skyshare-gold)", color: "#000" }}
+                className="font-semibold text-xs h-8 px-4 flex items-center gap-2"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
+              </Button>
+              <button
+                onClick={closePdfPreview}
+                className="text-white/40 hover:text-white/80 transition-colors p-1.5 rounded hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-hidden p-6">
+            <iframe
+              src={pdfPreview.url}
+              className="w-full h-full rounded"
+              style={{ border: "none" }}
+              title="PDF Preview"
+            />
           </div>
         </div>
       )}

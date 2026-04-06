@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect } from "react"
-import { AlertTriangle, Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { AlertTriangle, Award, Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { getMechanicCerts, upsertMechanicCert } from "@/features/beet-box/services/mechanics"
+import type { MechanicCert } from "@/features/beet-box/types"
 import { SuggestionWidget } from "@/features/site-suggestions"
 import { useNavigate } from "react-router-dom"
 import { useTheme } from "next-themes"
@@ -142,6 +144,41 @@ function ProfileSettingsDialog({
   const [saved, setSaved] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ── Mechanic cert state ────────────────────────────────────────────────────
+  const [existingCert, setExistingCert]   = useState<MechanicCert | null>(null)
+  const [certType, setCertType]           = useState<MechanicCert["certType"]>("A&P")
+  const [certNumber, setCertNumber]       = useState("")
+  const [certSaving, setCertSaving]       = useState(false)
+  const [certSaved, setCertSaved]         = useState(false)
+
+  const certChanged = certType !== (existingCert?.certType ?? "A&P") || certNumber !== (existingCert?.certNumber ?? "")
+
+  async function loadCert(profileId: string) {
+    const certs = await getMechanicCerts(profileId)
+    const primary = certs.find(c => c.isPrimary) ?? certs[0] ?? null
+    setExistingCert(primary)
+    setCertType(primary?.certType ?? "A&P")
+    setCertNumber(primary?.certNumber ?? "")
+  }
+
+  async function handleSaveCert() {
+    if (!profile || !certNumber.trim()) return
+    setCertSaving(true)
+    await upsertMechanicCert({
+      id: existingCert?.id,
+      profileId: profile.id,
+      certType,
+      certNumber: certNumber.trim(),
+      issuedDate: existingCert?.issuedDate ?? null,
+      isPrimary: true,
+      notes: existingCert?.notes ?? null,
+    })
+    await loadCert(profile.id)
+    setCertSaving(false)
+    setCertSaved(true)
+    setTimeout(() => setCertSaved(false), 2000)
+  }
+
   // Reset local state when dialog opens
   const handleOpenChange = (v: boolean) => {
     if (v && profile) {
@@ -150,6 +187,7 @@ function ProfileSettingsDialog({
       setAvatarInitials(profile.avatar_initials ?? "")
       setAvatarPreviewUrl(profile.avatar_url ?? "")
       setSaved(false)
+      loadCert(profile.id)
     }
     onOpenChange(v)
   }
@@ -348,6 +386,74 @@ function ProfileSettingsDialog({
                   )}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* ── Mechanic Certificate ── */}
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 block" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
+              <Award size={11} style={{ color: "var(--skyshare-gold)" }} />
+              Mechanic Certificate
+            </label>
+            <div className="rounded-md p-3 space-y-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              {/* Cert type */}
+              <div>
+                <p className="text-[10px] mb-1" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>Certificate Type</p>
+                <div className="flex gap-1.5 flex-wrap">
+                  {(["A&P", "IA", "A&P/IA", "Avionics", "Other"] as MechanicCert["certType"][]).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setCertType(t)}
+                      className="px-3 py-1 rounded text-xs font-semibold transition-all"
+                      style={{
+                        background: certType === t ? "var(--skyshare-gold)" : "rgba(255,255,255,0.05)",
+                        color: certType === t ? "#111" : "rgba(255,255,255,0.5)",
+                        border: certType === t ? "1px solid transparent" : "1px solid rgba(255,255,255,0.08)",
+                        fontFamily: "var(--font-heading)",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Cert number */}
+              <div>
+                <p className="text-[10px] mb-1" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>Certificate Number</p>
+                <div className="flex gap-2 items-center">
+                  <Input
+                    value={certNumber}
+                    onChange={e => setCertNumber(e.target.value)}
+                    placeholder="e.g. 3444980"
+                    className="h-9 text-sm bg-white/5 border-white/10 font-mono flex-1"
+                  />
+                  <Button
+                    onClick={handleSaveCert}
+                    disabled={!certChanged || certSaving || !certNumber.trim()}
+                    className="h-9 px-4 text-xs font-bold uppercase tracking-wider shrink-0"
+                    style={{
+                      background: certChanged && certNumber.trim() ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
+                      color: certChanged && certNumber.trim() ? "#111" : "hsl(var(--muted-foreground))",
+                      fontFamily: "var(--font-heading)",
+                    }}
+                  >
+                    {certSaved ? <Check size={14} /> : certSaving ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+              </div>
+              {/* Preview */}
+              {existingCert && (
+                <p className="text-[10px]" style={{ color: "rgba(52,211,153,0.7)" }}>
+                  ✓ Certificate on file: {existingCert.certType} {existingCert.certNumber}
+                  {" — "}will appear on logbook entries you sign
+                </p>
+              )}
+              {!existingCert && (
+                <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+                  No certificate on file yet. This populates the signature block on logbook entries.
+                </p>
+              )}
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=Dancing+Script:wght@600&display=swap');
 @import '@fontsource/dm-sans/400.css';
 @import '@fontsource/dm-sans/500.css';
 
@@ -156,6 +156,29 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;
   background-size: 200px 200px;
+}
+
+/* ─────────────────────────────────────────
+   REF CODE INPUT — pulsing border until filled
+───────────────────────────────────────── */
+@keyframes ref-code-pulse {
+  0%, 100% {
+    border-color: rgba(52, 211, 153, 0.3);
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+  50% {
+    border-color: rgba(52, 211, 153, 0.85);
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.12), 0 0 12px rgba(52, 211, 153, 0.18);
+  }
+}
+
+.ref-code-input-empty {
+  animation: ref-code-pulse 2s ease-in-out infinite;
+}
+
+.ref-code-input-filled {
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  box-shadow: none !important;
 }
 
 /* ─────────────────────────────────────────

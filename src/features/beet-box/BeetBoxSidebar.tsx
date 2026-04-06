@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { NavLink, useNavigate, useLocation } from "react-router-dom"
 import {
   ClipboardList, Package, ShoppingCart, Wrench,
-  FileText, BookOpen, BookMarked, GraduationCap,
+  FileText, BookMarked, GraduationCap,
   PanelLeftOpen, PanelLeftClose, Settings, Boxes,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
@@ -11,7 +11,6 @@ import { SuggestionWidget } from "@/features/site-suggestions"
 
 const OPS_ITEMS = [
   { label: "Work Orders",      path: "/app/beet-box/work-orders",     icon: ClipboardList },
-  { label: "Logbook",          path: "/app/beet-box/logbook",          icon: BookOpen      },
   { label: "Invoicing",        path: "/app/beet-box/invoicing",        icon: FileText      },
   { label: "Inventory",        path: "/app/beet-box/inventory",        icon: Package       },
   { label: "Parts",            path: "/app/beet-box/parts",            icon: Boxes         },
