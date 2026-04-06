@@ -6,7 +6,7 @@ import { cn } from "@/shared/lib/utils"
 import { getWorkOrders } from "../../services"
 import { WO_STATUS_LABELS } from "../../constants"
 import type { WorkOrder, WOStatus } from "../../types"
-import { WOStatusBadge, PriorityBadge } from "../../shared/StatusBadge"
+import { WOStatusBadge } from "../../shared/StatusBadge"
 
 const KANBAN_COLS: WOStatus[] = ["draft", "open", "waiting_on_parts", "in_review", "billing", "completed"]
 
@@ -49,7 +49,6 @@ export default function WorkOrderDashboard() {
   const review  = workOrders.filter(w => w.status === "in_review").length
   const billing = workOrders.filter(w => w.status === "billing").length
   const done    = workOrders.filter(w => w.status === "completed").length
-  const aog     = workOrders.filter(w => w.priority === "aog").length
 
   return (
     <div className="min-h-screen">
@@ -137,13 +136,6 @@ export default function WorkOrderDashboard() {
           ))}
         </div>
 
-        {/* AOG alert */}
-        {!loading && aog > 0 && (
-          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-red-900/20 border border-red-800/40">
-            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-            <span className="text-red-300 text-sm font-medium">{aog} aircraft on ground (AOG) — immediate attention required</span>
-          </div>
-        )}
 
         {/* Loading skeleton */}
         {loading && (
@@ -175,7 +167,6 @@ export default function WorkOrderDashboard() {
                       >
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-white/70 text-xs font-mono">{wo.woNumber}</span>
-                          <PriorityBadge priority={wo.priority} />
                         </div>
                         <p className="text-white/85 text-xs leading-snug line-clamp-2">{wo.woType}</p>
                         <p className="text-white/35 text-xs">{wo.aircraft?.registration ?? wo.guestRegistration ?? "—"}</p>
@@ -243,7 +234,6 @@ export default function WorkOrderDashboard() {
                       <td className="px-4 py-3 text-white/80 text-sm max-w-[220px]">
                         <span className="line-clamp-1">{wo.woType}</span>
                       </td>
-                      <td className="px-4 py-3"><PriorityBadge priority={wo.priority} /></td>
                       <td className="px-4 py-3"><WOStatusBadge status={wo.status} /></td>
                       <td className="px-4 py-3 text-white/50 text-xs">
                         {wo.mechanics.length > 0

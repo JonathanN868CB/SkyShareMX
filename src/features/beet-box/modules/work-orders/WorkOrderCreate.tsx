@@ -213,7 +213,7 @@ export default function WorkOrderCreate() {
   // Fresh form
   const [form, setForm]     = useState({
     aircraftId: "", guestRegistration: "", guestSerial: "",
-    woType: "", priority: "routine" as "routine" | "urgent" | "aog",
+    woType: "",
     description: "", meterAtOpen: "", mechanic: "",
   })
   const [submitting, setSubmitting]   = useState(false)
@@ -260,7 +260,6 @@ export default function WorkOrderCreate() {
       const wo = await createWorkOrder({
         woType: form.woType,
         description: form.description || undefined,
-        priority: form.priority,
         aircraftId: aircraftMode === "fleet" ? form.aircraftId || undefined : undefined,
         guestRegistration: aircraftMode === "guest" ? form.guestRegistration || undefined : undefined,
         guestSerial: aircraftMode === "guest" ? form.guestSerial || undefined : undefined,
@@ -500,7 +499,6 @@ export default function WorkOrderCreate() {
       const wo = await createWorkOrder({
         woType:            "Scheduled Maintenance — Traxxall Import",
         description:       `Traxxall import — ${parsed.aircraftReg}. ${selected.length} tasks across ${sections.join(", ")}.`,
-        priority:          "routine",
         aircraftId:        matchedAircraft?.id ?? undefined,
         guestRegistration: matchedAircraft ? undefined : parsed.aircraftReg,
         meterAtOpen:       parsed.currentHrsAirframe ? parseFloat(parsed.currentHrsAirframe) : undefined,
@@ -657,21 +655,6 @@ export default function WorkOrderCreate() {
                 <option value="">Select type…</option>
                 {WO_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Priority</Label>
-              <div className="flex gap-3">
-                {(["routine", "urgent", "aog"] as const).map(p => (
-                  <button key={p} type="button" onClick={() => setForm(f => ({ ...f, priority: p }))}
-                    className="flex-1 py-2 rounded text-xs font-semibold uppercase tracking-widest transition-all"
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      background: form.priority === p ? p === "routine" ? "rgba(100,116,139,0.3)" : p === "urgent" ? "rgba(245,158,11,0.2)" : "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.04)",
-                      border: form.priority === p ? p === "routine" ? "1px solid rgba(100,116,139,0.5)" : p === "urgent" ? "1px solid rgba(245,158,11,0.4)" : "1px solid rgba(239,68,68,0.5)" : "1px solid rgba(255,255,255,0.08)",
-                      color: form.priority === p ? p === "routine" ? "#94a3b8" : p === "urgent" ? "#fbbf24" : "#f87171" : "rgba(255,255,255,0.35)",
-                    }}>{p.toUpperCase()}</button>
-                ))}
-              </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Description *</Label>
