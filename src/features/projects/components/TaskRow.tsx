@@ -346,7 +346,6 @@ export function TaskRow({
             </div>,
             document.body
           )}
-          </div>{/* end group/assign */}
         </div>
 
         {/* ── Status ───────────────────────────────────────────── */}
