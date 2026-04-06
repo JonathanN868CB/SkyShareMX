@@ -155,6 +155,29 @@ export async function updateLogbookEntry(
   if (error) throw error
 }
 
+export async function updateSignatory(
+  signatoryId: string,
+  patch: { mechanicName?: string; certType?: CertType | null; certNumber?: string | null }
+): Promise<void> {
+  const { error } = await supabase
+    .from("bb_logbook_entry_signatories")
+    .update({
+      ...(patch.mechanicName !== undefined && { mechanic_name: patch.mechanicName }),
+      ...(patch.certType     !== undefined && { cert_type: patch.certType }),
+      ...(patch.certNumber   !== undefined && { cert_number: patch.certNumber }),
+    })
+    .eq("id", signatoryId)
+  if (error) throw error
+}
+
+export async function deleteEntryLine(lineId: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_logbook_entry_lines")
+    .delete()
+    .eq("id", lineId)
+  if (error) throw error
+}
+
 export async function signLogbookEntry(id: string): Promise<void> {
   const { error } = await supabase
     .from("bb_logbook_entries")
@@ -277,7 +300,8 @@ export async function addSignatoryLine(
   entryId: string,
   text: string,
   signatoryId: string | null,
-  woItemId: string | null
+  woItemId: string | null,
+  refCode: string = ""
 ): Promise<void> {
   // Get next line number for this entry
   const { count } = await supabase
@@ -291,6 +315,7 @@ export async function addSignatoryLine(
       entry_id: entryId,
       line_number: (count ?? 0) + 1,
       text,
+      ref_code: refCode,
       signatory_id: signatoryId ?? null,
       wo_item_id: woItemId ?? null,
     })
@@ -302,11 +327,11 @@ async function fetchAircraftMaps(aircraftIds: string[]) {
   if (!aircraftIds.length) return { acMap: new Map(), regMap: new Map() }
 
   const [{ data: acRows }, { data: regRows }] = await Promise.all([
-    supabase.from("aircraft").select("id, make, model_full, serial_number").in("id", aircraftIds),
+    supabase.from("aircraft").select("id, make, model_full, serial_number, engine_manufacturer, engine_model").in("id", aircraftIds),
     supabase.from("aircraft_registrations").select("aircraft_id, registration").in("aircraft_id", aircraftIds).eq("is_current", true),
   ])
 
-  const acMap = new Map((acRows ?? []).map((r) => [r.id, { make: r.make, modelFull: r.model_full, serialNumber: r.serial_number }]))
+  const acMap = new Map((acRows ?? []).map((r) => [r.id, { make: r.make, modelFull: r.model_full, serialNumber: r.serial_number, engineManufacturer: r.engine_manufacturer ?? null, engineModel: r.engine_model ?? null }]))
   const regMap = new Map((regRows ?? []).map((r) => [r.aircraft_id, r.registration]))
   return { acMap, regMap }
 }
@@ -332,6 +357,7 @@ function mapEntryRow(row: any, acMap: Map<string, any>, regMap: Map<string, stri
       entryId: l.entry_id,
       lineNumber: l.line_number,
       text: l.text,
+      refCode: l.ref_code ?? "",
       signatoryId: l.signatory_id ?? null,
       woItemId: l.wo_item_id ?? null,
     }))

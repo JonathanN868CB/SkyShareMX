@@ -81,7 +81,7 @@ export function buildAircraftRef(
   aircraftId: string | null,
   guestRegistration: string | null,
   guestSerial: string | null,
-  acMap: Map<string, { make: string; modelFull: string; serialNumber: string }>,
+  acMap: Map<string, { make: string; modelFull: string; serialNumber: string; engineManufacturer: string | null; engineModel: string | null }>,
   regMap: Map<string, string>
 ): AircraftRef | null {
   if (aircraftId) {
@@ -92,6 +92,8 @@ export function buildAircraftRef(
       serialNumber: ac?.serialNumber ?? null,
       make: ac?.make ?? null,
       modelFull: ac?.modelFull ?? null,
+      engineManufacturer: ac?.engineManufacturer ?? null,
+      engineModel: ac?.engineModel ?? null,
     }
   }
   if (guestRegistration) {
@@ -101,6 +103,8 @@ export function buildAircraftRef(
       serialNumber: guestSerial,
       make: null,
       modelFull: null,
+      engineManufacturer: null,
+      engineModel: null,
     }
   }
   return null

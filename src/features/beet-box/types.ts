@@ -54,6 +54,8 @@ export interface AircraftRef {
   serialNumber: string | null   // fleet: aircraft.serial_number; guest: guest_serial
   make: string | null
   modelFull: string | null
+  engineManufacturer: string | null
+  engineModel: string | null
 }
 
 // ─── Mechanic / Technician ────────────────────────────────────────────────────
@@ -109,6 +111,7 @@ export interface WOItem {
   serialNumber: string | null
   discrepancy: string
   correctiveAction: string
+  refCode: string
   mechanicId: string | null
   mechanicName: string | null
   estimatedHours: number
@@ -350,6 +353,7 @@ export interface LogbookEntryLine {
   entryId: string
   lineNumber: number
   text: string
+  refCode: string
   signatoryId: string | null
   woItemId: string | null
 }
