@@ -209,10 +209,10 @@ export const APP_SECTIONS: AppSection[] = [
   "AI Assistant",
   "Aircraft Conformity",
   "14-Day Check",
+  "Projects",
   "Maintenance Planning",
   "Ten or More",
   "Terminal-OGD",
-  "Projects",
   "Training",
   "Docs & Links",
   "My Journey",
@@ -332,4 +332,135 @@ export const DEFAULT_PERMISSIONS: AppSection[] = [
   "Dashboard",
   "Aircraft Info",
   "AI Assistant",
+]
+
+// ─── Projects Module ──────────────────────────────────────────────────────────
+
+export type PmBoard = {
+  id: string
+  name: string
+  color: string
+  description: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+}
+
+export type PmBoardMember = {
+  id: string
+  board_id: string
+  profile_id: string
+  added_by: string | null
+  added_at: string
+}
+
+export type PmStatus = {
+  id: string
+  board_id: string
+  label: string
+  color: string
+  sort_order: number
+  is_default: boolean
+  created_at: string
+}
+
+export type PmGroup = {
+  id: string
+  board_id: string
+  name: string
+  color: string
+  sort_order: number
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type PmTask = {
+  id: string
+  group_id: string
+  parent_task_id: string | null
+  name: string
+  champion_id: string | null
+  status_id: string | null
+  due_date: string | null
+  completion_note: string | null
+  sort_order: number
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+}
+
+export type PmTaskContributor = {
+  task_id: string
+  profile_id: string
+  added_at: string
+}
+
+export type PmTaskComment = {
+  id: string
+  task_id: string
+  author_id: string
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export type PmTaskAttachment = {
+  id: string
+  task_id: string
+  file_name: string
+  file_size: number | null
+  storage_path: string
+  uploaded_by: string | null
+  created_at: string
+}
+
+// Enriched types used by the UI (joined with profile data)
+export type PmProfile = {
+  id: string
+  full_name: string
+  display_name: string | null
+  avatar_color: string
+  avatar_initials: string
+  avatar_url: string | null
+}
+
+export type PmTaskWithRelations = PmTask & {
+  champion: PmProfile | null
+  contributors: PmProfile[]
+  status: PmStatus | null
+  subtasks: PmTask[]
+  comment_count: number
+  attachment_count: number
+}
+
+export type PmGroupWithTasks = PmGroup & {
+  tasks: PmTaskWithRelations[]
+}
+
+export type PmBoardWithGroups = PmBoard & {
+  groups: PmGroupWithTasks[]
+  statuses: PmStatus[]
+  members: (PmBoardMember & { profile: PmProfile })[]
+}
+
+export const PM_DEFAULT_STATUSES: Omit<PmStatus, "id" | "board_id" | "created_at">[] = [
+  { label: "Not Started",   color: "#6b7280", sort_order: 0, is_default: true  },
+  { label: "Working On It", color: "#3b82f6", sort_order: 1, is_default: false },
+  { label: "Need Help",     color: "#f59e0b", sort_order: 2, is_default: false },
+  { label: "Stuck",         color: "#ef4444", sort_order: 3, is_default: false },
+  { label: "Done",          color: "#10b981", sort_order: 4, is_default: false },
+]
+
+export const PM_BOARD_COLORS: { label: string; value: string }[] = [
+  { label: "Navy",    value: "#012E45" },
+  { label: "Blue",    value: "#466481" },
+  { label: "Gold",    value: "#D4A017" },
+  { label: "Red",     value: "#C10230" },
+  { label: "Green",   value: "#10B981" },
+  { label: "Purple",  value: "#7c3aed" },
+  { label: "Teal",    value: "#0d9488" },
+  { label: "Orange",  value: "#ea580c" },
 ]

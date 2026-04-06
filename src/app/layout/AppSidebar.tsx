@@ -86,6 +86,7 @@ const sidebarSections: SidebarSection[] = [
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
       { name: "14-Day Check",           path: "/app/14-day-check",             icon: CalendarClock, section: "14-Day Check"              },
+      { name: "Projects",               path: "/app/projects",                 icon: Kanban,        section: "Projects"                  },
       { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
       { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],
@@ -105,7 +106,6 @@ const sidebarSections: SidebarSection[] = [
           { name: "Maintenance Planning", path: "/app/planning",     icon: ClipboardList, section: "Maintenance Planning" },
           { name: "Ten or More",          path: "/app/ten-or-more",  icon: ShieldCheck,   section: "Ten or More"          },
           { name: "Terminal-OGD",         path: "/app/terminal-ogd", icon: Building,      section: "Terminal-OGD"         },
-          { name: "Projects",             path: "/app/projects",     icon: Kanban,        section: "Projects"             },
           { name: "Docs & Links",         path: "/app/docs",         icon: FileText,      section: "Docs & Links"         },
         ],
       },
@@ -186,7 +186,7 @@ export function AppSidebar() {
               {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
               {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
               {!collapsed && item.name === "Site Suggestions" && <SuggestionsBadge />}
-              {!collapsed && (item.name === "Beet Box" || item.name === "Records Vault") && (
+              {!collapsed && (item.name === "Beet Box" || item.name === "Records Vault" || item.name === "Projects") && (
                 <span
                   className="flex-shrink-0 text-[8px] font-bold tracking-widest px-1 py-0.5 rounded"
                   style={{

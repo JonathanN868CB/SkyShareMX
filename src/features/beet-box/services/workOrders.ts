@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase"
 import type {
   WorkOrder, WOItem, WOItemPart, WOItemLabor,
-  WOStatusChange, WOStatus, WOItemStatus, Mechanic,
+  WOStatusChange, WOStatus, WOItemStatus, Mechanic, CertType,
 } from "../types"
 import { buildAircraftRef } from "./aircraft"
 
@@ -20,6 +20,29 @@ export async function getMyProfileId(): Promise<string | null> {
   return data?.id ?? null
 }
 
+export async function getMyProfile(): Promise<{ id: string; name: string; certType: CertType | null; certNumber: string | null } | null> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, full_name, display_name, email")
+    .eq("user_id", user.id)
+    .maybeSingle()
+  if (!profile) return null
+  const { data: cert } = await supabase
+    .from("bb_mechanic_certs")
+    .select("cert_type, cert_number")
+    .eq("profile_id", profile.id)
+    .eq("is_primary", true)
+    .maybeSingle()
+  return {
+    id: profile.id,
+    name: profile.full_name ?? profile.display_name ?? profile.email ?? "Unknown",
+    certType: (cert?.cert_type as CertType) ?? null,
+    certNumber: cert?.cert_number ?? null,
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function fetchAircraftMaps(aircraftIds: string[]) {
@@ -28,7 +51,7 @@ async function fetchAircraftMaps(aircraftIds: string[]) {
   const [{ data: acRows }, { data: regRows }] = await Promise.all([
     supabase
       .from("aircraft")
-      .select("id, make, model_full, serial_number")
+      .select("id, make, model_full, serial_number, engine_manufacturer, engine_model")
       .in("id", aircraftIds),
     supabase
       .from("aircraft_registrations")
@@ -38,7 +61,7 @@ async function fetchAircraftMaps(aircraftIds: string[]) {
   ])
 
   const acMap = new Map(
-    (acRows ?? []).map((r) => [r.id, { make: r.make, modelFull: r.model_full, serialNumber: r.serial_number }])
+    (acRows ?? []).map((r) => [r.id, { make: r.make, modelFull: r.model_full, serialNumber: r.serial_number, engineManufacturer: r.engine_manufacturer ?? null, engineModel: r.engine_model ?? null }])
   )
   const regMap = new Map(
     (regRows ?? []).map((r) => [r.aircraft_id, r.registration])
@@ -278,6 +301,7 @@ export async function upsertWOItem(
     serial_number: item.serialNumber ?? null,
     discrepancy: item.discrepancy ?? "",
     corrective_action: item.correctiveAction ?? "",
+    ref_code: item.refCode ?? "",
     mechanic_id: item.mechanicId ?? null,
     estimated_hours: item.estimatedHours ?? 0,
     labor_rate: item.laborRate ?? 125,
@@ -311,6 +335,7 @@ export async function updateWOItemFields(
   fields: Partial<{
     discrepancy: string
     correctiveAction: string
+    refCode: string
     estimatedHours: number
     laborRate: number
     shippingCost: number
@@ -323,6 +348,7 @@ export async function updateWOItemFields(
   const payload: Record<string, unknown> = {}
   if (fields.discrepancy        !== undefined) payload.discrepancy           = fields.discrepancy
   if (fields.correctiveAction   !== undefined) payload.corrective_action     = fields.correctiveAction
+  if (fields.refCode            !== undefined) payload.ref_code              = fields.refCode
   if (fields.estimatedHours     !== undefined) payload.estimated_hours       = fields.estimatedHours
   if (fields.laborRate          !== undefined) payload.labor_rate            = fields.laborRate
   if (fields.shippingCost       !== undefined) payload.shipping_cost         = fields.shippingCost
@@ -499,6 +525,7 @@ function mapItemRow(row: any): WOItem {
     serialNumber: row.serial_number,
     discrepancy: row.discrepancy,
     correctiveAction: row.corrective_action,
+    refCode: row.ref_code ?? "",
     mechanicId: row.mechanic_id,
     mechanicName: null,
     estimatedHours: row.estimated_hours,
