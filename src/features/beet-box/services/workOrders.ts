@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase"
 import type {
   WorkOrder, WOItem, WOItemPart, WOItemLabor,
-  WOStatusChange, WOStatus, WOItemStatus, Mechanic, CertType,
+  WOStatusChange, WOStatus, WOItemStatus, Mechanic, CertType, AuditEntry,
 } from "../types"
 import { buildAircraftRef } from "./aircraft"
 
@@ -113,7 +113,8 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
         profile_id,
         profiles!bb_work_order_mechanics_profile_id_fkey ( id, full_name, display_name, email )
       ),
-      bb_work_order_status_history ( * )
+      bb_work_order_status_history ( * ),
+      bb_work_order_audit_trail ( * )
     `)
     .eq("id", id)
     .maybeSingle()
@@ -143,6 +144,9 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
   wo.statusHistory = ((row.bb_work_order_status_history ?? []) as any[])
     .sort((a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime())
     .map(mapStatusHistoryRow)
+  wo.auditTrail = ((row.bb_work_order_audit_trail ?? []) as any[])
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map(mapAuditEntryRow)
 
   return wo
 }
@@ -152,7 +156,6 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
 export async function createWorkOrder(payload: {
   woType: string
   description?: string
-  priority?: WorkOrder["priority"]
   aircraftId?: string
   guestRegistration?: string
   guestSerial?: string
@@ -161,14 +164,14 @@ export async function createWorkOrder(payload: {
   notes?: string
   openedBy: string
 }): Promise<WorkOrder> {
-  // Generate WO number: WO-YYYY-NNNN
-  const year = new Date().getFullYear()
+  // Generate WO number: YY-NNNN (e.g. 26-0025)
+  const yy = String(new Date().getFullYear()).slice(-2)
   const { count } = await supabase
     .from("bb_work_orders")
     .select("id", { count: "exact", head: true })
 
   const seq = String((count ?? 0) + 1).padStart(4, "0")
-  const woNumber = `WO-${year}-${seq}`
+  const woNumber = `${yy}-${seq}`
 
   const { data, error } = await supabase
     .from("bb_work_orders")
@@ -176,7 +179,6 @@ export async function createWorkOrder(payload: {
       wo_number: woNumber,
       wo_type: payload.woType,
       description: payload.description ?? null,
-      priority: payload.priority ?? "routine",
       aircraft_id: payload.aircraftId ?? null,
       guest_registration: payload.guestRegistration ?? null,
       guest_serial: payload.guestSerial ?? null,
@@ -245,7 +247,6 @@ export async function updateWorkOrder(
   payload: Partial<{
     woType: string
     description: string
-    priority: WorkOrder["priority"]
     meterAtOpen: number
     meterAtClose: number
     discrepancyRef: string
@@ -257,7 +258,6 @@ export async function updateWorkOrder(
     .update({
       ...(payload.woType !== undefined && { wo_type: payload.woType }),
       ...(payload.description !== undefined && { description: payload.description }),
-      ...(payload.priority !== undefined && { priority: payload.priority }),
       ...(payload.meterAtOpen !== undefined && { meter_at_open: payload.meterAtOpen }),
       ...(payload.meterAtClose !== undefined && { meter_at_close: payload.meterAtClose }),
       ...(payload.discrepancyRef !== undefined && { discrepancy_ref: payload.discrepancyRef }),
@@ -468,6 +468,41 @@ export async function deleteWorkOrder(id: string): Promise<void> {
   if (error) throw error
 }
 
+// ─── Audit Trail ─────────────────────────────────────────────────────────────
+
+export async function addAuditEntry(
+  workOrderId: string,
+  entry: {
+    entryType: string
+    actorId?: string | null
+    actorName?: string | null
+    summary: string
+    detail?: string | null
+    fieldName?: string | null
+    oldValue?: string | null
+    newValue?: string | null
+    itemId?: string | null
+    itemNumber?: number | null
+  }
+): Promise<void> {
+  const { error } = await supabase
+    .from("bb_work_order_audit_trail")
+    .insert({
+      work_order_id: workOrderId,
+      entry_type:    entry.entryType,
+      actor_id:      entry.actorId   ?? null,
+      actor_name:    entry.actorName ?? null,
+      summary:       entry.summary,
+      detail:        entry.detail    ?? null,
+      field_name:    entry.fieldName ?? null,
+      old_value:     entry.oldValue  ?? null,
+      new_value:     entry.newValue  ?? null,
+      item_id:       entry.itemId    ?? null,
+      item_number:   entry.itemNumber ?? null,
+    })
+  if (error) throw error
+}
+
 // ─── Row mappers ─────────────────────────────────────────────────────────────
 
 function mapWorkOrderRow(
@@ -494,7 +529,6 @@ function mapWorkOrderRow(
     guestSerial: row.guest_serial,
     aircraft: buildAircraftRef(row.aircraft_id, row.guest_registration, row.guest_serial, acMap, regMap),
     status: row.status as WOStatus,
-    priority: row.priority,
     woType: row.wo_type,
     description: row.description,
     openedBy: row.opened_by,
@@ -508,6 +542,7 @@ function mapWorkOrderRow(
     mechanics,
     items: [],
     statusHistory: [],
+    auditTrail: [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -574,5 +609,23 @@ function mapStatusHistoryRow(row: any): WOStatusChange {
     changedBy: row.changed_by,
     changedAt: row.changed_at,
     notes: row.notes,
+  }
+}
+
+function mapAuditEntryRow(row: any): AuditEntry {
+  return {
+    id:          row.id,
+    workOrderId: row.work_order_id,
+    entryType:   row.entry_type,
+    actorId:     row.actor_id,
+    actorName:   row.actor_name,
+    summary:     row.summary,
+    detail:      row.detail,
+    fieldName:   row.field_name,
+    oldValue:    row.old_value,
+    newValue:    row.new_value,
+    itemId:      row.item_id,
+    itemNumber:  row.item_number,
+    createdAt:   row.created_at,
   }
 }
