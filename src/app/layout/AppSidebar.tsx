@@ -424,7 +424,7 @@ function SuggestionsBadge() {
       const { count: n } = await supabase
         .from("site_suggestions")
         .select("id", { count: "exact", head: true })
-        .eq("status", "open")
+        .in("status", ["open", "needs_info"])
       setCount(n ?? 0)
     }
 
