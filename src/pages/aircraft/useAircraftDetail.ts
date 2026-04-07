@@ -31,17 +31,18 @@ export function useAircraftDetail(tailNumber: string, fallback: AircraftDetailDa
       if (!data) return { ...fallback, cmms: fallback.cmms ?? [] }
 
       return {
-        identity:         arr<DataField>(data.identity,         fallback.identity),
-        powerplant:       arr<DataField>(data.powerplant,        fallback.powerplant),
-        apu:              data.apu !== null && data.apu !== undefined
-                            ? arr<DataField>(data.apu, fallback.apu ?? [])
-                            : fallback.apu,
-        programs:         arr<DataField>(data.programs,         fallback.programs),
-        navSubscriptions: arr<NavSubscription>(data.nav_subscriptions, fallback.navSubscriptions),
-        documentation:    arr<DataField>(data.documentation,    fallback.documentation),
-        cmms:             (data.cmms as CMMDocument[]) ?? [],
-        avionics:         arr<AvionicsService>(data.avionics,   fallback.avionics),
-        notes:            data.notes ?? fallback.notes,
+        identity:          arr<DataField>(data.identity,         fallback.identity),
+        powerplant:        arr<DataField>(data.powerplant,        fallback.powerplant),
+        apu:               data.apu !== null && data.apu !== undefined
+                             ? arr<DataField>(data.apu, fallback.apu ?? [])
+                             : fallback.apu,
+        programs:          arr<DataField>(data.programs,         fallback.programs),
+        navSubscriptions:  arr<NavSubscription>(data.nav_subscriptions, fallback.navSubscriptions),
+        documentation:     arr<DataField>(data.documentation,    fallback.documentation),
+        cmms:              (data.cmms as CMMDocument[]) ?? [],
+        avionics:          arr<AvionicsService>(data.avionics,   fallback.avionics),
+        notes:             data.notes ?? fallback.notes,
+        hobbsDifferential: data.hobbs_differential != null ? Number(data.hobbs_differential) : null,
       } satisfies AircraftDetailData
     },
     staleTime: 30_000,
@@ -61,17 +62,18 @@ export function useUpsertAircraftDetail() {
       detail: AircraftDetailData
     }) => {
       const { error } = await db.from("aircraft_details").upsert({
-        tail_number:       tailNumber,
-        identity:          detail.identity,
-        powerplant:        detail.powerplant,
-        apu:               detail.apu,
-        programs:          detail.programs,
-        nav_subscriptions: detail.navSubscriptions,
-        documentation:     detail.documentation,
-        cmms:              detail.cmms ?? [],
-        avionics:          detail.avionics ?? [],
-        notes:             detail.notes,
-        updated_at:        new Date().toISOString(),
+        tail_number:        tailNumber,
+        identity:           detail.identity,
+        powerplant:         detail.powerplant,
+        apu:                detail.apu,
+        programs:           detail.programs,
+        nav_subscriptions:  detail.navSubscriptions,
+        documentation:      detail.documentation,
+        cmms:               detail.cmms ?? [],
+        avionics:           detail.avionics ?? [],
+        notes:              detail.notes,
+        hobbs_differential: detail.hobbsDifferential ?? null,
+        updated_at:         new Date().toISOString(),
       })
       if (error) throw error
     },

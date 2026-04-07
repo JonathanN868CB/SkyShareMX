@@ -4,8 +4,9 @@ import type { DataField } from "./fleetData"
 interface Props {
   initialPowerplant: DataField[]
   initialApu: DataField[] | null
+  initialHobbsDiff: number | null
   tailNumber: string
-  onSave: (powerplant: DataField[], apu: DataField[] | null) => Promise<void>
+  onSave: (powerplant: DataField[], apu: DataField[] | null, hobbsDiff: number | null) => Promise<void>
   onClose: () => void
 }
 
@@ -136,16 +137,17 @@ const inputBase: React.CSSProperties = {
 
 // ─── Overlay ───────────────────────────────────────────────────────────────────
 export default function PropulsionEditorOverlay({
-  initialPowerplant, initialApu, tailNumber, onSave, onClose,
+  initialPowerplant, initialApu, initialHobbsDiff, tailNumber, onSave, onClose,
 }: Props) {
   const [visible,   setVisible]   = useState(false)
   const [saving,    setSaving]    = useState(false)
   const [saveError, setSaveError] = useState("")
 
-  const [pattern, setPattern] = useState<Pattern>(() => detectPattern(initialPowerplant, initialApu))
-  const [rows,    setRows]    = useState<EditRow[]>(() =>
+  const [pattern,   setPattern]   = useState<Pattern>(() => detectPattern(initialPowerplant, initialApu))
+  const [rows,      setRows]      = useState<EditRow[]>(() =>
     loadRows(detectPattern(initialPowerplant, initialApu), initialPowerplant, initialApu)
   )
+  const [hobbsDiff, setHobbsDiff] = useState(initialHobbsDiff != null ? String(initialHobbsDiff) : "")
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true))
@@ -174,7 +176,9 @@ export default function PropulsionEditorOverlay({
     setSaveError("")
     try {
       const { powerplant, apu } = serializeRows(rows, initialPowerplant, initialApu)
-      await onSave(powerplant, apu)
+      const diffRaw = hobbsDiff.trim() !== "" ? parseFloat(hobbsDiff) : null
+      const diff    = diffRaw != null && !isNaN(diffRaw) ? diffRaw : null
+      await onSave(powerplant, apu, diff)
       setVisible(false)
       setTimeout(onClose, 220)
     } catch (err) {
@@ -392,6 +396,50 @@ export default function PropulsionEditorOverlay({
                   </React.Fragment>
                 )
               })}
+            </div>
+          </div>
+
+          {/* Hobbs differential */}
+          <div className="rounded-lg p-5 flex flex-col gap-3"
+            style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(212,160,23,0.2)" }}>
+            <div className="text-xs font-semibold uppercase tracking-widest"
+              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.12em" }}>
+              Hobbs Meter Differential
+            </div>
+            <div style={{ height: "0.5px", background: "rgba(212,160,23,0.15)" }} />
+            <p style={{ fontSize: "0.75rem", color: "hsl(var(--muted-foreground))", lineHeight: 1.5 }}>
+              The fixed offset between the Hobbs meter reading and the airframe total time.{" "}
+              <span style={{ color: "rgba(212,160,23,0.7)" }}>A/F TT = Hobbs + Differential.</span>
+              {" "}Leave blank if Hobbs tracks A/F TT exactly (common on jets).
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, maxWidth: 320 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{
+                  fontSize: "0.6rem", fontFamily: "var(--font-heading)", textTransform: "uppercase",
+                  letterSpacing: "0.09em", color: "hsl(var(--muted-foreground))", opacity: 0.55, marginBottom: 4,
+                }}>
+                  Differential (hrs)
+                </div>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={hobbsDiff}
+                  onChange={e => setHobbsDiff(e.target.value)}
+                  placeholder="e.g. 50.3"
+                  style={{
+                    ...inputBase,
+                    fontFamily: "'Courier Prime','Courier New',monospace",
+                    colorScheme: "dark light",
+                  }}
+                  onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
+                  onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.35)")}
+                />
+              </div>
+              {hobbsDiff.trim() !== "" && !isNaN(parseFloat(hobbsDiff)) && (
+                <div style={{ fontSize: "0.7rem", color: "rgba(212,160,23,0.6)", fontFamily: "var(--font-heading)", marginTop: 14 }}>
+                  Hobbs + {parseFloat(hobbsDiff).toFixed(1)} hrs = A/F TT
+                </div>
+              )}
             </div>
           </div>
 

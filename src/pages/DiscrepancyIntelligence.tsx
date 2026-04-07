@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2 } from "lucide-react"
+import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
 import { useFleet } from "./aircraft/useFleet"
 import { useDiscrepancyCounts } from "./aircraft/useDiscrepancyCounts"
 import { useFleetStats } from "./aircraft/useFleetStats"
@@ -8,6 +8,8 @@ import { useAircraftDiscrepancies, type DiscrepancyRow } from "./aircraft/useAir
 import type { AircraftBase, ManufacturerGroup } from "./aircraft/fleetData"
 import { useAuth } from "@/features/auth"
 import { supabase } from "@/lib/supabase"
+import DiscrepancyImportPanel from "./discrepancy-import/DiscrepancyImportPanel"
+import SyncAuditLog from "./discrepancy-import/SyncAuditLog"
 
 // ─── Highlight Helper ─────────────────────────────────────────────────────────
 function Hl({ text, q }: { text: string; q: string }) {
@@ -1705,10 +1707,12 @@ function DomReviewView({
   assignmentId,
   discrepancyId,
   onBack,
+  readOnly = false,
 }: {
   assignmentId: string
   discrepancyId: string
   onBack: () => void
+  readOnly?: boolean
 }) {
   const { profile } = useAuth()
   const [enrichment, setEnrichment] = useState<{
@@ -1731,9 +1735,23 @@ function DomReviewView({
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
-  const [showLearnings, setShowLearnings] = useState(false)
+  const [showLearnings, setShowLearnings] = useState(true)
   const [learnings, setLearnings] = useState<Array<{ id: string; lesson: string; category: string; source_type: string; active: boolean; created_at: string }>>([])
   const [learningsLoaded, setLearningsLoaded] = useState(false)
+
+  // Auto-load learnings on mount
+  useEffect(() => {
+    async function loadLearnings() {
+      const { data } = await (supabase as any)
+        .from("dw1ght_learnings")
+        .select("id, lesson, category, source_type, active, created_at")
+        .order("created_at", { ascending: false })
+        .limit(50)
+      if (data) setLearnings(data)
+      setLearningsLoaded(true)
+    }
+    loadLearnings()
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -2082,7 +2100,7 @@ function DomReviewView({
       })()}
 
       {/* Suggested Corrections */}
-      {enrichment.suggested_corrections.length > 0 && !saved && (
+      {enrichment.suggested_corrections.length > 0 && (!saved || readOnly) && (
         <div
           className="rounded-lg px-4 py-3"
           style={{ background: "rgba(100,180,255,0.03)", border: "1px solid rgba(100,180,255,0.12)" }}
@@ -2128,6 +2146,7 @@ function DomReviewView({
                       </div>
                       <p className="text-[12px] text-white/40 mt-1.5 italic">{c.reason}</p>
                     </div>
+                    {!readOnly && (
                     <div className="flex gap-1.5 flex-shrink-0">
                       {state === "editing" ? (
                         <button
@@ -2171,6 +2190,7 @@ function DomReviewView({
                         </>
                       )}
                     </div>
+                    )}
                   </div>
                 </div>
               )
@@ -2211,7 +2231,7 @@ function DomReviewView({
       </div>
 
       {/* Review actions */}
-      {!saved && enrichment.status === "completed" && (
+      {!readOnly && !saved && enrichment.status === "completed" && (
         <div
           className="rounded-lg px-4 py-4"
           style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}
@@ -2267,71 +2287,56 @@ function DomReviewView({
 
       {/* DW1GHT Learnings */}
       {enrichment && (
-        <div>
+        <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(212,160,23,0.15)", background: "rgba(255,255,255,0.01)" }}>
+          {/* Header */}
           <button
-            onClick={async () => {
-              setShowLearnings(!showLearnings)
-              if (!learningsLoaded) {
-                const { data } = await supabase
-                  .from("dw1ght_learnings")
-                  .select("id, lesson, category, source_type, active, created_at")
-                  .order("created_at", { ascending: false })
-                  .limit(30)
-                if (data) setLearnings(data)
-                setLearningsLoaded(true)
-              }
-            }}
-            className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest"
-            style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}
+            onClick={() => setShowLearnings(!showLearnings)}
+            className="w-full px-4 py-2.5 flex items-center gap-2 transition-colors hover:brightness-110"
+            style={{ borderBottom: showLearnings ? "1px solid rgba(255,255,255,0.06)" : "none", background: "rgba(212,160,23,0.03)" }}
           >
-            {showLearnings ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            DW1GHT Learnings ({learningsLoaded ? learnings.filter(l => l.active).length + " active" : "..."})
+            {showLearnings ? <ChevronDown className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} /> : <ChevronRight className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} />}
+            <span className="text-[10px] font-bold tracking-widest uppercase" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+              DW1GHT Learning Library
+            </span>
+            <span className="text-[9px] text-white/30 ml-auto">
+              {learningsLoaded ? `${learnings.filter(l => l.active).length} active · ${learnings.filter(l => !l.active).length} inactive` : "loading..."}
+            </span>
           </button>
+
           {showLearnings && (
-            <div className="mt-2 flex flex-col gap-1.5">
+            <div className="px-4 py-3 flex flex-col gap-1">
+              {!learningsLoaded && (
+                <p className="text-sm text-white/25 py-2">Loading learnings...</p>
+              )}
               {learnings.length === 0 && learningsLoaded && (
-                <p className="text-sm text-white/30 ml-5">No learnings yet. Complete and review more interviews to generate learnings.</p>
+                <p className="text-sm text-white/30 py-4 text-center">No learnings yet. Complete and review more interviews to generate them.</p>
               )}
               {learnings.map((l) => (
                 <div
                   key={l.id}
-                  className="flex items-start gap-2 rounded-lg px-3 py-2 ml-5"
+                  className="flex items-start gap-3 rounded-lg px-3 py-2.5 transition-all"
                   style={{
-                    background: l.active ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.01)",
-                    border: `1px solid ${l.active ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)"}`,
-                    opacity: l.active ? 1 : 0.4,
+                    background: l.active ? "rgba(100,220,100,0.03)" : "rgba(255,255,255,0.015)",
+                    border: `1px solid ${l.active ? "rgba(100,220,100,0.12)" : "rgba(255,255,255,0.04)"}`,
+                    opacity: l.active ? 1 : 0.55,
                   }}
                 >
-                  <button
-                    onClick={async () => {
-                      await supabase.from("dw1ght_learnings").update({ active: !l.active }).eq("id", l.id)
-                      setLearnings(prev => prev.map(x => x.id === l.id ? { ...x, active: !x.active } : x))
-                    }}
-                    className="flex-shrink-0 mt-0.5 w-4 h-4 rounded border flex items-center justify-center transition-colors"
-                    style={{
-                      borderColor: l.active ? "rgba(100,220,100,0.4)" : "rgba(255,255,255,0.15)",
-                      background: l.active ? "rgba(100,220,100,0.12)" : "transparent",
-                    }}
-                    title={l.active ? "Active — click to deactivate" : "Inactive — click to activate"}
-                  >
-                    {l.active && <CheckCircle className="w-2.5 h-2.5" style={{ color: "rgba(100,220,100,0.8)" }} />}
-                  </button>
+                  {/* Lesson text */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white/70 leading-relaxed">{l.lesson}</p>
-                    <div className="flex items-center gap-2 mt-1">
+                    <p className="text-sm leading-relaxed" style={{ color: l.active ? "rgba(255,255,255,0.80)" : "rgba(255,255,255,0.45)" }}>
+                      {l.lesson}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                       <span
                         className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
                         style={{
-                          background: l.source_type === "self_critique" ? "rgba(100,180,255,0.1)" : l.source_type === "dom_review" ? "rgba(212,160,23,0.1)" : "rgba(100,220,100,0.1)",
-                          color: l.source_type === "self_critique" ? "rgba(100,180,255,0.7)" : l.source_type === "dom_review" ? "var(--skyshare-gold)" : "rgba(100,220,100,0.7)",
+                          background: l.source_type === "self_critique" ? "rgba(100,180,255,0.1)" : "rgba(212,160,23,0.1)",
+                          color: l.source_type === "self_critique" ? "rgba(100,180,255,0.7)" : "var(--skyshare-gold)",
                         }}
                       >
-                        {l.source_type === "self_critique" ? "Self-Critique" : l.source_type === "dom_review" ? "DOM Review" : "Rating"}
+                        {l.source_type === "self_critique" ? "Self-Critique" : "DOM Review"}
                       </span>
-                      <span
-                        className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
-                        style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}
-                      >
+                      <span className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}>
                         {l.category.replace(/_/g, " ")}
                       </span>
                       <span className="text-[9px] text-white/20">
@@ -2339,6 +2344,22 @@ function DomReviewView({
                       </span>
                     </div>
                   </div>
+
+                  {/* Active/Inactive toggle — clearly labeled */}
+                  <button
+                    onClick={async () => {
+                      await (supabase as any).from("dw1ght_learnings").update({ active: !l.active }).eq("id", l.id)
+                      setLearnings(prev => prev.map(x => x.id === l.id ? { ...x, active: !x.active } : x))
+                    }}
+                    className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded text-[9px] font-bold uppercase tracking-widest transition-all hover:brightness-125"
+                    style={l.active
+                      ? { background: "rgba(100,220,100,0.12)", color: "rgba(100,220,100,0.85)", border: "1px solid rgba(100,220,100,0.25)" }
+                      : { background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.1)" }
+                    }
+                    title={l.active ? "DW1GHT is learning this — click to remove" : "Inactive — click to teach this to DW1GHT"}
+                  >
+                    {l.active ? <><CheckCircle className="w-3 h-3" /> Teaching</> : <>○ Ignored</>}
+                  </button>
                 </div>
               ))}
             </div>
@@ -2770,10 +2791,267 @@ function InterviewChatView({
   )
 }
 
+// ─── Archive Sort Header ──────────────────────────────────────────────────────
+function ArchiveSortTh({ label, active, dir, onClick, className }: {
+  label: string; active: boolean; dir: "asc" | "desc"
+  onClick: () => void; className?: string
+}) {
+  const Icon = active ? (dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown
+  return (
+    <th className={className ?? "px-4 py-2.5 text-left whitespace-nowrap"}>
+      <button
+        onClick={onClick}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-widest font-medium transition-colors"
+        style={{ color: active ? "var(--skyshare-gold)" : "rgba(255,255,255,0.35)" }}
+        onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.60)" }}
+        onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.35)" }}
+      >
+        {label}
+        <Icon className="w-3 h-3" style={{ opacity: active ? 1 : 0.4 }} />
+      </button>
+    </th>
+  )
+}
+
+// ─── Interview Archive View ───────────────────────────────────────────────────
+type ArchiveRow = {
+  assignment_id: string
+  discrepancy_id: string
+  tail: string
+  title: string
+  technician: string
+  completed_at: string
+  status: "approved" | "rejected"
+  rating: number | null
+}
+type ArchiveSortCol = "tail" | "title" | "technician" | "completed_at" | "status"
+
+function InterviewArchiveView({
+  onBack,
+  onViewInterview,
+}: {
+  onBack: () => void
+  onViewInterview: (assignmentId: string, discrepancyId: string) => void
+}) {
+  const db = supabase as any
+  const [rows, setRows] = useState<ArchiveRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState("")
+  const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "rejected">("all")
+  const [sortCol, setSortCol] = useState<ArchiveSortCol>("completed_at")
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
+
+  useEffect(() => {
+    async function fetchArchive() {
+      setLoading(true)
+      const { data: assignments } = await db
+        .from("interview_assignments")
+        .select("id, discrepancy_id, completed_at, updated_at, status, profiles:assigned_to(full_name)")
+        .in("status", ["approved", "rejected"])
+        .order("updated_at", { ascending: false })
+
+      if (!assignments || assignments.length === 0) { setRows([]); setLoading(false); return }
+
+      const discIds = [...new Set<string>(assignments.map((a: any) => a.discrepancy_id))]
+      const { data: discs } = await db
+        .from("discrepancies")
+        .select("id, title, registration_at_event")
+        .in("id", discIds)
+
+      const assignIds = assignments.map((a: any) => a.id)
+      const { data: enrichments } = await db
+        .from("discrepancy_enrichments")
+        .select("interview_assignment_id, interview_rating")
+        .in("interview_assignment_id", assignIds)
+
+      const discMap = new Map((discs ?? []).map((d: any) => [d.id, d]))
+      const enrichMap = new Map((enrichments ?? []).map((e: any) => [e.interview_assignment_id, e.interview_rating as number | null]))
+
+      setRows(assignments.map((a: any) => {
+        const disc = discMap.get(a.discrepancy_id)
+        return {
+          assignment_id: a.id,
+          discrepancy_id: a.discrepancy_id,
+          tail:       disc?.registration_at_event || "—",
+          title:      disc?.title || "Unknown",
+          technician: (a.profiles as any)?.full_name || "Unknown",
+          completed_at: a.completed_at || a.updated_at || "",
+          status:     a.status as "approved" | "rejected",
+          rating:     enrichMap.get(a.id) ?? null,
+        }
+      }))
+      setLoading(false)
+    }
+    fetchArchive()
+  }, [])
+
+  function handleSort(col: ArchiveSortCol) {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc")
+    else { setSortCol(col); setSortDir("asc") }
+  }
+
+  const filtered = useMemo(() => {
+    let r = rows
+    if (statusFilter !== "all") r = r.filter(row => row.status === statusFilter)
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      r = r.filter(row =>
+        row.tail.toLowerCase().includes(q) ||
+        row.title.toLowerCase().includes(q) ||
+        row.technician.toLowerCase().includes(q)
+      )
+    }
+    return [...r].sort((a, b) => {
+      const av = a[sortCol] ?? ""
+      const bv = b[sortCol] ?? ""
+      if (av < bv) return sortDir === "asc" ? -1 : 1
+      if (av > bv) return sortDir === "asc" ? 1 : -1
+      return 0
+    })
+  }, [rows, statusFilter, search, sortCol, sortDir])
+
+  const approvedCount = rows.filter(r => r.status === "approved").length
+  const rejectedCount = rows.filter(r => r.status === "rejected").length
+
+  return (
+    <div className="flex flex-col gap-6">
+
+      {/* Header */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 text-base font-medium px-3 py-1.5 rounded-md hover:opacity-80 transition-opacity"
+          style={{ color: "var(--skyshare-gold)", background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.15)" }}
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-widest mb-0.5" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
+            Discrepancy Intelligence
+          </p>
+          <h2 style={{ fontFamily: "var(--font-display)", fontSize: "1.6rem", letterSpacing: "0.07em", color: "hsl(var(--foreground))", lineHeight: 1 }}>
+            Interview Archive
+          </h2>
+        </div>
+        <div className="ml-auto">
+          <span className="text-[10px] text-white/30 uppercase tracking-widest">
+            {approvedCount} archived · {rejectedCount} rejected
+          </span>
+        </div>
+      </div>
+
+      {/* Search + filter row */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search tail, discrepancy, or technician..."
+            className="w-full bg-white/5 border border-white/10 rounded-md pl-8 pr-3 py-2 text-sm text-white placeholder-white/20 focus:outline-none"
+            style={{ outlineColor: "rgba(212,160,23,0.4)" }}
+          />
+        </div>
+        <div className="flex gap-1">
+          {(["all", "approved", "rejected"] as const).map(f => {
+            const label = f === "all" ? `All (${rows.length})` : f === "approved" ? `Archived (${approvedCount})` : `Rejected (${rejectedCount})`
+            const activeColor = f === "rejected" ? "rgba(255,100,100,0.9)" : f === "approved" ? "rgba(100,220,100,0.9)" : "var(--skyshare-gold)"
+            const activeBg = f === "rejected" ? "rgba(255,100,100,0.12)" : f === "approved" ? "rgba(100,220,100,0.12)" : "rgba(212,160,23,0.12)"
+            const activeBorder = f === "rejected" ? "rgba(255,100,100,0.3)" : f === "approved" ? "rgba(100,220,100,0.3)" : "rgba(212,160,23,0.3)"
+            return (
+              <button
+                key={f}
+                onClick={() => setStatusFilter(f)}
+                className="px-3 py-1.5 rounded text-[10px] font-semibold uppercase tracking-widest transition-all"
+                style={statusFilter === f
+                  ? { color: activeColor, background: activeBg, border: `1px solid ${activeBorder}` }
+                  : { color: "rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.04)", border: "1px solid transparent" }
+                }
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+        {loading ? (
+          <div className="px-6 py-12 text-center text-white/30 text-sm">Loading archive...</div>
+        ) : filtered.length === 0 ? (
+          <div className="px-6 py-12 text-center text-white/25 text-sm">
+            {rows.length === 0 ? "No archived interviews yet." : "No results match your search."}
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.02)" }}>
+                <ArchiveSortTh label="Tail"        active={sortCol === "tail"}         dir={sortDir} onClick={() => handleSort("tail")} />
+                <ArchiveSortTh label="Discrepancy" active={sortCol === "title"}        dir={sortDir} onClick={() => handleSort("title")} />
+                <ArchiveSortTh label="Technician"  active={sortCol === "technician"}   dir={sortDir} onClick={() => handleSort("technician")} />
+                <ArchiveSortTh label="Completed"   active={sortCol === "completed_at"} dir={sortDir} onClick={() => handleSort("completed_at")} />
+                <ArchiveSortTh label="Status"      active={sortCol === "status"}       dir={sortDir} onClick={() => handleSort("status")} />
+                <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-widest font-medium whitespace-nowrap" style={{ color: "rgba(255,255,255,0.35)" }}>Rating</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row, idx) => (
+                <tr
+                  key={row.assignment_id}
+                  onClick={() => onViewInterview(row.assignment_id, row.discrepancy_id)}
+                  className="cursor-pointer transition-colors"
+                  style={{ borderBottom: idx < filtered.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.025)"}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ""}
+                >
+                  <td className="px-4 py-3">
+                    <span className="text-[11px] font-mono font-semibold" style={{ color: "var(--skyshare-gold)" }}>{row.tail}</span>
+                  </td>
+                  <td className="px-4 py-3 text-white/70 text-xs" style={{ maxWidth: "280px" }}>
+                    <span className="block truncate">{row.title}</span>
+                  </td>
+                  <td className="px-4 py-3 text-white/60 text-xs">{row.technician}</td>
+                  <td className="px-4 py-3 text-white/40 text-xs font-mono">
+                    {row.completed_at
+                      ? new Date(row.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className="text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded"
+                      style={row.status === "approved"
+                        ? { background: "rgba(100,220,100,0.1)", color: "rgba(100,220,100,0.8)" }
+                        : { background: "rgba(255,100,100,0.08)", color: "rgba(255,100,100,0.7)" }}
+                    >
+                      {row.status === "approved" ? "Archived" : "Rejected"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {row.rating != null ? (
+                      <span className="text-xs" style={{ color: "var(--skyshare-gold)" }}>
+                        {"★".repeat(row.rating)}{"☆".repeat(5 - row.rating)}
+                      </span>
+                    ) : (
+                      <span className="text-white/20 text-xs">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function DiscrepancyIntelligence() {
   const { profile } = useAuth()
   const isSuperAdmin = profile?.role === "Super Admin"
+  const isAdmin = profile?.role === "Admin" || isSuperAdmin
+  const isManager = profile?.role === "Manager" || isAdmin
   const { data: fleet, isLoading, isError } = useFleet()
   const { data: counts } = useDiscrepancyCounts()
   const { data: fleetStats } = useFleetStats()
@@ -2781,7 +3059,7 @@ export default function DiscrepancyIntelligence() {
   const [dw1ghtOpen, setDw1ghtOpen] = useState(false)
   const [dw1ghtMode, setDw1ghtMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
   const [activeInterview, setActiveInterview] = useState<{ assignmentId: string; discrepancyId: string } | null>(null)
-  const [activeReview, setActiveReview] = useState<{ assignmentId: string; discrepancyId: string } | null>(null)
+  const [activeReview, setActiveReview] = useState<{ assignmentId: string; discrepancyId: string; readOnly?: boolean } | null>(null)
   const [myAssignments, setMyAssignments] = useState<Array<{ id: string; discrepancy_id: string; status: string; dom_note: string | null; tail: string; title: string; created_at: string }>>([])
   const [myAssignmentsRefresh, setMyAssignmentsRefresh] = useState(0)
   type InterviewItem = {
@@ -2797,6 +3075,7 @@ export default function DiscrepancyIntelligence() {
   const [expandedPipelineStatus, setExpandedPipelineStatus] = useState<string | null>(null)
   const [pipelineDeleteId, setPipelineDeleteId] = useState<string | null>(null)
   const [pipelineRefresh, setPipelineRefresh] = useState(0)
+  const [activeArchive, setActiveArchive] = useState(false)
 
   async function deletePipelineItem(assignmentId: string, discrepancyId: string) {
     // Delete enrichment(s) for this discrepancy
@@ -2883,8 +3162,14 @@ export default function DiscrepancyIntelligence() {
   }, [isSuperAdmin, activeReview, activeInterview, pipelineRefresh])
 
   const countMap = counts ?? new Map<string, number>()
-  const totalRecords = fleetStats?.totalRecords ?? Array.from(countMap.values()).reduce((s, n) => s + n, 0)
-  const aircraftWithRecords = fleetStats?.aircraftCount ?? countMap.size
+  // Total records: sum from accurate server-side RPC
+  const totalRecords = countMap.size > 0
+    ? Array.from(countMap.values()).reduce((s, n) => s + n, 0)
+    : (fleetStats?.totalRecords ?? 0)
+  // Aircraft count: total fleet size (including aircraft with no records yet)
+  const aircraftWithRecords = fleet
+    ? fleet.reduce((sum, mfr) => sum + mfr.families.reduce((s2, fam) => s2 + fam.aircraft.length, 0), 0)
+    : (fleetStats?.aircraftCount ?? 0)
 
   // ── Interview chat view ──
   if (activeInterview) {
@@ -2907,6 +3192,21 @@ export default function DiscrepancyIntelligence() {
     )
   }
 
+  // ── Interview archive view ──
+  if (activeArchive) {
+    return (
+      <div className="flex flex-col gap-8 p-6">
+        <InterviewArchiveView
+          onBack={() => setActiveArchive(false)}
+          onViewInterview={(assignmentId, discrepancyId) => {
+            setActiveArchive(false)
+            setActiveReview({ assignmentId, discrepancyId, readOnly: !isSuperAdmin })
+          }}
+        />
+      </div>
+    )
+  }
+
   // ── DOM review view ──
   if (activeReview) {
     return (
@@ -2923,6 +3223,7 @@ export default function DiscrepancyIntelligence() {
           assignmentId={activeReview.assignmentId}
           discrepancyId={activeReview.discrepancyId}
           onBack={() => setActiveReview(null)}
+          readOnly={activeReview.readOnly ?? false}
         />
       </div>
     )
@@ -3147,13 +3448,31 @@ export default function DiscrepancyIntelligence() {
             </button>
           </div>
         </div>
-        <span
-          className="text-[9px] font-bold tracking-widest uppercase"
-          style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}
-        >
-          {dw1ghtMode === "schrute" ? "Full Schrute" : dw1ghtMode === "corporate" ? "Corporate" : "Troubleshooting"}
-        </span>
+        <div className="flex items-center gap-3">
+          {isManager && (
+            <button
+              onClick={() => setActiveArchive(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all hover:brightness-125"
+              style={{ background: "rgba(100,220,100,0.07)", border: "1px solid rgba(100,220,100,0.18)", color: "rgba(100,220,100,0.75)" }}
+            >
+              <MessageSquare className="w-3 h-3" />
+              <span className="text-[10px] font-bold tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>
+                Interview Archive
+              </span>
+            </button>
+          )}
+          <span
+            className="text-[9px] font-bold tracking-widest uppercase"
+            style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}
+          >
+            {dw1ghtMode === "schrute" ? "Full Schrute" : dw1ghtMode === "corporate" ? "Corporate" : "Troubleshooting"}
+          </span>
+        </div>
       </div>
+
+      {/* Import Records — Admin+ only */}
+      {isAdmin && <DiscrepancyImportPanel />}
+      {isAdmin && <SyncAuditLog />}
 
       {/* Fleet Analytics */}
       {fleetStats && fleetStats.totalRecords > 0 ? (
@@ -3185,16 +3504,15 @@ export default function DiscrepancyIntelligence() {
       )}
 
       {/* Interview Pipeline — Super Admin only */}
-      {isSuperAdmin && Object.keys(interviewPipeline).length > 0 && (() => {
+      {isSuperAdmin && (() => {
         const statusOrder = [
           { key: "completed", label: "Needs Review", color: "rgba(255,165,0,0.8)", bg: "rgba(255,165,0,0.1)", actionLabel: "Review", actionable: true },
           { key: "in_progress", label: "In Progress", color: "rgba(100,180,255,0.8)", bg: "rgba(100,180,255,0.08)", actionLabel: null, actionable: false },
           { key: "assigned", label: "Assigned", color: "var(--skyshare-gold)", bg: "rgba(212,160,23,0.08)", actionLabel: null, actionable: false },
           { key: "reviewed", label: "Reviewed", color: "rgba(178,130,255,0.85)", bg: "rgba(138,43,226,0.08)", actionLabel: "View", actionable: true },
-          { key: "approved", label: "Archived", color: "rgba(100,220,100,0.8)", bg: "rgba(100,220,100,0.06)", actionLabel: "View", actionable: true },
-          { key: "rejected", label: "Rejected", color: "rgba(255,100,100,0.7)", bg: "rgba(255,100,100,0.06)", actionLabel: "View", actionable: true },
         ]
-        const totalInterviews = Object.values(interviewPipeline).reduce((s, arr) => s + arr.length, 0)
+        const activeCount = statusOrder.reduce((s, st) => s + (interviewPipeline[st.key]?.length || 0), 0)
+
 
         return (
           <div
@@ -3207,10 +3525,11 @@ export default function DiscrepancyIntelligence() {
               <span className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
                 Interview Pipeline
               </span>
-              <span className="text-[9px] text-white/30 ml-auto">{totalInterviews} total</span>
+              <span className="text-[9px] text-white/30 ml-auto">{activeCount} active</span>
             </div>
 
-            {/* Status pills row */}
+            {/* Status pills row — active statuses only */}
+            {activeCount > 0 ? (
             <div className="px-4 py-2.5 flex flex-wrap gap-1.5">
               {statusOrder.map(({ key, label, color, bg }) => {
                 const count = interviewPipeline[key]?.length || 0
@@ -3238,6 +3557,11 @@ export default function DiscrepancyIntelligence() {
                 )
               })}
             </div>
+            ) : (
+              <div className="px-4 py-3">
+                <span className="text-[10px] text-white/25">No active assignments.</span>
+              </div>
+            )}
 
             {/* Expanded list */}
             {expandedPipelineStatus && interviewPipeline[expandedPipelineStatus] && (() => {

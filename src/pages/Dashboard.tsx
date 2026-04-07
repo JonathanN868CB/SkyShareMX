@@ -30,6 +30,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Apr 7", text: "Beet Box: Tool Calibration module, work order sign-off flow, and Records Vault OCR search are live." },
   { date: "Apr 4", text: "Records Vault (aircraft records intelligence layer) and Beet Box (full MRO suite) are now in active development." },
   { date: "Apr 3", text: "14-Day Check is live — standing inspection links for each aircraft, mobile photo capture, and a full MC review dashboard with fleet status at a glance." },
   { date: "Apr 3", text: "External Requests is live. Send structured requests to anyone outside the platform and collect responses through a secure, no-login portal." },

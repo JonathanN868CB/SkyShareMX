@@ -54,6 +54,18 @@ const HARDCODED_RULES: {
     source: "PartsDetailView.tsx",
     roles: ["Technician", "Manager", "Admin", "Super Admin"],
   },
+  {
+    feature: "Supervisors Sidebar Section",
+    detail: "Shown to Super Admin always. Shown to other users only when they appear as a supervisor in Manager Assignments (not role-based — data-driven via manager_assignments table).",
+    source: "AppSidebar.tsx + MyJourney.tsx",
+    roles: ["Super Admin"],
+  },
+  {
+    feature: "My Team Tab — Supervisor Notes",
+    detail: "Supervisors can write private notes about direct reports. Notes are never visible to the employee unless explicitly shared (visible_to_subject flag — coming soon).",
+    source: "MyJourney.tsx + managerNotes.ts",
+    roles: ["Super Admin"],
+  },
 ]
 
 const ROLE_ORDER: AppRole[] = ["Super Admin", "Admin", "Manager", "Technician", "Guest"]

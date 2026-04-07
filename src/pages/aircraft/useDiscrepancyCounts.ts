@@ -8,22 +8,13 @@ export function useDiscrepancyCounts() {
   return useQuery<Map<string, number>>({
     queryKey: ["discrepancy-counts"],
     queryFn: async () => {
-      const [discResult, regResult] = await Promise.all([
-        db.from("discrepancies").select("aircraft_id"),
-        db.from("aircraft_registrations").select("aircraft_id, registration").eq("is_current", true),
-      ])
-      if (discResult.error) throw discResult.error
-      if (regResult.error) throw regResult.error
-
-      const regMap = new Map<string, string>()
-      for (const r of regResult.data ?? []) regMap.set(r.aircraft_id, r.registration)
+      // Aggregate on the DB side to avoid the 1,000-row default cap.
+      // One row per current registration — no client-side row explosion.
+      const { data, error } = await db.rpc("get_discrepancy_counts_by_tail")
+      if (error) throw error
 
       const countMap = new Map<string, number>()
-      for (const d of discResult.data ?? []) {
-        const tail = regMap.get(d.aircraft_id)
-        if (!tail) continue
-        countMap.set(tail, (countMap.get(tail) ?? 0) + 1)
-      }
+      for (const r of data ?? []) countMap.set(r.registration, Number(r.count))
       return countMap
     },
     staleTime: 2 * 60 * 1000,

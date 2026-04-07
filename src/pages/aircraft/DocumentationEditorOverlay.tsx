@@ -10,23 +10,25 @@ interface Props {
 
 const inputBase: React.CSSProperties = {
   width: "100%",
-  background: "rgba(212,160,23,0.04)",
+  background: "rgba(212,160,23,0.05)",
   border: "none",
-  borderBottom: "1px solid rgba(212,160,23,0.5)",
-  borderRadius: "2px 2px 0 0",
+  borderBottom: "1.5px solid rgba(212,160,23,0.5)",
+  borderRadius: "3px 3px 0 0",
   color: "hsl(var(--foreground))",
   fontFamily: "'Courier Prime','Courier New',monospace",
   outline: "none",
-  fontSize: "0.8rem",
-  padding: "4px 6px",
+  fontSize: "1rem",
+  padding: "9px 12px",
 }
-const lbl: React.CSSProperties = {
-  fontSize: "0.6rem", fontFamily: "var(--font-heading)",
-  textTransform: "uppercase", letterSpacing: "0.09em",
-  color: "hsl(var(--muted-foreground))", opacity: 0.55, marginBottom: 2,
+const urlLbl: React.CSSProperties = {
+  fontSize: "0.72rem", fontFamily: "var(--font-heading)",
+  textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700,
+  color: "var(--skyshare-gold)", opacity: 0.9, marginBottom: 6,
 }
 const noteLbl: React.CSSProperties = {
-  ...lbl, marginTop: 6,
+  fontSize: "0.68rem", fontFamily: "var(--font-heading)",
+  textTransform: "uppercase", letterSpacing: "0.09em",
+  color: "hsl(var(--muted-foreground))", opacity: 0.6, marginBottom: 5, marginTop: 12,
 }
 
 // ─── Overlay ───────────────────────────────────────────────────────────────────
@@ -55,7 +57,13 @@ export default function DocumentationEditorOverlay({
     setSaving(true)
     setSaveError("")
     try {
-      await onSave(fields)
+      // Trim whitespace from value fields so pasted URLs with leading/trailing
+      // spaces don't silently break the "Open ↗" link detection on display.
+      const trimmed = fields.map(f => ({
+        ...f,
+        value: f.value.trim() || "—",
+      }))
+      await onSave(trimmed)
       setVisible(false)
       setTimeout(onClose, 220)
     } catch (err) {
@@ -83,14 +91,14 @@ export default function DocumentationEditorOverlay({
       }}>
 
         {/* Top bar */}
-        <div className="sticky top-0 z-10 flex items-center gap-3 px-6 py-3"
+        <div className="sticky top-0 z-10 flex items-center gap-4 px-8 py-4"
           style={{
             background: "hsl(0 0% 10%)",
             borderBottom: "1px solid rgba(212,160,23,0.4)",
             boxShadow: "0 1px 0 0 rgba(212,160,23,0.06)",
           }}>
           <button onClick={handleClose}
-            className="flex items-center gap-2 text-xs px-3 py-1.5 rounded"
+            className="flex items-center gap-2 text-sm px-4 py-2 rounded"
             style={{
               background: "rgba(212,160,23,0.08)", color: "var(--skyshare-gold)",
               border: "0.5px solid rgba(212,160,23,0.3)",
@@ -100,19 +108,19 @@ export default function DocumentationEditorOverlay({
             onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}>
             ← {tailNumber}
           </button>
-          <span className="text-xs font-semibold uppercase tracking-widest flex-1"
+          <span className="text-sm font-semibold uppercase tracking-widest flex-1"
             style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}>
             ✎ Documentation &amp; Manuals
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {saveError && (
-              <span className="text-xs px-2 py-1 rounded"
+              <span className="text-sm px-3 py-1.5 rounded"
                 style={{ background: "rgba(239,68,68,0.12)", color: "#ef4444", fontFamily: "var(--font-heading)" }}>
                 {saveError}
               </span>
             )}
             <button onClick={handleClose}
-              className="text-xs px-3 py-1.5 rounded"
+              className="text-sm px-4 py-2 rounded"
               style={{
                 background: "transparent", color: "hsl(var(--muted-foreground))",
                 border: "0.5px solid hsl(var(--border))",
@@ -121,10 +129,10 @@ export default function DocumentationEditorOverlay({
               Cancel
             </button>
             <button onClick={handleSave} disabled={saving}
-              className="text-xs px-3 py-1.5 rounded"
+              className="text-sm px-5 py-2 rounded"
               style={{
                 background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", border: "none",
-                fontFamily: "var(--font-heading)", letterSpacing: "0.06em", fontWeight: 600,
+                fontFamily: "var(--font-heading)", letterSpacing: "0.06em", fontWeight: 700,
                 opacity: saving ? 0.6 : 1, cursor: saving ? "not-allowed" : "pointer",
               }}>
               {saving ? "Saving…" : "Save"}
@@ -133,38 +141,58 @@ export default function DocumentationEditorOverlay({
         </div>
 
         {/* Body */}
-        <div className="p-6 flex flex-col gap-3" style={{ flex: 1 }}>
-          <div className="rounded-lg p-5 flex flex-col gap-5"
-            style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(212,160,23,0.2)" }}>
-            <div className="text-xs font-semibold uppercase tracking-widest"
-              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.12em" }}>
-              Manual Links
-            </div>
-            <div style={{ height: "0.5px", background: "rgba(212,160,23,0.15)" }} />
+        <div className="p-8 flex flex-col gap-6" style={{ flex: 1, maxWidth: 780, width: "100%", margin: "0 auto" }}>
+          <div className="rounded-lg flex flex-col gap-0"
+            style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(212,160,23,0.2)", overflow: "hidden" }}>
 
-            <div className="flex flex-col gap-5">
+            {/* Section header */}
+            <div className="px-8 py-5"
+              style={{ borderBottom: "0.5px solid rgba(212,160,23,0.2)", background: "rgba(212,160,23,0.04)" }}>
+              <div className="text-sm font-bold uppercase tracking-widest"
+                style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.14em" }}>
+                Manual Links
+              </div>
+              <p className="text-xs mt-1" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>
+                Paste a full URL to make each manual directly openable from the aircraft card.
+              </p>
+            </div>
+
+            {/* Field rows */}
+            <div className="flex flex-col">
               {fields.map((f, idx) => (
-                <div key={idx}>
-                  <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "hsl(var(--foreground))", fontFamily: "var(--font-heading)", letterSpacing: "0.06em", marginBottom: 8 }}>
+                <div key={idx} className="px-8 py-7"
+                  style={{ borderBottom: idx < fields.length - 1 ? "0.5px solid rgba(255,255,255,0.06)" : "none" }}>
+
+                  {/* Manual name */}
+                  <div style={{
+                    fontSize: "1rem", fontWeight: 700,
+                    color: "hsl(var(--foreground))",
+                    fontFamily: "var(--font-heading)", letterSpacing: "0.04em",
+                    marginBottom: 16,
+                  }}>
                     {f.label}
                   </div>
-                  <div style={lbl}>URL or Status (e.g. https://… or "None")</div>
+
+                  {/* URL field */}
+                  <div style={urlLbl}>Manual URL</div>
                   <input
                     value={f.value === "—" ? "" : f.value}
                     onChange={e => updateField(idx, { value: e.target.value || "—" })}
-                    placeholder="https://drive.google.com/… or None"
+                    placeholder=""
                     style={inputBase}
                     onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
                     onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}
                   />
+
+                  {/* Note field */}
                   {f.note !== undefined && (
                     <>
                       <div style={noteLbl}>Note for techs</div>
                       <input
                         value={f.note}
                         onChange={e => updateField(idx, { note: e.target.value })}
-                        placeholder="Optional note"
-                        style={{ ...inputBase, fontSize: "0.75rem", padding: "3px 6px", opacity: 0.7, fontFamily: "var(--font-body)" }}
+                        placeholder="Optional note visible on aircraft card"
+                        style={{ ...inputBase, fontSize: "0.9rem", padding: "7px 12px", opacity: 0.75, fontFamily: "var(--font-body)" }}
                         onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
                         onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}
                       />
@@ -173,6 +201,7 @@ export default function DocumentationEditorOverlay({
                 </div>
               ))}
             </div>
+
           </div>
         </div>
 
