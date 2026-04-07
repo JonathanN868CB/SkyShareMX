@@ -3,10 +3,11 @@ import { createPortal } from "react-dom"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
   ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight, ChevronLeft,
-  Plus, X, Clock, UserX, Package,
+  Plus, X, Clock, UserX, Package, Loader2,
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
   BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
-  ShieldCheck, Wrench, ChevronDown,
+  ShieldCheck, Wrench, ChevronDown, Pencil, ArrowLeftRight,
+  Library, Zap, BookText,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
@@ -17,15 +18,18 @@ import {
   upsertWOItem, updateItemStatus, updateWOItemFields, signOffItem, clearSignOff,
   addItemPart, removeItemPart, clockLabor, deleteLabor,
   getParts, getTechnicians, getMyProfileId, getMyProfile,
-  getLogbookEntries, getOrCreateDraftLogbookEntry, upsertEntrySignatory, addSignatoryLine, updateLogbookEntry,
-  addAuditEntry,
+  getLogbookEntries, getOrCreateDraftLogbookEntry, createComponentInstallEntry, upsertEntrySignatory, addSignatoryLine, removeItemLogbookLines, updateLogbookEntry,
+  addAuditEntry, deleteWorkOrder,
+  upsertFlatRate, upsertCorrectiveAction,
 } from "../../services"
 import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS } from "../../constants"
 import type {
   WorkOrder, WOStatus, WOItem, WOItemPart,
   WOItemLabor, WOItemStatus, LogbookSection,
   InventoryPart, Mechanic, LogbookEntry, AuditEntry, AuditEntryType,
+  AircraftTimesSnapshot,
 } from "../../types"
+import { TimesEditModal } from "./TimesEditModal"
 import { supabase } from "@/lib/supabase"
 import { WOStatusBadge } from "../../shared/StatusBadge"
 
@@ -60,6 +64,40 @@ const SECTION_COLORS: Record<LogbookSection, string> = {
   "APU":       "#c4b5fd",
   "Other":     "#a1a1aa",
 }
+
+// ─── Return-to-service statement templates ────────────────────────────────────
+export const RTS_TEMPLATES: { key: string; label: string; text: string }[] = [
+  {
+    key:   "pt91",
+    label: "Part 91",
+    text:  "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed.",
+  },
+  {
+    key:   "pt135",
+    label: "Part 135",
+    text:  "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed.",
+  },
+  {
+    key:   "pc12_pt91",
+    label: "PC-12 Pt 91",
+    text:  "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 91.409(a)(1), and Part 43, and is approved for return to service in respect to that work performed.",
+  },
+  {
+    key:   "pc12_pt135",
+    label: "PC-12 Pt 135",
+    text:  "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(a) and (b), and Part 43, and is approved for return to service in respect to that work performed.",
+  },
+  {
+    key:   "pc12_pt135_aaip",
+    label: "PC-12 Pt 135 AAIP",
+    text:  "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1) and SkyShare LLC's AAIP, and is approved for return to service in respect to that work performed.",
+  },
+  {
+    key:   "pt135_10plus",
+    label: "Part 135 (10 or More Aircraft)",
+    text:  "Returned to Service per SkyShare CAMP KNIA462K",
+  },
+]
 
 // ─── Item status config ───────────────────────────────────────────────────────
 const ITEM_STATUS_CONFIG: Record<WOItemStatus, {
@@ -429,9 +467,11 @@ interface ItemDetailPanelProps {
   item: WOItem
   isLocked: boolean
   sectionColor: string
+  aircraftModel: string        // for library "Add to Library"
+  mechanicName: string         // for library created_by_name
   onPatch: (patch: Partial<WOItem>) => void
   onPersist: (fields: Partial<WOItem>, oldFields?: Partial<WOItem>) => void
-  onSignOff: () => void
+  onSignOff: (opts: { noLogbook: boolean; digitalSig: boolean }) => Promise<void>
   signOffError: string | null
   onClearSignOffError: () => void
   onDeleteLabor: (id: string) => void
@@ -452,7 +492,7 @@ interface ItemDetailPanelProps {
 }
 
 function ItemDetailPanel({
-  item, isLocked, sectionColor, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
+  item, isLocked, sectionColor, aircraftModel, mechanicName, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
   mechanics, inventoryParts, onNavigatePO,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart,
   addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
@@ -462,6 +502,16 @@ function ItemDetailPanel({
   const savedOnFocus = useRef<Partial<WOItem>>({})
   const [showInventoryPicker, setShowInventoryPicker] = useState(false)
   const [invSearch, setInvSearch] = useState("")
+  const [noLogbook, setNoLogbook] = useState(false)
+  const [digitalSig, setDigitalSig] = useState(false)
+  const [signingOff, setSigningOff] = useState(false)
+  const [unsigning, setUnsigning] = useState(false)
+  // Add to Library modal
+  const [showLibModal, setShowLibModal] = useState(false)
+  const [libSaveType, setLibSaveType] = useState<"ca" | "fr" | "both">("both")
+  const [libSaving, setLibSaving] = useState(false)
+  const [libSaved, setLibSaved] = useState(false)
+  const [libSaveError, setLibSaveError] = useState<string | null>(null)
 
   // ── P/N cross-check: inventory parts mentioned in corrective action but not logged ──
   const unloggedMentionedParts = useMemo(() => {
@@ -535,9 +585,25 @@ function ItemDetailPanel({
           )
         })}
 
+        {/* ── Separator + Add to Library (manager) ── */}
+        {item.refCode?.trim() && item.correctiveAction?.trim() && (
+          <>
+            <div className="w-px h-5 mx-1 self-center" style={{ background: "hsl(0,0%,26%)" }} />
+            <button
+              onClick={() => { setShowLibModal(true); setLibSaved(false); setLibSaveError(null) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-all"
+              style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.25)", color: "rgba(212,160,23,0.7)" }}
+              title="Save corrective action or flat rate to library (managers only)"
+            >
+              <Library className="w-3.5 h-3.5" />
+              Add to Library
+            </button>
+          </>
+        )}
+
         {/* ── Sign-off — right side ── */}
         {item.signOffRequired && (
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
             {item.signedOffBy ? (
               <>
                 <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: "rgba(52,211,153,0.85)" }}>
@@ -546,34 +612,101 @@ function ItemDetailPanel({
                 </span>
                 {!isLocked && (
                   <button
-                    onClick={onSignOff}
-                    className="text-white/25 hover:text-white/55 text-xs transition-colors"
+                    disabled={unsigning}
+                    onClick={async () => {
+                      setUnsigning(true)
+                      try { await onSignOff({ noLogbook, digitalSig }) } finally { setUnsigning(false) }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ border: "1px solid rgba(239,68,68,0.35)", background: "rgba(239,68,68,0.07)", color: "rgba(239,68,68,0.8)" }}
                   >
-                    Undo
+                    {unsigning
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <X className="w-3.5 h-3.5" />
+                    }
+                    Unsign
                   </button>
                 )}
               </>
             ) : !isLocked ? (() => {
               const missingCode = !item.refCode?.trim()
+              const notDone = item.itemStatus !== "done"
+              const isBlocked = missingCode || notDone
+              const blockReason = notDone
+                ? "Set status to Done first"
+                : "Ref / Task Code required"
               return (
-                <button
-                  onClick={missingCode ? undefined : onSignOff}
-                  disabled={missingCode}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition-all disabled:cursor-not-allowed"
-                  style={missingCode ? {
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(255,255,255,0.03)",
-                    color: "rgba(255,255,255,0.2)",
-                  } : {
-                    border: "1px solid rgba(52,211,153,0.35)",
-                    background: "rgba(52,211,153,0.07)",
-                    color: "rgba(52,211,153,0.85)",
-                  }}
-                  title={missingCode ? "Add a Ref / Task Code before signing off" : undefined}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Sign Off
-                </button>
+                <div className="flex items-center gap-3">
+                  {/* Options */}
+                  <div className="flex flex-col gap-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={noLogbook}
+                        onChange={e => setNoLogbook(e.target.checked)}
+                        className="w-3 h-3 accent-white/60 cursor-pointer"
+                      />
+                      <span className="text-[10px] text-white/45 whitespace-nowrap">Non-logbook</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={digitalSig}
+                        onChange={e => setDigitalSig(e.target.checked)}
+                        className="w-3 h-3 accent-white/60 cursor-pointer"
+                      />
+                      <span className="text-[10px] text-white/45 whitespace-nowrap">Digital Sig</span>
+                    </label>
+                    {digitalSig && (
+                      <span className="text-[9px] leading-tight" style={{ color: "rgba(251,146,60,0.75)", fontFamily: "var(--font-heading)", maxWidth: "80px" }}>
+                        Not currently approved
+                      </span>
+                    )}
+                  </div>
+                  {/* Sign Off button + loading bar */}
+                  <div className="flex flex-col items-end gap-0.5">
+                    <button
+                      onClick={isBlocked || signingOff ? undefined : async () => {
+                        setSigningOff(true)
+                        try { await onSignOff({ noLogbook, digitalSig }) } finally { setSigningOff(false) }
+                      }}
+                      disabled={isBlocked || signingOff}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition-all disabled:cursor-not-allowed"
+                      style={isBlocked ? {
+                        border: "1px solid rgba(251,146,60,0.3)",
+                        background: "rgba(251,146,60,0.05)",
+                        color: "rgba(251,146,60,0.4)",
+                      } : {
+                        border: "1px solid rgba(52,211,153,0.35)",
+                        background: signingOff ? "rgba(52,211,153,0.12)" : "rgba(52,211,153,0.07)",
+                        color: signingOff ? "rgba(52,211,153,0.6)" : "rgba(52,211,153,0.85)",
+                      }}
+                    >
+                      {signingOff
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <CheckCircle2 className="w-3.5 h-3.5" />
+                      }
+                      {signingOff ? "Signing…" : "Sign Off"}
+                    </button>
+                    {signingOff && (
+                      <div className="w-full h-0.5 rounded-full overflow-hidden" style={{ background: "rgba(52,211,153,0.15)" }}>
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            background: "rgba(52,211,153,0.6)",
+                            animation: "sign-off-progress 2.5s ease-in-out infinite",
+                            width: "40%",
+                          }}
+                        />
+                      </div>
+                    )}
+                    {!signingOff && isBlocked && (
+                      <span className="text-[10px]" style={{ color: "rgba(251,146,60,0.7)", fontFamily: "var(--font-heading)" }}>
+                        {blockReason}
+                      </span>
+                    )}
+                  </div>
+                </div>
               )
             })() : null}
           </div>
@@ -639,8 +772,8 @@ function ItemDetailPanel({
                       Ref / Task Code
                     </label>
                     {!item.refCode?.trim() && (
-                      <span className="text-[8px] whitespace-nowrap" style={{ color: "rgba(251,146,60,0.4)" }}>
-                        Required to sign off
+                      <span className="text-[10px] font-semibold whitespace-nowrap" style={{ color: "rgba(251,146,60,0.9)" }}>
+                        ← required to sign off
                       </span>
                     )}
                   </div>
@@ -651,13 +784,12 @@ function ItemDetailPanel({
                     onChange={e => onPatch({ refCode: e.target.value })}
                     onFocus={() => { savedOnFocus.current.refCode = item.refCode }}
                     onBlur={e => onPersist({ refCode: e.target.value }, { refCode: savedOnFocus.current.refCode })}
-                    placeholder="05-CUS-14"
                     className="text-sm font-mono font-semibold rounded-md px-3 py-1.5 focus:outline-none transition-all"
                     style={{
                       width: "148px",
-                      background: item.refCode?.trim() ? "rgba(251,146,60,0.05)" : "rgba(251,146,60,0.07)",
-                      color: item.refCode?.trim() ? "rgba(251,146,60,0.95)" : "rgba(255,255,255,0.55)",
-                      border: "1px solid transparent",
+                      background: item.refCode?.trim() ? "rgba(251,146,60,0.05)" : "rgba(251,146,60,0.1)",
+                      color: item.refCode?.trim() ? "rgba(251,146,60,0.95)" : "rgba(255,255,255,0.75)",
+                      border: item.refCode?.trim() ? "1px solid transparent" : "1px solid rgba(251,146,60,0.45)",
                     }}
                   />
                 </div>
@@ -731,16 +863,15 @@ function ItemDetailPanel({
                     onChange={e => onPatch({ refCode: e.target.value })}
                     onFocus={() => { savedOnFocus.current.refCode = item.refCode }}
                     onBlur={e => onPersist({ refCode: e.target.value }, { refCode: savedOnFocus.current.refCode })}
-                    placeholder="05-CUS-14"
                     className={cn(
                       "text-sm font-mono font-semibold rounded-md px-3 py-1.5 focus:outline-none transition-all",
                       item.refCode?.trim() ? "ref-code-input-filled" : "ref-code-input-empty"
                     )}
                     style={{
                       width: "148px",
-                      background: item.refCode?.trim() ? "rgba(52,211,153,0.05)" : "rgba(52,211,153,0.07)",
-                      color: item.refCode?.trim() ? "rgba(110,231,183,0.95)" : "rgba(255,255,255,0.55)",
-                      border: "1px solid transparent",
+                      background: item.refCode?.trim() ? "rgba(52,211,153,0.05)" : "rgba(52,211,153,0.1)",
+                      color: item.refCode?.trim() ? "rgba(110,231,183,0.95)" : "rgba(255,255,255,0.75)",
+                      border: item.refCode?.trim() ? "1px solid transparent" : "1px solid rgba(52,211,153,0.45)",
                     }}
                   />
                 </div>
@@ -1226,6 +1357,130 @@ function ItemDetailPanel({
 
         <div className="h-8" />
       </div>
+
+      {/* ── Add to Library modal ─────────────────────────────────────────── */}
+      {showLibModal && createPortal(
+        <div
+          className="fixed inset-0 z-[1200] flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          onClick={() => { if (!libSaving) setShowLibModal(false) }}
+        >
+          <div
+            className="w-[420px] rounded-2xl flex flex-col gap-0 overflow-hidden"
+            style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-3 px-5 py-4" style={{ borderBottom: "1px solid hsl(0,0%,19%)" }}>
+              <Library className="w-5 h-5 flex-shrink-0" style={{ color: "var(--skyshare-gold)", opacity: 0.8 }} />
+              <div className="flex-1">
+                <p className="text-white/90 text-sm font-semibold">Add to Library</p>
+                <p className="text-white/35 text-xs mt-0.5 font-mono">{aircraftModel || "Unknown model"} · {item.refCode || item.taskNumber || "no ref"}</p>
+              </div>
+              <button onClick={() => setShowLibModal(false)} className="text-white/25 hover:text-white/70 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* What to save */}
+            <div className="px-5 py-4 flex flex-col gap-3">
+              <p className="text-white/40 text-xs uppercase tracking-widest font-semibold">What to save</p>
+              {((() => {
+                // Use estimated hours if set, otherwise fall back to total clocked hours
+                const libHours = item.estimatedHours > 0 ? item.estimatedHours : clockedTotal
+                const frAvailable = libHours > 0
+                return [
+                  { id: "ca",   icon: BookText, label: "Canned Corrective Action", desc: "Save the corrective action text",                     available: !!item.correctiveAction?.trim() },
+                  { id: "fr",   icon: Zap,      label: "Flat Rate Labor",          desc: `${libHours.toFixed(1)}h @ $${item.laborRate}/hr`,     available: frAvailable },
+                  { id: "both", icon: Library,  label: "Both",                     desc: "Save corrective action + flat rate",                   available: !!item.correctiveAction?.trim() && frAvailable },
+                ] as const
+              })()).map(opt => (
+                <button
+                  key={opt.id}
+                  disabled={!opt.available}
+                  onClick={() => setLibSaveType(opt.id)}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all",
+                    !opt.available && "opacity-30 cursor-not-allowed",
+                    libSaveType === opt.id && opt.available
+                      ? "border-[rgba(212,160,23,0.5)] bg-[rgba(212,160,23,0.09)]"
+                      : "border-[hsl(0,0%,21%)] bg-[hsl(0,0%,11%)] hover:border-[hsl(0,0%,30%)]"
+                  )}
+                >
+                  <opt.icon className="w-4 h-4 flex-shrink-0" style={{ color: libSaveType === opt.id ? "var(--skyshare-gold)" : "rgba(255,255,255,0.3)" }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium" style={{ color: libSaveType === opt.id ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)" }}>{opt.label}</p>
+                    <p className="text-xs text-white/30 truncate mt-0.5">{opt.available ? opt.desc : "Not available for this item"}</p>
+                  </div>
+                  <div
+                    className="w-4 h-4 rounded-full border-2 flex-shrink-0 transition-all"
+                    style={{
+                      borderColor: libSaveType === opt.id ? "var(--skyshare-gold)" : "rgba(255,255,255,0.2)",
+                      background: libSaveType === opt.id ? "var(--skyshare-gold)" : "transparent",
+                    }}
+                  />
+                </button>
+              ))}
+            </div>
+
+            {/* Status / error */}
+            {libSaved && (
+              <div className="mx-5 mb-2 px-3 py-2 rounded-lg flex items-center gap-2" style={{ background: "rgba(110,231,183,0.1)", border: "1px solid rgba(110,231,183,0.25)" }}>
+                <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                <span className="text-xs text-emerald-300">Saved to library successfully</span>
+              </div>
+            )}
+            {libSaveError && (
+              <div className="mx-5 mb-2 px-3 py-2 rounded-lg flex items-center gap-2" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+                <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                <span className="text-xs text-red-300">{libSaveError}</span>
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="px-5 py-4 flex items-center justify-end gap-2" style={{ borderTop: "1px solid hsl(0,0%,19%)" }}>
+              <button
+                onClick={() => setShowLibModal(false)}
+                disabled={libSaving}
+                className="px-4 py-2 rounded-lg text-xs text-white/40 hover:text-white/70 transition-colors"
+                style={{ background: "hsl(0,0%,16%)", border: "1px solid hsl(0,0%,24%)" }}
+              >
+                {libSaved ? "Close" : "Cancel"}
+              </button>
+              {!libSaved && (
+                <button
+                  onClick={async () => {
+                    const refKey = item.refCode?.trim() || item.taskNumber?.trim() || ""
+                    if (!refKey || !aircraftModel) { setLibSaveError("Aircraft model or ref code missing"); return }
+                    setLibSaving(true); setLibSaveError(null)
+                    try {
+                      if (libSaveType === "ca" || libSaveType === "both") {
+                        await upsertCorrectiveAction({ aircraftModel, refCode: refKey, correctiveActionText: item.correctiveAction ?? "", createdByName: mechanicName || "Manager" })
+                      }
+                      if (libSaveType === "fr" || libSaveType === "both") {
+                        const libHours = item.estimatedHours > 0 ? item.estimatedHours : clockedTotal
+                        await upsertFlatRate({ aircraftModel, refCode: refKey, hours: libHours, laborRate: item.laborRate, description: item.category || null, createdByName: mechanicName || "Manager" })
+                      }
+                      setLibSaved(true)
+                    } catch (e) {
+                      setLibSaveError(e instanceof Error ? e.message : "Save failed")
+                    } finally {
+                      setLibSaving(false)
+                    }
+                  }}
+                  disabled={libSaving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
+                  style={{ background: "rgba(212,160,23,0.85)", color: "#000" }}
+                >
+                  {libSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Library className="w-3.5 h-3.5" />}
+                  Save to Library
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
@@ -1243,7 +1498,6 @@ export default function WorkOrderDetail() {
     guestRegistration?: string | null
     aircraftReg?: string
     aircraftModel?: string
-    woType?: string
     description?: string
     items?: WOItem[]
     meterAtOpen?: number
@@ -1259,7 +1513,6 @@ export default function WorkOrderDetail() {
       guestSerial:       null,
       aircraft:          null,
       status:            "draft",
-      woType:            importState?.woType ?? "Scheduled Maintenance — Traxxall Import",
       description:       importState?.description ?? null,
       openedBy:          null,
       openedByName:      "Traxxall Import",
@@ -1269,7 +1522,6 @@ export default function WorkOrderDetail() {
       meterAtClose:      null,
       discrepancyRef:    null,
       notes:             null,
-      mechanics:         [],
       items,
       statusHistory:     [{
         id: "sh-import-0", workOrderId: "wo-traxxall-import",
@@ -1292,7 +1544,12 @@ export default function WorkOrderDetail() {
   const [loading, setLoading] = useState(id !== "wo-traxxall-import")
   const [inventoryParts, setInventoryParts] = useState<InventoryPart[]>([])
   const [mechanics, setMechanics] = useState<Mechanic[]>([])
-  const [showCompleteModal, setShowCompleteModal] = useState(false)
+  const [showCompleteModal, setShowCompleteModal]       = useState(false)
+  const [showOpenModal, setShowOpenModal]               = useState(false)
+  const [showDeleteDraftModal, setShowDeleteDraftModal] = useState(false)
+  const [deletingDraft, setDeletingDraft]               = useState(false)
+  const [timesEditOpen, setTimesEditOpen]               = useState(false)
+  const [hobbsDiff, setHobbsDiff]                       = useState<number | null>(null)
   const [notes, setNotes] = useState("")
   const [activeTab, setActiveTab] = useState<"items" | "notes" | "logbook" | "invoice" | "audit_trail">("items")
   const [myProfile, setMyProfile] = useState<{ id: string; name: string } | null>(null)
@@ -1302,9 +1559,11 @@ export default function WorkOrderDetail() {
   )
   const [draftLogbookEntries, setDraftLogbookEntries] = useState<LogbookEntry[]>([])
   const [logbookDraftError, setLogbookDraftError] = useState<string | null>(null)
+  const [logbookCreating,   setLogbookCreating]   = useState(false)
+  const logbookInitRef = useRef(false)
   const [signOffError, setSignOffError]           = useState<string | null>(null)
   // Editable fields for each draft logbook entry (keyed by entry id)
-  const [lbEdits, setLbEdits] = useState<Record<string, { returnToService: string; aircraftTime: string; hobbs: string; landings: string }>>({})
+  const [lbEdits, setLbEdits] = useState<Record<string, { returnToService: string; rtsKey: string; aircraftTime: string; hobbs: string; landings: string }>>({})
   const logbookPrintRef = useRef<HTMLDivElement>(null)
   const invoicePrintRef = useRef<HTMLDivElement>(null)
   const [pdfExporting, setPdfExporting] = useState<"logbook" | "invoice" | null>(null)
@@ -1343,13 +1602,21 @@ export default function WorkOrderDetail() {
     setPdfPreview(null)
   }
 
-  const RTS_BOILERPLATE = "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed."
+  const DEFAULT_RTS_KEY  = "pt135"
+  const DEFAULT_RTS_TEXT = RTS_TEMPLATES.find(t => t.key === DEFAULT_RTS_KEY)!.text
 
   function lbEdit(entryId: string) {
-    return lbEdits[entryId] ?? { returnToService: RTS_BOILERPLATE, aircraftTime: "", hobbs: "", landings: "" }
+    return lbEdits[entryId] ?? { returnToService: DEFAULT_RTS_TEXT, rtsKey: DEFAULT_RTS_KEY, aircraftTime: "", hobbs: "", landings: "" }
   }
-  function setLbField(entryId: string, field: "returnToService" | "aircraftTime" | "hobbs" | "landings", value: string) {
+  function setLbField(entryId: string, field: "returnToService" | "rtsKey" | "aircraftTime" | "hobbs" | "landings", value: string) {
     setLbEdits(prev => ({ ...prev, [entryId]: { ...lbEdit(entryId), [field]: value } }))
+  }
+
+  async function selectRtsTemplate(entryId: string, _aircraftId: string | null, templateKey: string) {
+    const template = RTS_TEMPLATES.find(t => t.key === templateKey)
+    if (!template) return
+    setLbEdits(prev => ({ ...prev, [entryId]: { ...lbEdit(entryId), rtsKey: templateKey, returnToService: template.text } }))
+    await updateLogbookEntry(entryId, { returnToService: template.text }).catch(console.error)
   }
 
   const loadWO = useCallback(async () => {
@@ -1373,8 +1640,10 @@ export default function WorkOrderDetail() {
       const next = { ...prev }
       entries.forEach(e => {
         if (!next[e.id]) {
+          const matchedKey = RTS_TEMPLATES.find(t => t.text === e.returnToService)?.key ?? DEFAULT_RTS_KEY
           next[e.id] = {
-            returnToService: e.returnToService || RTS_BOILERPLATE,
+            returnToService: e.returnToService || DEFAULT_RTS_TEXT,
+            rtsKey: matchedKey,
             aircraftTime: e.totalAircraftTime?.toString() ?? "",
             hobbs: e.hobbs?.toString() ?? "",
             landings: e.landings?.toString() ?? "",
@@ -1384,6 +1653,33 @@ export default function WorkOrderDetail() {
       return next
     })
   }, [id])
+
+  // Auto-create draft logbook entries when the logbook tab is first opened
+  useEffect(() => {
+    if (activeTab !== "logbook") return
+    if (!wo || draftLogbookEntries.length > 0 || logbookInitRef.current) return
+    const sectionsWithItems = [...new Set(wo.items.map(i => i.logbookSection))] as LogbookSection[]
+    if (sectionsWithItems.length === 0) return
+    logbookInitRef.current = true
+    setLogbookCreating(true)
+    setLogbookDraftError(null)
+    ;(async () => {
+      try {
+        for (const section of sectionsWithItems) {
+          await getOrCreateDraftLogbookEntry(
+            { id: wo.id, woNumber: wo.woNumber, aircraftId: wo.aircraftId, guestRegistration: wo.guestRegistration, guestSerial: wo.guestSerial, timesSnapshot: wo.timesSnapshot as any },
+            section
+          )
+        }
+        await loadDraftLogbookEntries()
+      } catch (err: any) {
+        setLogbookDraftError(err.message ?? "Failed to create draft logbook entries")
+        logbookInitRef.current = false
+      } finally {
+        setLogbookCreating(false)
+      }
+    })()
+  }, [activeTab, wo, draftLogbookEntries.length, visibleSections, loadDraftLogbookEntries])
 
   useEffect(() => {
     loadWO()
@@ -1395,7 +1691,30 @@ export default function WorkOrderDetail() {
     getMyProfile().then(p => { if (p) setMyProfile({ id: p.id, name: p.name }) }).catch(() => {})
   }, [loadWO, loadDraftLogbookEntries])
 
+  // Fetch Hobbs differential for the WO's aircraft (for times edit modal)
+  useEffect(() => {
+    if (!wo) return
+    const reg = wo.aircraft?.registration ?? wo.guestRegistration
+    if (!reg) { setHobbsDiff(null); return }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(supabase as any)
+      .from("aircraft_details")
+      .select("hobbs_differential")
+      .eq("tail_number", reg)
+      .maybeSingle()
+      .then(({ data }: { data: { hobbs_differential: number | null } | null }) => {
+        setHobbsDiff(data?.hobbs_differential != null ? Number(data.hobbs_differential) : null)
+      })
+      .catch(() => setHobbsDiff(null))
+  }, [wo?.id])
+
+  const [editingItemId, setEditingItemId]     = useState<string | null>(null)
+  const [editingCategoryVal, setEditingCategoryVal] = useState("")
   const [addingToSection, setAddingToSection] = useState<LogbookSection | null>(null)
+  const [exchangeSection, setExchangeSection] = useState<LogbookSection | null>(null)
+  const [exchangeRemovedSn, setExchangeRemovedSn] = useState("")
+  const [exchangeInstalledSn, setExchangeInstalledSn] = useState("")
+  const [exchangeSubmitting, setExchangeSubmitting] = useState(false)
   const [newItem, setNewItem] = useState({
     category: "", taskNumber: "", discrepancy: "", correctiveAction: "",
     hours: "", laborRate: "125", shippingCost: "0", outsideServicesCost: "0",
@@ -1406,10 +1725,108 @@ export default function WorkOrderDetail() {
   const [newLabor, setNewLabor] = useState({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
 
   if (loading) {
+    const GOLD     = "#d4a017"
+    const GOLD_DIM = "rgba(212,160,23,0.18)"
     return (
-      <div className="h-screen flex items-center justify-center gap-3">
-        <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
-        <span className="text-white/40 text-sm">Loading work order…</span>
+      <div style={{ position: "fixed", inset: 0, background: "#1a1a1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+        <style>{`
+          @keyframes wo-fill {
+            from { width: 0%; }
+            to   { width: 100%; }
+          }
+          @keyframes wo-s1 {
+            0%        { opacity: 1; }
+            28%       { opacity: 1; }
+            35%, 100% { opacity: 0; }
+          }
+          @keyframes wo-s2 {
+            0%, 31%   { opacity: 0; }
+            38%       { opacity: 1; }
+            61%       { opacity: 1; }
+            68%, 100% { opacity: 0; }
+          }
+          @keyframes wo-s3 {
+            0%, 64%   { opacity: 0; }
+            72%, 100% { opacity: 1; }
+          }
+          @keyframes wo-dot {
+            from { background: ${GOLD_DIM}; box-shadow: none; }
+            to   { background: ${GOLD};     box-shadow: 0 0 6px rgba(212,160,23,0.55); }
+          }
+          @keyframes wo-reveal {
+            from { opacity: 0; transform: translateY(5px); }
+            to   { opacity: 0.88; transform: translateY(0); }
+          }
+        `}</style>
+
+        {/* WO number / identifier */}
+        <div style={{ marginBottom: "44px", animation: "wo-reveal 0.7s ease forwards", opacity: 0 }}>
+          <span style={{ fontFamily: "'Montserrat', Arial, sans-serif", fontSize: "11px", fontWeight: 700, letterSpacing: "0.28em", textTransform: "uppercase", color: GOLD }}>
+            Work Order
+          </span>
+        </div>
+
+        {/* Status labels */}
+        <div style={{ position: "relative", width: "240px", height: "13px", marginBottom: "12px", textAlign: "center" }}>
+          {(
+            [
+              { text: "OPENING WORK ORDER", anim: "wo-s1" },
+              { text: "LOADING ITEMS",      anim: "wo-s2" },
+              { text: "READY",              anim: "wo-s3" },
+            ] as const
+          ).map(({ text, anim }) => (
+            <span
+              key={text}
+              style={{
+                position: "absolute", left: 0, right: 0,
+                fontFamily: "'Montserrat', Arial, sans-serif",
+                fontSize: "9px", fontWeight: 600,
+                letterSpacing: "0.22em", textTransform: "uppercase",
+                color: "rgba(255,255,255,0.32)",
+                opacity: 0,
+                animationName: anim,
+                animationDuration: "2.55s",
+                animationTimingFunction: "linear",
+                animationFillMode: "forwards",
+                animationIterationCount: 1,
+              }}
+            >
+              {text}
+            </span>
+          ))}
+        </div>
+
+        {/* Gold progress track */}
+        <div style={{ position: "relative", width: "240px", height: "2px", background: "rgba(255,255,255,0.07)", borderRadius: "2px", overflow: "hidden" }}>
+          <div style={{
+            height: "100%", width: "0%",
+            background: `linear-gradient(90deg, rgba(212,160,23,0.65) 0%, ${GOLD} 100%)`,
+            borderRadius: "2px",
+            animationName: "wo-fill",
+            animationDuration: "2.55s",
+            animationTimingFunction: "ease-in-out",
+            animationFillMode: "forwards",
+            animationIterationCount: 1,
+          }} />
+        </div>
+
+        {/* Checkpoint dots */}
+        <div style={{ position: "relative", width: "240px", height: "14px", marginTop: "2px" }}>
+          {([25, 50, 75] as const).map(pct => (
+            <div key={pct} style={{
+              position: "absolute", top: "4px",
+              left: `${pct}%`, transform: "translateX(-50%)",
+              width: "4px", height: "4px", borderRadius: "50%",
+              background: GOLD_DIM,
+              animationName: "wo-dot",
+              animationDuration: "0.25s",
+              animationTimingFunction: "ease-out",
+              animationFillMode: "forwards",
+              animationIterationCount: 1,
+              animationDelay: `${(pct / 100) * 2.55}s`,
+            }} />
+          ))}
+        </div>
       </div>
     )
   }
@@ -1488,6 +1905,7 @@ export default function WorkOrderDetail() {
     if (isLocked) return
     try {
       await updateWOItemFields(itemId, {
+        ...(fields.category            !== undefined && { category: fields.category }),
         ...(fields.discrepancy         !== undefined && { discrepancy: fields.discrepancy }),
         ...(fields.correctiveAction    !== undefined && { correctiveAction: fields.correctiveAction }),
         ...(fields.refCode             !== undefined && { refCode: fields.refCode }),
@@ -1562,16 +1980,18 @@ export default function WorkOrderDetail() {
     })
   }
 
-  async function toggleSignOff(itemId: string) {
+  async function toggleSignOff(itemId: string, opts: { noLogbook: boolean; digitalSig: boolean } = { noLogbook: false, digitalSig: false }) {
     if (isLocked || !wo) return
     const item = wo.items.find(i => i.id === itemId)
     if (!item) return
     setSignOffError(null)
 
     if (item.signedOffBy) {
-      // Unsign
+      // Unsign — also remove this item's logbook line so re-signing doesn't stack
       patchItem(itemId, { signedOffBy: null, signedOffAt: null, itemStatus: "done" })
       await clearSignOff(itemId)
+      await removeItemLogbookLines(itemId).catch(() => {}) // best-effort
+      await loadDraftLogbookEntries()
       auditLog({ entryType: "sign_off_cleared", summary: `Sign-off cleared on Item #${item.itemNumber}`, detail: `Previously signed by ${item.signedOffBy}`, itemId, itemNumber: item.itemNumber })
       return
     }
@@ -1602,16 +2022,22 @@ export default function WorkOrderDetail() {
       await signOffItem(itemId, profileId)
       await loadWO()
 
-      // Build logbook draft entry
-      if (id && id !== "wo-traxxall-import") {
+      // Build logbook draft entry (skipped when non-logbook)
+      if (!opts.noLogbook && id && id !== "wo-traxxall-import") {
         const tech = mechanics.find(m => m.id === profileId)
-        const entry = await getOrCreateDraftLogbookEntry(
-          { id: wo.id, woNumber: wo.woNumber, aircraftId: wo.aircraftId, guestRegistration: wo.guestRegistration, guestSerial: wo.guestSerial },
-          item.logbookSection
-        )
+        // Component install items (category "X — Installation" + serialNumber set)
+        // get their own fresh logbook entry — never merged with the section's shared draft.
+        const isComponentInstall =
+          item.category.endsWith("— Installation") && !!item.serialNumber?.trim()
+        const woRef = { id: wo.id, woNumber: wo.woNumber, aircraftId: wo.aircraftId, guestRegistration: wo.guestRegistration, guestSerial: wo.guestSerial, timesSnapshot: wo.timesSnapshot as any }
+        const entry = isComponentInstall
+          ? await createComponentInstallEntry(woRef, item.logbookSection, item.serialNumber!.trim())
+          : await getOrCreateDraftLogbookEntry(woRef, item.logbookSection)
+        // When digitalSig = false, leave name blank — signature block is printed and signed by hand.
+        // certType/certNumber still stored so the certificate line appears on the printed form.
         const signatory = await upsertEntrySignatory(entry.id, {
           profileId,
-          mechanicName: profile?.name ?? tech?.name ?? "Unknown",
+          mechanicName: opts.digitalSig ? (profile?.name ?? tech?.name ?? "Unknown") : "",
           certType:     profile?.certType  ?? tech?.certType  ?? null,
           certNumber:   profile?.certNumber ?? tech?.certNumber ?? null,
         })
@@ -1621,13 +2047,61 @@ export default function WorkOrderDetail() {
       }
       auditLog({
         entryType: "sign_off",
-        summary: `Item #${item.itemNumber} signed off`,
+        summary: `Item #${item.itemNumber} signed off${opts.noLogbook ? " (non-logbook)" : ""}`,
         detail: `Ref: ${item.refCode || "—"} · ${item.category}`,
         itemId, itemNumber: item.itemNumber,
       })
     } catch (err: any) {
       console.error("Sign-off failed:", err)
       setSignOffError(err?.message ?? "Sign-off failed — check console for details")
+    }
+  }
+
+  // ── Component exchange: create removal + installation items ─────────────────
+  async function createExchangeItems(section: LogbookSection) {
+    if (!wo) return
+    setExchangeSubmitting(true)
+    try {
+      const baseNumber = wo.items.length
+      const removal = await upsertWOItem({
+        workOrderId: wo.id, itemNumber: baseNumber + 1,
+        category: `${section} — Removal`,
+        logbookSection: section,
+        taskNumber: null,
+        discrepancy: exchangeRemovedSn ? `Remove ${section} S/N ${exchangeRemovedSn}` : `Remove ${section}`,
+        correctiveAction: "",
+        estimatedHours: 0, laborRate: 125, shippingCost: 0, outsideServicesCost: 0,
+        signOffRequired: true, itemStatus: "pending",
+        serialNumber: exchangeRemovedSn.trim() || null,
+      })
+      const install = await upsertWOItem({
+        workOrderId: wo.id, itemNumber: baseNumber + 2,
+        category: `${section} — Installation`,
+        logbookSection: section,
+        taskNumber: null,
+        discrepancy: exchangeInstalledSn ? `Install ${section} S/N ${exchangeInstalledSn}` : `Install ${section}`,
+        correctiveAction: "",
+        estimatedHours: 0, laborRate: 125, shippingCost: 0, outsideServicesCost: 0,
+        signOffRequired: true, itemStatus: "pending",
+        serialNumber: exchangeInstalledSn.trim() || null,
+      })
+      // Update snapshot S/N for the section with the incoming serial
+      if (exchangeInstalledSn.trim() && wo.timesSnapshot) {
+        const snap = { ...(wo.timesSnapshot as any) }
+        if (section === "Engine 1")  snap.eng1Serial  = exchangeInstalledSn.trim()
+        if (section === "Engine 2")  snap.eng2Serial  = exchangeInstalledSn.trim()
+        if (section === "Propeller") snap.propSerial  = exchangeInstalledSn.trim()
+        if (section === "APU")       snap.apuSerial   = exchangeInstalledSn.trim()
+        await updateWorkOrder(wo.id, { timesSnapshot: snap })
+      }
+      setWO(prev => prev ? { ...prev, items: [...prev.items, removal, install] } : prev)
+      setSelectedItemId(removal.id)
+      setExchangeSection(null)
+      setExchangeRemovedSn("")
+      setExchangeInstalledSn("")
+      auditLog({ entryType: "item_created", summary: `Component exchange added for ${section}`, detail: `Removed: ${exchangeRemovedSn || "—"} · Installed: ${exchangeInstalledSn || "—"}` })
+    } finally {
+      setExchangeSubmitting(false)
     }
   }
 
@@ -1713,6 +2187,7 @@ export default function WorkOrderDetail() {
     if (!wo || isTransitioning) return
     const next = NEXT_STATUS[wo.status]
     if (!next) return
+    if (wo.status === "draft") { setShowOpenModal(true); return }
     if (next === "completed") { setShowCompleteModal(true); return }
     triggerSlide("right")
     setTransitionColor(STATUS_GLOW_COLOR[next])
@@ -1746,6 +2221,36 @@ export default function WorkOrderDetail() {
       setIsTransitioning(false)
     }
     loadWO()  // background sync — no await, UI already updated
+  }
+
+  async function confirmOpen() {
+    if (!wo) return
+    setShowOpenModal(false)
+    triggerSlide("right")
+    setTransitionColor(STATUS_GLOW_COLOR["open"])
+    setIsTransitioning(true)
+    const fromStatus = wo.status
+    setWO(w => w ? { ...w, status: "open" } : w)
+    try {
+      const profileId = await getMyProfileId()
+      await updateWorkOrderStatus(wo.id, "open", profileId ?? "", "Work order opened.")
+      auditLog({ entryType: "status_change", summary: `Status: Draft → Open`, oldValue: fromStatus, newValue: "open" })
+    } finally {
+      setIsTransitioning(false)
+    }
+    loadWO()
+  }
+
+  async function handleDeleteDraft() {
+    if (!wo) return
+    setDeletingDraft(true)
+    try {
+      await deleteWorkOrder(wo.id)
+      navigate("/app/beet-box/work-orders")
+    } finally {
+      setDeletingDraft(false)
+      setShowDeleteDraftModal(false)
+    }
   }
 
   async function completeAndGenerate() {
@@ -1941,6 +2446,40 @@ export default function WorkOrderDetail() {
               </Button>
             )}
 
+            {/* Status-dependent actions */}
+            {wo.status === "draft" ? (
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => navigate(`/app/beet-box/work-orders/new?rebuild=${wo.id}`)}
+                  className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium transition-all"
+                  style={{ background: "rgba(161,161,170,0.1)", border: "1px solid rgba(161,161,170,0.3)", color: "rgba(212,212,216,0.85)" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(161,161,170,0.18)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "rgba(161,161,170,0.1)")}
+                >
+                  <ArrowLeft className="w-3 h-3" /> Return to Builder
+                </button>
+                <button
+                  onClick={() => setShowDeleteDraftModal(true)}
+                  className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium transition-all"
+                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "rgba(252,165,165,0.8)" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.16)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
+                >
+                  Delete Draft
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setTimesEditOpen(true)}
+                className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium transition-all flex-shrink-0"
+                style={{ background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.3)", color: "rgba(212,160,23,0.85)" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.15)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}
+              >
+                <Pencil className="w-3 h-3" /> Edit Times
+              </button>
+            )}
+
             {/* ── Tabs ── */}
             <div className="flex-1 flex items-center justify-center gap-1">
               {[
@@ -2000,6 +2539,11 @@ export default function WorkOrderDetail() {
                   from { transform: translateX(-36px); opacity: 0; }
                   to   { transform: translateX(0);     opacity: 1; }
                 }
+                @keyframes sign-off-progress {
+                  0%   { transform: translateX(-100%); }
+                  50%  { transform: translateX(150%); }
+                  100% { transform: translateX(-100%); }
+                }
                 @keyframes status-bar-fill {
                   from { transform: scaleX(0); opacity: 0.55; }
                   to   { transform: scaleX(1); opacity: 0.25; }
@@ -2051,74 +2595,249 @@ export default function WorkOrderDetail() {
 
               {/* ── Scrollable sections list ── */}
               <div className="flex-1 overflow-y-auto pt-3">
-              {visibleSections.map((section, sectionIdx) => {
-                const sectionItems = wo.items.filter(i => i.logbookSection === section)
-                const color = SECTION_COLORS[section]
+              {(() => {
+                // Build virtual section list: each real section, immediately followed by
+                // any install sub-sections derived from component exchange items.
+                type SectionEntry =
+                  | { kind: "real";    section: LogbookSection }
+                  | { kind: "install"; section: LogbookSection; serial: string }
+                const entries: SectionEntry[] = []
+                for (const s of visibleSections) {
+                  entries.push({ kind: "real", section: s })
+                  const serials = [...new Set(
+                    wo.items
+                      .filter(i => i.logbookSection === s && i.category.endsWith("— Installation") && i.serialNumber?.trim())
+                      .map(i => i.serialNumber!)
+                  )]
+                  for (const serial of serials) entries.push({ kind: "install", section: s, serial })
+                }
+                return entries.map((entry, entryIdx) => {
+                const section = entry.section
+                // Real sections exclude installation items; install sections include only theirs
+                const sectionItems = entry.kind === "real"
+                  ? wo.items.filter(i => i.logbookSection === section && !(i.category.endsWith("— Installation") && i.serialNumber?.trim()))
+                  : wo.items.filter(i => i.logbookSection === section && i.category.endsWith("— Installation") && i.serialNumber?.trim() === (entry as any).serial)
+                const isInstallSection = entry.kind === "install"
+                const installSerial   = isInstallSection ? (entry as any).serial as string : null
+                const color = isInstallSection ? "#10b981" : SECTION_COLORS[section]
+                // S/N for this section from snapshot or aircraft record
+                const snap = wo.timesSnapshot as any
+                const sectionSerial: string | null = isInstallSection ? installSerial :
+                  section === "Airframe"  ? (wo.aircraft?.serialNumber ?? null) :
+                  section === "Engine 1"  ? (snap?.eng1Serial ?? null) :
+                  section === "Engine 2"  ? (snap?.eng2Serial ?? null) :
+                  section === "Propeller" ? (snap?.propSerial ?? null) :
+                  section === "APU"       ? (snap?.apuSerial  ?? null) : null
+                const canExchange = !isLocked && !isInstallSection && ["Engine 1", "Engine 2", "Propeller", "APU"].includes(section)
+                const isExchanging = !isInstallSection && exchangeSection === section
+                const entryKey = isInstallSection ? `${section}__install__${installSerial}` : section
+
                 return (
-                  <div key={section} className={sectionIdx > 0 ? "mt-2" : ""}>
+                  <div key={entryKey} className={entryIdx > 0 ? "mt-2" : ""}>
                     <div
-                      className="px-4 py-2.5 flex items-center justify-between sticky top-0 z-10"
+                      className="px-4 py-2 flex items-center gap-2 sticky top-0 z-10"
                       style={{
-                        background: `linear-gradient(to right, ${color}18, hsl(0,0%,11%))`,
+                        background: isInstallSection
+                          ? `linear-gradient(to right, rgba(16,185,129,0.14), hsl(0,0%,11%))`
+                          : `linear-gradient(to right, ${color}18, hsl(0,0%,11%))`,
                         borderBottom: "1px solid hsl(0,0%,18%)",
                         borderLeft: `3px solid ${color}`,
                       }}
                     >
-                      <span className="text-sm font-bold uppercase tracking-widest" style={{ color }}>{section}</span>
-                      <span className="text-white/40 text-xs font-mono">{sectionItems.length}</span>
+                      {isInstallSection ? (
+                        <>
+                          <ArrowLeftRight className="w-3 h-3 flex-shrink-0" style={{ color: "#10b981" }} />
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="text-[9px] font-bold uppercase tracking-[0.18em] leading-none mb-0.5" style={{ color: "rgba(16,185,129,0.55)" }}>
+                              {section} — Incoming
+                            </span>
+                            <span className="text-xs font-mono font-bold truncate" style={{ color: "#10b981" }}>
+                              S/N {installSerial}
+                            </span>
+                          </div>
+                          <span
+                            className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded flex-shrink-0"
+                            style={{ background: "rgba(16,185,129,0.12)", color: "rgba(16,185,129,0.6)", border: "1px solid rgba(16,185,129,0.22)" }}
+                          >
+                            New Logbook
+                          </span>
+                          <span className="text-white/40 text-xs font-mono ml-1 flex-shrink-0">{sectionItems.length}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-sm font-bold uppercase tracking-widest flex-shrink-0" style={{ color }}>{section}</span>
+                          {sectionSerial && (
+                            <span className="text-white/30 text-[10px] font-mono truncate" title={`S/N ${sectionSerial}`}>
+                              S/N {sectionSerial}
+                            </span>
+                          )}
+                          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                            {canExchange && (
+                              <button
+                                onClick={() => {
+                                  if (isExchanging) { setExchangeSection(null) }
+                                  else { setExchangeSection(section); setExchangeRemovedSn(sectionSerial ?? ""); setExchangeInstalledSn("") }
+                                }}
+                                title="Component Exchange"
+                                className={`transition-colors rounded p-0.5 ${isExchanging ? "text-sky-400" : "text-white/20 hover:text-white/50"}`}
+                              >
+                                <ArrowLeftRight className="w-3 h-3" />
+                              </button>
+                            )}
+                            <span className="text-white/40 text-xs font-mono">{sectionItems.length}</span>
+                          </div>
+                        </>
+                      )}
                     </div>
 
-                    {sectionItems.map(item => {
-                      const cfg = ITEM_STATUS_CONFIG[item.itemStatus ?? "pending"]
-                      const Icon = cfg.icon
-                      const isSelected = selectedItemId === item.id
-                      return (
-                        <button
-                          key={item.id}
-                          onClick={() => { setSelectedItemId(item.id); setAddingToSection(null) }}
-                          style={isSelected ? {
-                            background: "linear-gradient(to right, rgba(212,160,23,0.12), rgba(212,160,23,0.03))",
-                            borderLeft: "3px solid var(--skyshare-gold)",
-                          } : {}}
-                          className={cn(
-                            "w-full text-left px-4 py-3 flex items-center gap-3 transition-all border-l-[3px]",
-                            isSelected
-                              ? "border-l-transparent"
-                              : "border-l-transparent hover:bg-white/[0.04]"
-                          )}
-                        >
-                          <Icon className={cn("w-4 h-4 flex-shrink-0", cfg.color)} />
-                          <span className={cn(
-                            "text-sm flex-1 truncate leading-snug",
-                            isSelected ? "text-white font-medium" : "text-white/65"
-                          )}>
-                            {item.category}
-                          </span>
-                          {item.signOffRequired && (
-                            <div
-                              className={cn("w-2.5 h-2.5 rounded-full flex-shrink-0", item.signedOffBy ? "bg-emerald-500" : "bg-white/15")}
-                              title={item.signedOffBy ? "Signed off" : "Sign-off required"}
+                    {/* ── Component Exchange panel ── */}
+                    {isExchanging && (
+                      <div className="mx-3 my-2 rounded-xl overflow-hidden" style={{ border: "1px solid rgba(96,165,250,0.3)", background: "rgba(96,165,250,0.05)" }}>
+                        <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: "1px solid rgba(96,165,250,0.15)", background: "rgba(96,165,250,0.08)" }}>
+                          <ArrowLeftRight className="w-3 h-3 text-sky-400" />
+                          <span className="text-sky-300 text-xs font-bold uppercase tracking-wider">Component Exchange</span>
+                        </div>
+                        <div className="px-4 py-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-white/40 text-[10px] w-16 flex-shrink-0">Removing</span>
+                            <input
+                              type="text"
+                              value={exchangeRemovedSn}
+                              onChange={e => setExchangeRemovedSn(e.target.value)}
+                              placeholder="S/N going off"
+                              className="flex-1 text-xs font-mono text-white bg-black/20 rounded px-2 py-1.5 focus:outline-none border border-white/10 focus:border-white/25 placeholder:text-white/20"
                             />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-white/40 text-[10px] w-16 flex-shrink-0">Installing</span>
+                            <input
+                              type="text"
+                              value={exchangeInstalledSn}
+                              onChange={e => setExchangeInstalledSn(e.target.value)}
+                              placeholder="S/N coming on"
+                              className="flex-1 text-xs font-mono text-white bg-black/20 rounded px-2 py-1.5 focus:outline-none border border-white/10 focus:border-white/25 placeholder:text-white/20"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              onClick={() => createExchangeItems(section)}
+                              disabled={exchangeSubmitting}
+                              className="flex-1 text-xs font-bold py-1.5 rounded-lg transition-all disabled:opacity-50"
+                              style={{ background: "rgba(96,165,250,0.2)", border: "1px solid rgba(96,165,250,0.4)", color: "#93c5fd" }}
+                            >
+                              {exchangeSubmitting ? "Creating…" : "Create Exchange Items"}
+                            </button>
+                            <button
+                              onClick={() => setExchangeSection(null)}
+                              className="text-white/30 hover:text-white/60 text-xs px-2 py-1.5 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(() => {
+                      const renderItem = (item: WOItem) => {
+                        const cfg = ITEM_STATUS_CONFIG[item.itemStatus ?? "pending"]
+                        const Icon = cfg.icon
+                        const isSelected = selectedItemId === item.id
+                        const isEditingThis = editingItemId === item.id
+                        const pencilColor = item.signedOffBy
+                          ? "text-emerald-500"
+                          : (!item.refCode?.trim() || item.itemStatus !== "done")
+                            ? "text-amber-400/70"
+                            : "text-white/25"
+                        const pencilTitle = item.signedOffBy
+                          ? "Signed off — click to rename"
+                          : item.itemStatus !== "done"
+                            ? "Set status to Done to sign off — click to rename"
+                            : !item.refCode?.trim()
+                              ? "Needs Ref / Task Code to sign off — click to rename"
+                              : "Click to rename"
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => { if (!isEditingThis) { setSelectedItemId(item.id); setAddingToSection(null) } }}
+                            style={isSelected ? {
+                              background: "linear-gradient(to right, rgba(212,160,23,0.12), rgba(212,160,23,0.03))",
+                              borderLeft: "3px solid var(--skyshare-gold)",
+                            } : {}}
+                            className={cn(
+                              "w-full text-left px-4 py-3 flex items-center gap-2.5 transition-all border-l-[3px] cursor-pointer",
+                              isSelected ? "border-l-transparent" : "border-l-transparent hover:bg-white/[0.04]"
+                            )}
+                          >
+                            <Icon className={cn("w-4 h-4 flex-shrink-0", cfg.color)} />
+                            <span className="text-white/30 text-xs font-mono flex-shrink-0 w-4 text-right">
+                              {item.itemNumber}
+                            </span>
+                            {isEditingThis ? (
+                              <input
+                                autoFocus
+                                value={editingCategoryVal}
+                                onChange={e => setEditingCategoryVal(e.target.value)}
+                                onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur() }}
+                                onBlur={() => {
+                                  const trimmed = editingCategoryVal.trim()
+                                  if (trimmed && trimmed !== item.category) {
+                                    patchItem(item.id, { category: trimmed })
+                                    persistItemFields(item.id, { category: trimmed }, { category: item.category })
+                                  }
+                                  setEditingItemId(null)
+                                }}
+                                onClick={e => e.stopPropagation()}
+                                className="flex-1 min-w-0 text-sm font-medium text-white bg-white/[0.08] rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-white/20"
+                              />
+                            ) : (
+                              <span className={cn("text-sm flex-1 truncate leading-snug", isSelected ? "text-white font-medium" : "text-white/65")}>
+                                {item.category}
+                              </span>
+                            )}
+                            {!isLocked && (
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  setSelectedItemId(item.id)
+                                  setAddingToSection(null)
+                                  setEditingItemId(item.id)
+                                  setEditingCategoryVal(item.category)
+                                }}
+                                title={pencilTitle}
+                                className={cn("flex-shrink-0 transition-colors hover:text-white/70", pencilColor)}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <>
+                          {sectionItems.map(renderItem)}
+
+                          {sectionItems.length === 0 && (
+                            <p className="px-4 py-2 text-white/20 text-xs italic">No items</p>
                           )}
-                        </button>
+
+                          {/* Install sections are populated only via Component Exchange — no manual Add item */}
+                          {!isLocked && !isInstallSection && (
+                            <button
+                              onClick={() => { setAddingToSection(addingToSection === section ? null : section); setSelectedItemId(null) }}
+                              className="w-full text-left px-4 py-2 flex items-center gap-1.5 text-white/30 hover:text-white/60 text-xs transition-colors"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Add item
+                            </button>
+                          )}
+                        </>
                       )
-                    })}
-
-                    {sectionItems.length === 0 && (
-                      <p className="px-4 py-2 text-white/20 text-xs italic">No items</p>
-                    )}
-
-                    {!isLocked && (
-                      <button
-                        onClick={() => { setAddingToSection(addingToSection === section ? null : section); setSelectedItemId(null) }}
-                        className="w-full text-left px-4 py-2 flex items-center gap-1.5 text-white/30 hover:text-white/60 text-xs transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Add item
-                      </button>
-                    )}
+                    })()}
                   </div>
                 )
-              })}
+              })
+              })()}
 
               {ALL_SECTIONS.filter(s => !visibleSections.includes(s)).length > 0 && (
                 <div className="px-4 pt-3 pb-4 mt-1" style={{ borderTop: "1px solid hsl(0,0%,16%)" }}>
@@ -2144,9 +2863,11 @@ export default function WorkOrderDetail() {
                   item={selectedItem}
                   isLocked={isLocked}
                   sectionColor={SECTION_COLORS[selectedItem.logbookSection]}
+                  aircraftModel={[aircraft?.make, aircraft?.modelFull].filter(Boolean).join(" ")}
+                  mechanicName={myProfile?.name ?? ""}
                   onPatch={patch => patchItem(selectedItem.id, patch)}
                   onPersist={fields => persistItemFields(selectedItem.id, fields)}
-                  onSignOff={() => toggleSignOff(selectedItem.id)}
+                  onSignOff={opts => toggleSignOff(selectedItem.id, opts)}
                   signOffError={signOffError}
                   onClearSignOffError={() => setSignOffError(null)}
                   onDeleteLabor={id => removeLaborEntry(selectedItem.id, id)}
@@ -2316,12 +3037,32 @@ export default function WorkOrderDetail() {
             {/* Toolbar above paper */}
             <div className="flex items-center justify-between px-6 py-3" style={{ borderBottom: "1px solid hsl(0,0%,20%)" }}>
               <div className="flex items-center gap-3">
+                {/* RTS label — stacked two rows */}
+                <div className="flex flex-col leading-none select-none font-bold" style={{ fontFamily: "var(--font-heading)", fontSize: "11px", letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)" }}>
+                  <span>RTS</span>
+                  <span className="mt-0.5">Statement</span>
+                </div>
                 {logbookDraftError && (
                   <div className="flex items-center gap-2 text-xs" style={{ color: "rgba(239,68,68,0.9)" }}>
                     <AlertTriangle className="w-3.5 h-3.5" />
                     <span>{logbookDraftError}</span>
                     <button onClick={() => setLogbookDraftError(null)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
                   </div>
+                )}
+                {draftLogbookEntries.length > 0 && (
+                  <select
+                    value={lbEdit(draftLogbookEntries[0].id).rtsKey}
+                    onChange={e => {
+                      const key = e.target.value
+                      draftLogbookEntries.forEach(entry => selectRtsTemplate(entry.id, wo.aircraftId, key))
+                    }}
+                    className="h-6 rounded text-[11px] text-white/75 focus:outline-none cursor-pointer"
+                    style={{ background: "hsl(0 0% 16%)", border: "1px solid hsl(0 0% 28%)", colorScheme: "dark", padding: "0 22px 0 8px", fontFamily: "var(--font-heading)", letterSpacing: "0.02em" }}
+                  >
+                    {RTS_TEMPLATES.map(t => (
+                      <option key={t.key} value={t.key}>{t.label}</option>
+                    ))}
+                  </select>
                 )}
               </div>
               {draftLogbookEntries.length > 0 && (
@@ -2339,20 +3080,31 @@ export default function WorkOrderDetail() {
 
             {draftLogbookEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 gap-3 text-white/25">
-                <BookOpen className="w-12 h-12" />
-                <p className="text-lg">No logbook entries yet</p>
-                <p className="text-sm text-center max-w-xs">Draft entries appear automatically as items are signed off.</p>
+                {logbookCreating ? (
+                  <>
+                    <Loader2 className="w-8 h-8 animate-spin" />
+                    <p className="text-sm">Preparing draft logbook…</p>
+                  </>
+                ) : (
+                  <>
+                    <BookOpen className="w-12 h-12" />
+                    <p className="text-lg">No logbook entries</p>
+                  </>
+                )}
               </div>
             ) : (
               /* Page wrapper — dark bg; each entry card is white, captured individually by html2canvas */
-              <div ref={logbookPrintRef} className="px-16 py-10 space-y-0" style={{ background: "hsl(0,0%,14%)" }}>
-                {[...draftLogbookEntries].sort((a, b) => {
+              <div ref={logbookPrintRef} className="px-14 py-8 space-y-0" style={{ background: "hsl(0,0%,14%)" }}>
+                {(() => {
+                  const sectionsWithItems = new Set(wo?.items.map(i => i.logbookSection) ?? [])
                   const ORDER = ["Airframe", "Engine 1", "Engine 2", "Propeller", "APU", "Other"]
-                  return (ORDER.indexOf(a.logbookSection) + 1 || 999) - (ORDER.indexOf(b.logbookSection) + 1 || 999)
-                }).map((entry, idx) => {
+                  return [...draftLogbookEntries]
+                    .filter(e => sectionsWithItems.has(e.logbookSection))
+                    .sort((a, b) => (ORDER.indexOf(a.logbookSection) + 1 || 999) - (ORDER.indexOf(b.logbookSection) + 1 || 999))
+                })().map((entry, idx) => {
                   const edits  = lbEdit(entry.id)
                   const reg    = wo.aircraft?.registration ?? wo.guestRegistration ?? ""
-                  const rts    = edits.returnToService || "I certify the work performed as described herein was accomplished in accordance with Title 14, Code of Federal Regulations, Part 135.411(a)(1), Part 91.409(f)(3), and Part 43, and is approved for return to service in respect to that work performed."
+                  const rts    = edits.returnToService || DEFAULT_RTS_TEXT
                   const sigs   = entry.signatories.length > 0 ? entry.signatories : [null]
 
                   // Section-aware left-column fields
@@ -2390,22 +3142,23 @@ export default function WorkOrderDetail() {
                           <div className="flex-1" style={{ borderTop: "1px dashed rgba(255,255,255,0.10)" }} />
                         </div>
                       )}
+
                     <div
                       data-lb-page
-                      className="bg-white border-t-4 border-b-4 border-black text-[13px]"
+                      className="bg-white border-t-4 border-b-4 border-black text-[12px]"
                       style={{ fontFamily: "Arial, Helvetica, sans-serif", color: "#111" }}
                     >
                       {/* ── Top strip: WO# + date left, page right ── */}
-                      <div className="flex justify-between items-baseline px-6 py-2 text-[11px]" style={{ borderBottom: "2px solid #9ca3af", marginLeft: "24px", marginRight: "24px" }}>
+                      <div className="flex justify-between items-baseline px-5 py-1.5 text-[10px]" style={{ borderBottom: "2px solid #9ca3af", marginLeft: "22px", marginRight: "22px" }}>
                         <span className="font-semibold">{wo.woNumber} ({entry.entryDate})</span>
                         <span className="text-gray-500">Page 1 / 1</span>
                       </div>
 
                       {/* ── Three-column header ── */}
-                      <div className="flex items-stretch p-5 gap-5 border-b-4 border-black" style={{ borderLeftWidth: 0, borderRightWidth: 0, marginLeft: "24px", marginRight: "24px" }}>
+                      <div className="flex items-stretch p-[18px] gap-4 border-b-4 border-black" style={{ borderLeftWidth: 0, borderRightWidth: 0, marginLeft: "22px", marginRight: "22px" }}>
 
                         {/* Left: section-aware aircraft/component fields */}
-                        <div className="flex-1 text-[12px] space-y-0.5">
+                        <div className="flex-1 text-[11px] space-y-0.5">
                           {leftFields.map(r => (
                             <div key={r.label} className="flex gap-1.5 leading-[1.6]">
                               <span className="font-semibold w-20 flex-shrink-0">{r.label}</span>
@@ -2417,15 +3170,15 @@ export default function WorkOrderDetail() {
                         {/* Center: company top, registration pinned to bottom near the dividing line */}
                         <div className="flex-1 flex flex-col items-center text-center justify-between">
                           <div>
-                            <div className="font-bold text-base leading-tight">CB Aviation, Inc.</div>
-                            <div className="text-[11px] text-gray-600 leading-tight">dba SkyShare</div>
-                            <div className="text-[11px] text-gray-600 leading-tight mt-0.5">3715 Airport Rd. · Ogden, UT 84116</div>
+                            <div className="font-bold text-[14px] leading-tight">CB Aviation, Inc.</div>
+                            <div className="text-[10px] text-gray-600 leading-tight">dba SkyShare</div>
+                            <div className="text-[10px] text-gray-600 leading-tight mt-0.5">3715 Airport Rd. · Ogden, UT 84116</div>
                           </div>
-                          <div className="font-black uppercase pb-0.5" style={{ fontSize: "24px", letterSpacing: "0.18em", color: "#111" }}>{reg || "—"}</div>
+                          <div className="font-black uppercase pb-0.5" style={{ fontSize: "22px", letterSpacing: "0.18em", color: "#111" }}>{reg || "—"}</div>
                         </div>
 
                         {/* Right: stacked WO fields + editable times */}
-                        <div className="flex-1 text-[12px] space-y-0.5 text-right">
+                        <div className="flex-1 text-[11px] space-y-0.5 text-right">
                           <div className="flex justify-end gap-1.5 leading-[1.6]">
                             <span className="font-semibold">W/O #:</span>
                             <span>{wo.woNumber}</span>
@@ -2441,7 +3194,7 @@ export default function WorkOrderDetail() {
                           ]).map(f => (
                             <div key={f.field} className="flex items-center justify-end gap-1.5 leading-[1.6]">
                               <span className="font-semibold">{f.label}</span>
-                              {f.prev != null && (
+                              {f.prev != null && String(f.prev) !== edits[f.field] && (
                                 <span className="text-gray-400 line-through text-[11px]">{f.prev}</span>
                               )}
                               <input
@@ -2452,7 +3205,7 @@ export default function WorkOrderDetail() {
                                   const v = e.target.value === "" ? undefined : parseFloat(e.target.value)
                                   updateLogbookEntry(entry.id, { [f.dbField]: v }).catch(console.error)
                                 }}
-                                style={{ width: "62px", border: "none", borderBottom: "1px solid #999", background: "transparent", fontSize: "12px", outline: "none", color: "#111", padding: "0 2px", textAlign: "right" }}
+                                style={{ width: "56px", border: "none", borderBottom: "1px solid #999", background: "transparent", fontSize: "11px", outline: "none", color: "#111", padding: "0 2px", textAlign: "right" }}
                               />
                             </div>
                           ))}
@@ -2461,8 +3214,8 @@ export default function WorkOrderDetail() {
                       </div>
 
                       {/* ── Section title + entries ── */}
-                      <div className="p-5">
-                        <h2 className="font-bold text-sm uppercase tracking-wide mb-2">
+                      <div className="p-[18px]">
+                        <h2 className="font-bold text-[13px] uppercase tracking-wide mb-2">
                           {entry.sectionTitle || `${entry.logbookSection} Entries`}
                         </h2>
 
@@ -2473,8 +3226,8 @@ export default function WorkOrderDetail() {
                         ) : (
                           <div>
                             {/* Column headers */}
-                            <div className="grid text-[10px] uppercase tracking-widest text-gray-400 font-semibold mb-1"
-                              style={{ gridTemplateColumns: "36px 110px 1fr" }}>
+                            <div className="grid text-[9px] uppercase tracking-widest text-gray-400 font-semibold mb-1"
+                              style={{ gridTemplateColumns: "32px 99px 1fr" }}>
                               <div className="text-center">Item</div>
                               <div className="text-center">Code</div>
                               <div />
@@ -2483,12 +3236,12 @@ export default function WorkOrderDetail() {
                             {entry.lines.map(line => (
                               <div
                                 key={line.id}
-                                className="grid py-1.5"
-                                style={{ gridTemplateColumns: "36px 110px 1fr" }}
+                                className="grid py-1"
+                                style={{ gridTemplateColumns: "32px 99px 1fr" }}
                               >
-                                <div className="text-[13px] text-center">{line.lineNumber}</div>
-                                <div className="text-[13px] font-bold font-mono text-gray-700 text-center break-all leading-snug pt-px">{line.refCode}</div>
-                                <div className="text-[13px] leading-relaxed pl-2">{line.text}</div>
+                                <div className="text-[12px] text-center">{line.lineNumber}</div>
+                                <div className="text-[12px] font-bold font-mono text-gray-700 text-center break-all leading-snug pt-px">{line.refCode}</div>
+                                <div className="text-[12px] leading-relaxed pl-2">{line.text}</div>
                               </div>
                             ))}
                           </div>
@@ -2496,9 +3249,9 @@ export default function WorkOrderDetail() {
                       </div>
 
                       {/* ── Certification block ── */}
-                      <div className="p-5 bg-gray-50" style={{ borderTop: "4px solid #111", marginLeft: "24px", marginRight: "24px" }}>
-                        <div className="bg-white border-2 border-gray-300 p-4 mb-3">
-                          <p className="text-[11px] leading-snug italic text-gray-700">{rts}</p>
+                      <div className="p-[18px] bg-gray-50" style={{ borderTop: "4px solid #111", marginLeft: "22px", marginRight: "22px" }}>
+                        <div className="bg-white border-2 border-gray-300 p-3 mb-2">
+                          <p className="text-[10px] leading-snug italic text-gray-700">{rts}</p>
                         </div>
 
                         {/* Signature rows */}
@@ -2508,37 +3261,37 @@ export default function WorkOrderDetail() {
                             style={{ borderTop: si > 0 ? "1px dashed #ccc" : "none", paddingTop: si > 0 ? "10px" : 0, marginTop: si > 0 ? "10px" : 0 }}
                           >
                             {/* Four-column horizontal signature bar */}
-                            <div className="grid gap-4 text-[11px]" style={{ gridTemplateColumns: "100px 1fr 1.6fr 160px" }}>
+                            <div className="grid gap-3 text-[10px]" style={{ gridTemplateColumns: "90px 1fr 1.6fr 144px" }}>
 
                               {/* 1 — Date */}
                               <div className="flex flex-col justify-end">
-                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1">Date</div>
-                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[12px]">
+                                <div className="font-semibold text-[8px] uppercase tracking-widest text-gray-400 mb-1">Date</div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[11px]">
                                   {entry.entryDate}
                                 </div>
                               </div>
 
                               {/* 2 — Name (printed) */}
                               <div className="flex flex-col justify-end">
-                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1">Name (print)</div>
-                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[12px]">
+                                <div className="font-semibold text-[8px] uppercase tracking-widest text-gray-400 mb-1">Name (print)</div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[11px]">
                                   {sig?.mechanicName || ""}
                                 </div>
                               </div>
 
                               {/* 3 — Digital Signature */}
                               <div className="flex flex-col justify-end">
-                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1 flex items-center gap-1.5">
+                                <div className="font-semibold text-[8px] uppercase tracking-widest text-gray-400 mb-1 flex items-center gap-1.5">
                                   Signature
                                   {sig?.mechanicName && (
-                                    <span className="text-[8px] font-normal normal-case tracking-normal px-1.5 py-px rounded-full" style={{ background: "rgba(52,211,153,0.15)", color: "rgba(52,211,153,0.85)" }}>
+                                    <span className="text-[7px] font-normal normal-case tracking-normal px-1.5 py-px rounded-full" style={{ background: "rgba(52,211,153,0.15)", color: "rgba(52,211,153,0.85)" }}>
                                       digitally signed
                                     </span>
                                   )}
                                 </div>
-                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px", minHeight: "28px", display: "flex", alignItems: "flex-end" }}>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px", minHeight: "25px", display: "flex", alignItems: "flex-end" }}>
                                   {sig?.mechanicName && (
-                                    <span style={{ fontFamily: "'Dancing Script', cursive", fontSize: "26px", lineHeight: 1, color: "#1a2e4a", letterSpacing: "0.02em" }}>
+                                    <span style={{ fontFamily: "'Dancing Script', cursive", fontSize: "23px", lineHeight: 1, color: "#1a2e4a", letterSpacing: "0.02em" }}>
                                       {sig.mechanicName}
                                     </span>
                                   )}
@@ -2547,8 +3300,8 @@ export default function WorkOrderDetail() {
 
                               {/* 4 — Certificate */}
                               <div className="flex flex-col justify-end">
-                                <div className="font-semibold text-[9px] uppercase tracking-widest text-gray-400 mb-1">Certificate</div>
-                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[12px]">
+                                <div className="font-semibold text-[8px] uppercase tracking-widest text-gray-400 mb-1">Certificate</div>
+                                <div style={{ borderBottom: "1.5px solid #444", paddingBottom: "2px" }} className="font-semibold text-[11px]">
                                   {sig?.certType && sig.certNumber
                                     ? `${sig.certType} ${sig.certNumber}`
                                     : sig?.certType ?? "A&P"}
@@ -2558,8 +3311,8 @@ export default function WorkOrderDetail() {
                             </div>
 
                             {/* W/O + page — flush right, below sig bar */}
-                            <div className="flex justify-end items-center gap-4 mt-2 text-[10px] text-gray-500">
-                              <span className="font-semibold text-[11px] text-gray-700">W/O {wo.woNumber}</span>
+                            <div className="flex justify-end items-center gap-3 mt-1.5 text-[9px] text-gray-500">
+                              <span className="font-semibold text-[10px] text-gray-700">W/O {wo.woNumber}</span>
                               <span>Page 1 / 1</span>
                             </div>
                           </div>
@@ -2801,11 +3554,136 @@ export default function WorkOrderDetail() {
         </div>
       )}
 
+      {/* ── TIMES EDIT MODAL ────────────────────────────────────────────────── */}
+      {wo && (
+        <TimesEditModal
+          open={timesEditOpen}
+          onClose={() => setTimesEditOpen(false)}
+          aircraftLabel={[
+            wo.aircraft?.registration ?? wo.guestRegistration ?? "",
+            [wo.aircraft?.make, wo.aircraft?.modelFull].filter(Boolean).join(" "),
+          ].filter(Boolean).join(" — ")}
+          initialTimes={wo.timesSnapshot as AircraftTimesSnapshot | null}
+          hobbsDiff={hobbsDiff}
+          onConfirm={async (newTimes) => {
+            const { parseWarnings: _pw, ...snap } = newTimes
+            await updateWorkOrder(wo.id, { timesSnapshot: snap as Record<string, unknown> })
+            // Update any existing draft logbook entries with section-appropriate times
+            for (const entry of draftLogbookEntries) {
+              const s = entry.logbookSection
+              const patch: Parameters<typeof updateLogbookEntry>[1] = {}
+              if (s === "Airframe") {
+                if (newTimes.airframeHrs != null) patch.totalAircraftTime = newTimes.airframeHrs
+                if (newTimes.landings    != null) patch.landings           = newTimes.landings
+                if (newTimes.hobbs       != null) patch.hobbs              = newTimes.hobbs
+              } else if (s === "Engine 1") {
+                if (newTimes.eng1Tsn != null) patch.totalAircraftTime = newTimes.eng1Tsn
+                if (newTimes.eng1Csn != null) patch.landings           = newTimes.eng1Csn
+              } else if (s === "Engine 2") {
+                if (newTimes.eng2Tsn != null) patch.totalAircraftTime = newTimes.eng2Tsn
+                if (newTimes.eng2Csn != null) patch.landings           = newTimes.eng2Csn
+              } else if (s === "Propeller") {
+                if (newTimes.propTsn != null) patch.totalAircraftTime = newTimes.propTsn
+                if (newTimes.propCsn != null) patch.landings           = newTimes.propCsn
+              } else if (s === "APU") {
+                if (newTimes.apuHrs    != null) patch.totalAircraftTime = newTimes.apuHrs
+                if (newTimes.apuStarts != null) patch.landings           = newTimes.apuStarts
+              }
+              if (Object.keys(patch).length > 0) {
+                await updateLogbookEntry(entry.id, patch)
+              }
+            }
+            await Promise.all([loadWO(), loadDraftLogbookEntries()])
+            setTimesEditOpen(false)
+          }}
+        />
+      )}
+
+      {/* ── OPEN CONFIRMATION MODAL ──────────────────────────────────────────── */}
+      {showOpenModal && wo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.78)" }}>
+          <div className="rounded-2xl p-7 max-w-sm w-full mx-4 space-y-5 max-h-[90vh] overflow-y-auto" style={{ background: "hsl(0,0%,12%)", border: "1px solid hsl(0,0%,24%)" }}>
+            <div>
+              <h3 className="text-white text-xl font-bold mb-1" style={{ fontFamily: "var(--font-display)" }}>
+                Open Work Order?
+              </h3>
+              <p className="text-white/45 text-sm leading-relaxed">
+                <span className="text-white/70 font-medium">WO# {wo.woNumber}</span> will move to active status.
+              </p>
+            </div>
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              <AlertTriangle className="w-4 h-4 text-red-400/80 flex-shrink-0 mt-0.5" />
+              <p className="text-red-300/70 text-sm leading-relaxed">
+                Once opened, this work order <span className="text-red-300 font-semibold">can no longer be permanently deleted.</span> It will exist in the system record.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={confirmOpen}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all"
+                style={{ background: "rgba(147,197,253,0.15)", border: "1px solid rgba(147,197,253,0.4)", color: "#93c5fd" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(147,197,253,0.25)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(147,197,253,0.15)")}
+              >
+                Open Work Order →
+              </button>
+              <button
+                onClick={() => setShowOpenModal(false)}
+                className="px-5 py-2.5 rounded-xl text-sm text-white/45 hover:text-white/70 transition-colors"
+                style={{ border: "1px solid hsl(0,0%,26%)" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DELETE DRAFT MODAL ────────────────────────────────────────────────── */}
+      {showDeleteDraftModal && wo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.78)" }}>
+          <div className="rounded-2xl p-7 max-w-sm w-full mx-4 space-y-5 max-h-[90vh] overflow-y-auto" style={{ background: "hsl(0,0%,12%)", border: "1px solid rgba(239,68,68,0.3)" }}>
+            <div>
+              <h3 className="text-white text-xl font-bold mb-1" style={{ fontFamily: "var(--font-display)" }}>
+                Delete Draft?
+              </h3>
+              <p className="text-white/45 text-sm leading-relaxed">
+                <span className="text-white/70 font-medium">WO# {wo.woNumber}</span> and all its items will be permanently removed. The work order number will be freed.
+              </p>
+            </div>
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              <AlertTriangle className="w-4 h-4 text-red-400/80 flex-shrink-0 mt-0.5" />
+              <p className="text-red-300/70 text-sm leading-relaxed">This action <span className="text-red-300 font-semibold">cannot be undone.</span> Only draft work orders may be deleted.</p>
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={handleDeleteDraft}
+                disabled={deletingDraft}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all"
+                style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)", color: "#f87171", opacity: deletingDraft ? 0.6 : 1 }}
+                onMouseEnter={e => { if (!deletingDraft) e.currentTarget.style.background = "rgba(239,68,68,0.28)" }}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.15)")}
+              >
+                {deletingDraft ? "Deleting…" : "Delete Permanently"}
+              </button>
+              <button
+                onClick={() => setShowDeleteDraftModal(false)}
+                disabled={deletingDraft}
+                className="px-5 py-2.5 rounded-xl text-sm text-white/45 hover:text-white/70 transition-colors"
+                style={{ border: "1px solid hsl(0,0%,26%)" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── COMPLETE MODAL ───────────────────────────────────────────────────── */}
       {showCompleteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}>
           <div
-            className="rounded-2xl p-7 max-w-md w-full mx-4 space-y-5"
+            className="rounded-2xl p-7 max-w-md w-full mx-4 space-y-5 max-h-[90vh] overflow-y-auto"
             style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}
           >
             <h3

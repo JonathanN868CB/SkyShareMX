@@ -112,6 +112,7 @@ const PERMISSION_GROUPS: { label: string; items: AppSection[] }[] = [
       "Records Vault",
       "Beet Box",
       "My Journey",
+      "My Team",
       "Training",
       "Vendor Map",
       "14-Day Check",

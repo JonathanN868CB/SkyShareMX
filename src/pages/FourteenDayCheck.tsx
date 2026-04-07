@@ -7,7 +7,7 @@ import { formatDistanceToNow } from "date-fns"
 import {
   CalendarClock, ExternalLink, Clock, AlertTriangle,
   ChevronRight, ChevronDown, RefreshCw, QrCode, History, Plus, Mail,
-  Plane, X, LayoutGrid, LayoutList,
+  Plane, X, LayoutGrid, LayoutList, FileText,
 } from "lucide-react"
 import {
   useFleetCheckSummaries,
@@ -45,7 +45,7 @@ export default function FourteenDayCheck() {
   const [qrAircraft, setQrAircraft]         = useState<AircraftCheckSummary | null>(null)
   const [historyAircraft, setHistoryAircraft] = useState<AircraftCheckSummary | null>(null)
   const [emailAircraft, setEmailAircraft]   = useState<AircraftCheckSummary | null>(null)
-  const [showAddModal, setShowAddModal]     = useState(false)
+  const [showAddModal,       setShowAddModal]       = useState(false)
 
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
     return (localStorage.getItem("fdcheck_view") as "grid" | "list") ?? "grid"
@@ -99,6 +99,29 @@ export default function FourteenDayCheck() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isManagerOrAbove && (
+            <Link
+              to="/app/14-day-check/templates"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.55)",
+                textDecoration: "none",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.09)"
+                e.currentTarget.style.color = "rgba(255,255,255,0.85)"
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.05)"
+                e.currentTarget.style.color = "rgba(255,255,255,0.55)"
+              }}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Templates
+            </Link>
+          )}
           {isSuperAdmin && (
             <button
               type="button"
@@ -386,6 +409,8 @@ export default function FourteenDayCheck() {
           onClose={() => setShowAddModal(false)}
         />
       )}
+
+
     </div>
   )
 }
@@ -704,13 +729,18 @@ function AircraftCheckRow({
         )}
       </div>
 
-      {/* Last check */}
+      {/* Last check + template */}
       <div className="flex-1 min-w-0 hidden sm:block">
         <p className="text-[11px] truncate" style={{ color: "rgba(255,255,255,0.25)" }}>
           {aircraft.lastSubmittedAt
             ? formatDistanceToNow(new Date(aircraft.lastSubmittedAt), { addSuffix: true })
             : "Never checked"}
         </p>
+        {aircraft.templateName && (
+          <p className="text-[9px] truncate mt-0.5" style={{ color: "rgba(255,255,255,0.18)" }}>
+            {aircraft.templateName}
+          </p>
+        )}
       </div>
 
       {/* Right: inline badges + action icons */}
@@ -998,6 +1028,11 @@ function AircraftCheckCard({
             ? formatDistanceToNow(new Date(aircraft.lastSubmittedAt), { addSuffix: true })
             : "Never checked"}
         </p>
+        {aircraft.templateName && (
+          <p className="text-[9px] mt-0.5" style={{ color: "rgba(255,255,255,0.18)" }}>
+            {aircraft.templateName}
+          </p>
+        )}
 
       </div>
 

@@ -4,19 +4,25 @@ import {
   ClipboardList, Package, ShoppingCart, Wrench,
   FileText, BookMarked, GraduationCap,
   PanelLeftOpen, PanelLeftClose, Settings, Boxes,
+  Zap, BookText,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { BeetIcon } from "./shared/BeetIcon"
 import { SuggestionWidget } from "@/features/site-suggestions"
 
 const OPS_ITEMS = [
-  { label: "Work Orders",      path: "/app/beet-box/work-orders",     icon: ClipboardList },
+  { label: "Work Orders",       path: "/app/beet-box/work-orders",     icon: ClipboardList },
   { label: "Invoicing",        path: "/app/beet-box/invoicing",        icon: FileText      },
   { label: "Inventory",        path: "/app/beet-box/inventory",        icon: Package       },
   { label: "Parts",            path: "/app/beet-box/parts",            icon: Boxes         },
   { label: "Purchase Orders",  path: "/app/beet-box/purchase-orders",  icon: ShoppingCart  },
   { label: "Tool Calibration", path: "/app/beet-box/tool-calibration", icon: Wrench        },
   { label: "Settings",         path: "/app/beet-box/settings",         icon: Settings      },
+]
+
+const MANAGERS_ITEMS = [
+  { label: "Flat Rates",             path: "/app/beet-box/flat-rates",     icon: Zap      },
+  { label: "Canned Actions",         path: "/app/beet-box/canned-actions", icon: BookText },
 ]
 
 const KNOWLEDGE_ITEMS = [
@@ -191,6 +197,49 @@ export function BeetBoxSidebar() {
 
         <ul className="space-y-0.5 mb-5">
           {OPS_ITEMS.map(item => (
+            <li key={item.path}>
+              <NavLink
+                to={item.path}
+                title={narrow ? item.label : undefined}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center py-2 rounded-sm text-sm transition-all duration-150",
+                    narrow ? "justify-center px-1" : "gap-3 px-3",
+                    isActive ? "text-white font-medium" : "text-white/45 hover:text-white/80 font-normal"
+                  )
+                }
+                style={({ isActive }) =>
+                  isActive ? {
+                    background: narrow ? "rgba(212,160,23,0.15)" : "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
+                    fontFamily: "var(--font-heading)",
+                    letterSpacing: "0.02em",
+                  } : {}
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <item.icon className="w-[17px] h-[17px] flex-shrink-0" style={isActive ? { color: "var(--skyshare-gold)" } : {}} />
+                    {!narrow && <span className="truncate tracking-wide">{item.label}</span>}
+                  </>
+                )}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mx-3 mb-4" style={{ height: "1px", background: "hsl(0 0% 16%)" }} />
+
+        {!narrow && (
+          <p
+            className="px-3 mb-2"
+            style={{ fontFamily: "var(--font-heading)", fontSize: "10px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--skyshare-gold)", opacity: 0.55 }}
+          >
+            Managers
+          </p>
+        )}
+
+        <ul className="space-y-0.5 mb-5">
+          {MANAGERS_ITEMS.map(item => (
             <li key={item.path}>
               <NavLink
                 to={item.path}

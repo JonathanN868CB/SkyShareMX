@@ -114,6 +114,7 @@ export interface AircraftDetailData {
   cmms: CMMDocument[]             // component maintenance manual library
   avionics: AvionicsService[]     // flexible avionics & connectivity services
   notes: string
+  hobbsDifferential: number | null  // Hobbs meter offset: A/F TT = Hobbs + hobbsDifferential
 }
 
 // ─── Directory (flat base records) ───────────────────────────────────────────
@@ -397,6 +398,7 @@ function makeDetail({
     cmms: [],
     avionics: [],
     notes: "",
+    hobbsDifferential: null,
   }
 }
 
