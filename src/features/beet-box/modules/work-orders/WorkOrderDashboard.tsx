@@ -168,7 +168,7 @@ export default function WorkOrderDashboard() {
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-white/70 text-xs font-mono">{wo.woNumber}</span>
                         </div>
-                        <p className="text-white/85 text-xs leading-snug line-clamp-2">{wo.woType}</p>
+                        <p className="text-white/85 text-xs leading-snug line-clamp-2">{wo.description ?? "—"}</p>
                         <p className="text-white/35 text-xs">{wo.aircraft?.registration ?? wo.guestRegistration ?? "—"}</p>
                       </button>
                     ))}
@@ -203,7 +203,7 @@ export default function WorkOrderDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ borderBottom: "1px solid hsl(0 0% 20%)" }}>
-                    {["WO #", "Aircraft", "Type", "Priority", "Status", "Assigned", "Opened"].map(h => (
+                    {["WO #", "Aircraft", "Description", "Status", "Opened"].map(h => (
                       <th
                         key={h}
                         className="px-4 py-3 text-left text-white/40 text-xs uppercase tracking-widest"
@@ -232,17 +232,9 @@ export default function WorkOrderDashboard() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-white/80 text-sm max-w-[220px]">
-                        <span className="line-clamp-1">{wo.woType}</span>
+                        <span className="line-clamp-1">{wo.description ?? "—"}</span>
                       </td>
                       <td className="px-4 py-3"><WOStatusBadge status={wo.status} /></td>
-                      <td className="px-4 py-3 text-white/50 text-xs">
-                        {wo.mechanics.length > 0
-                          ? wo.mechanics.length === 1
-                            ? wo.mechanics[0].name
-                            : `${wo.mechanics[0].name} +${wo.mechanics.length - 1}`
-                          : <span className="text-white/25">Unassigned</span>
-                        }
-                      </td>
                       <td className="px-4 py-3 text-white/40 text-xs">
                         {new Date(wo.openedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                       </td>

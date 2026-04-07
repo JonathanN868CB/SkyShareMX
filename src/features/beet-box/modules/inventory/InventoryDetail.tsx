@@ -1,8 +1,12 @@
+import { useState, useMemo } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, AlertTriangle } from "lucide-react"
+import { ArrowLeft, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { INVENTORY_PARTS } from "../../data/mockData"
 import { cn } from "@/shared/lib/utils"
+
+type SortCol = "date" | "type" | "qty" | "unitCost" | "reference" | "performedBy" | "notes"
+type SortDir = "asc" | "desc"
 
 const TRANSACTION_COLORS = {
   receipt:    "text-emerald-400",
@@ -38,6 +42,38 @@ export default function InventoryDetail() {
 
   const isLow = part.qtyOnHand <= part.reorderPoint
   const isOut = part.qtyOnHand === 0
+
+  const [sortCol, setSortCol] = useState<SortCol>("date")
+  const [sortDir, setSortDir] = useState<SortDir>("desc")
+
+  function handleSort(col: SortCol) {
+    if (sortCol === col) {
+      setSortDir(d => d === "asc" ? "desc" : "asc")
+    } else {
+      setSortCol(col)
+      setSortDir("asc")
+    }
+  }
+
+  const sortedTx = useMemo(() => {
+    return [...part.transactions].sort((a, b) => {
+      let av: string | number
+      let bv: string | number
+      switch (sortCol) {
+        case "date":        av = a.date;        bv = b.date;        break
+        case "type":        av = a.type;        bv = b.type;        break
+        case "qty":         av = a.qty;         bv = b.qty;         break
+        case "unitCost":    av = a.unitCost;    bv = b.unitCost;    break
+        case "reference":   av = a.woRef ?? a.poRef ?? ""; bv = b.woRef ?? b.poRef ?? ""; break
+        case "performedBy": av = a.performedBy; bv = b.performedBy; break
+        case "notes":       av = a.notes ?? ""; bv = b.notes ?? ""; break
+        default:            av = a.date;        bv = b.date
+      }
+      if (av < bv) return sortDir === "asc" ? -1 : 1
+      if (av > bv) return sortDir === "asc" ? 1 : -1
+      return 0
+    })
+  }, [part.transactions, sortCol, sortDir])
 
   return (
     <div className="min-h-screen">
@@ -143,14 +179,41 @@ export default function InventoryDetail() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ borderBottom: "1px solid hsl(0 0% 18%)" }}>
-                  {["Date", "Type", "Qty", "Unit Cost", "Reference", "Performed By", "Notes"].map(h => (
-                    <th key={h} className="px-4 py-2.5 text-left text-white/35 text-xs uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>{h}</th>
-                  ))}
+                  {([
+                    { label: "Date",         col: "date"        },
+                    { label: "Type",         col: "type"        },
+                    { label: "Qty",          col: "qty"         },
+                    { label: "Unit Cost",    col: "unitCost"    },
+                    { label: "Reference",    col: "reference"   },
+                    { label: "Performed By", col: "performedBy" },
+                    { label: "Notes",        col: "notes"       },
+                  ] as { label: string; col: SortCol }[]).map(({ label, col }) => {
+                    const active = sortCol === col
+                    const Icon = active ? (sortDir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown
+                    return (
+                      <th
+                        key={col}
+                        className="px-4 py-2.5 text-left text-xs uppercase tracking-widest"
+                        style={{ fontFamily: "var(--font-heading)" }}
+                      >
+                        <button
+                          onClick={() => handleSort(col)}
+                          className={cn(
+                            "flex items-center gap-1 transition-colors",
+                            active ? "text-[var(--skyshare-gold)]" : "text-white/35 hover:text-white/60"
+                          )}
+                        >
+                          {label}
+                          <Icon className={cn("w-3 h-3", active ? "opacity-100" : "opacity-40")} />
+                        </button>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {part.transactions.map((tx, idx) => (
-                  <tr key={tx.id} style={{ borderBottom: idx < part.transactions.length - 1 ? "1px solid hsl(0 0% 16%)" : "none" }}>
+                {sortedTx.map((tx, idx) => (
+                  <tr key={tx.id} style={{ borderBottom: idx < sortedTx.length - 1 ? "1px solid hsl(0 0% 16%)" : "none" }}>
                     <td className="px-4 py-3 text-white/50 text-xs font-mono">{tx.date}</td>
                     <td className="px-4 py-3">
                       <span className={cn("text-xs font-semibold capitalize", TRANSACTION_COLORS[tx.type])}>

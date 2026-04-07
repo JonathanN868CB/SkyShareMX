@@ -785,7 +785,7 @@ function CMMRow({
   notes?: string
   groupBadges?: string[]
   canDelete: boolean
-  onEdit: () => void
+  onEdit?: () => void
   onRemove?: () => void
   border: string
   bg: string   // kept for call-site compat
@@ -821,12 +821,14 @@ function CMMRow({
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {!confirming ? (
             <>
-              <button onClick={onEdit}
-                style={{ fontSize: "0.7rem", padding: "3px 10px", borderRadius: 4, cursor: "pointer", background: "rgba(212,160,23,0.08)", color: "var(--skyshare-gold)", border: "0.5px solid rgba(212,160,23,0.28)", fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}
-                onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.18)")}
-                onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}>
-                Edit
-              </button>
+              {onEdit && (
+                <button onClick={onEdit}
+                  style={{ fontSize: "0.7rem", padding: "3px 10px", borderRadius: 4, cursor: "pointer", background: "rgba(212,160,23,0.08)", color: "var(--skyshare-gold)", border: "0.5px solid rgba(212,160,23,0.28)", fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.18)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}>
+                  Edit
+                </button>
+              )}
               {canDelete && onRemove && (
                 <button onClick={() => setConfirming(true)}
                   style={{ fontSize: "0.75rem", lineHeight: 1, cursor: "pointer", color: "hsl(var(--muted-foreground))", opacity: 0.2, background: "none", border: "none", padding: "2px 4px" }}
@@ -1094,12 +1096,14 @@ function CMMsOverlay({
   initialCmms,
   tailNumber,
   familyGroup,
+  canEdit,
   canDelete,
   onClose,
 }: {
   initialCmms: CMMDocument[]
   tailNumber: string
   familyGroup: string | null
+  canEdit: boolean
   canDelete: boolean
   onClose: () => void
 }) {
@@ -1322,21 +1326,23 @@ function CMMsOverlay({
           )}
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {acDirty && (
+            {acDirty && canEdit && (
               <button onClick={handleAcSave} disabled={acSaving}
                 className="text-xs px-3 py-1.5 rounded transition-colors"
                 style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", border: "none", fontFamily: "var(--font-heading)", letterSpacing: "0.06em", fontWeight: 600, opacity: acSaving ? 0.6 : 1 }}>
                 {acSaving ? "Saving…" : "Save CMMs"}
               </button>
             )}
-            <button
-              onClick={() => { setAdding(true); setEditingAcIdx(null); setEditingGrpId(null); setSaveError(null); setAddForm({ ...BLANK_GROUP_CMM, groups: familyGroup ? [familyGroup] : [] }) }}
-              className="text-xs px-2.5 py-1.5 rounded transition-colors"
-              style={{ background: "rgba(212,160,23,0.08)", color: "var(--skyshare-gold)", border: "0.5px solid rgba(212,160,23,0.3)", fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.16)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}>
-              + Add
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => { setAdding(true); setEditingAcIdx(null); setEditingGrpId(null); setSaveError(null); setAddForm({ ...BLANK_GROUP_CMM, groups: familyGroup ? [familyGroup] : [] }) }}
+                className="text-xs px-2.5 py-1.5 rounded transition-colors"
+                style={{ background: "rgba(212,160,23,0.08)", color: "var(--skyshare-gold)", border: "0.5px solid rgba(212,160,23,0.3)", fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.16)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(212,160,23,0.08)")}>
+                + Add
+              </button>
+            )}
           </div>
         </div>
 
@@ -1440,7 +1446,7 @@ function CMMsOverlay({
                         notes={doc.notes}
                         groupBadges={doc.groups}
                         canDelete={canDelete}
-                        onEdit={() => startEditGrp(doc)}
+                        onEdit={canEdit ? () => startEditGrp(doc) : undefined}
                         onRemove={canDelete ? () => deleteGrp(doc.id) : undefined}
                         border={rowBorder} bg={rowBg}
                       />
@@ -1571,7 +1577,7 @@ function CMMsOverlay({
                         hasLink={!!doc.driveLink} driveLink={doc.driveLink}
                         notes={doc.notes}
                         canDelete={canDelete}
-                        onEdit={() => startEditAc(globalIdx)}
+                        onEdit={canEdit ? () => startEditAc(globalIdx) : undefined}
                         onRemove={canDelete ? () => removeAcCmm(globalIdx) : undefined}
                         border={rowBorder} bg={rowBg}
                       />
@@ -1623,6 +1629,7 @@ function DocumentationCard({
           initialCmms={cmms}
           tailNumber={tailNumber}
           familyGroup={familyGroup}
+          canEdit={canEdit}
           canDelete={canDelete}
           onClose={() => setShowCMMs(false)}
         />
@@ -1683,9 +1690,10 @@ function DocumentationCard({
 
         <div className="px-5 py-1">
           {fields.map((f, i) => {
-            const s        = fieldStatus(f.value)
-            const href     = f.link || (f.value.startsWith("http") ? f.value : null)
-            const isOnFile = !!href || (s === "enrolled" && !f.value.startsWith("None"))
+            const s           = fieldStatus(f.value)
+            const trimmedVal  = f.value.trim()
+            const href        = f.link || (trimmedVal.toLowerCase().startsWith("http") ? trimmedVal : null)
+            const isOnFile    = !!href || (s === "enrolled" && !f.value.startsWith("None"))
             return (
               <div key={i} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
                 <div className="flex items-center gap-3">
@@ -1968,8 +1976,8 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
   async function handleIdentitySave(identity: DataField[]) {
     await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, identity } })
   }
-  async function handlePropulsionSave(powerplant: DataField[], apu: DataField[] | null) {
-    await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, powerplant, apu } })
+  async function handlePropulsionSave(powerplant: DataField[], apu: DataField[] | null, hobbsDifferential: number | null) {
+    await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, powerplant, apu, hobbsDifferential } })
   }
   async function handleDocumentationSave(documentation: DataField[]) {
     await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, documentation } })
@@ -2158,6 +2166,7 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
         <PropulsionEditorOverlay
           initialPowerplant={baseDetail.powerplant}
           initialApu={baseDetail.apu}
+          initialHobbsDiff={baseDetail.hobbsDifferential ?? null}
           tailNumber={aircraft.tailNumber}
           onSave={handlePropulsionSave}
           onClose={() => setShowPropulsionEditor(false)}

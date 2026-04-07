@@ -104,7 +104,6 @@ export interface WorkOrder {
   woNumber: string
   aircraftId: string
   status: WOStatus
-  woType: string
   description: string
   priority: "routine" | "urgent" | "aog"
   openedBy: string

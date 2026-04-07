@@ -27,6 +27,29 @@ export type SOPCategory =
   | "Work Orders" | "Parts & Inventory" | "Logbook" | "Invoicing"
   | "Tool Calibration" | "Safety" | "Portal Navigation"
 
+// ─── Aircraft Times Snapshot ──────────────────────────────────────────────────
+// Captured at WO open from Traxxall import or manual entry.
+// Stored as times_snapshot JSONB on bb_work_orders.
+
+export interface AircraftTimesSnapshot {
+  airframeHrs:   number | null
+  landings:      number | null
+  eng1Tsn:       number | null
+  eng1Csn:       number | null
+  eng1Serial:    string | null
+  eng2Tsn:       number | null
+  eng2Csn:       number | null
+  eng2Serial:    string | null
+  propTsn:       number | null
+  propCsn:       number | null
+  propSerial:    string | null
+  apuHrs:        number | null
+  apuStarts:     number | null
+  apuSerial:     string | null
+  hobbs:         number | null
+  parseWarnings: string[]
+}
+
 // ─── Aircraft ─────────────────────────────────────────────────────────────────
 
 export interface FleetAircraft {
@@ -80,7 +103,6 @@ export interface WorkOrder {
   // Resolved display ref (populated by join in service)
   aircraft: AircraftRef | null
   status: WOStatus
-  woType: string
   description: string | null
   openedBy: string | null       // profile id
   openedByName: string | null   // denormalized display
@@ -88,10 +110,10 @@ export interface WorkOrder {
   closedAt: string | null
   meterAtOpen: number | null
   meterAtClose: number | null
+  timesSnapshot: Record<string, number | null | string[]> | null
   discrepancyRef: string | null
   notes: string | null
   // Loaded relations
-  mechanics: Mechanic[]
   items: WOItem[]
   statusHistory: WOStatusChange[]
   auditTrail: AuditEntry[]
@@ -258,19 +280,34 @@ export interface POLine {
 
 // ─── Tool Calibration ─────────────────────────────────────────────────────────
 
+export type ToolType = "Cert" | "Ref"
+
 export interface Tool {
   id: string
   toolNumber: string
   description: string
+  details: string | null
+  make: string | null
+  model: string | null
   serialNumber: string | null
-  manufacturer: string | null
-  location: string | null
+  toolType: ToolType              // "Cert" = Certified (requires calibration), "Ref" = Reference Only
+  toolTypeFull: string | null     // "Certified" | "Reference Only"
+  toolRoom: string | null
   status: ToolStatus
+  location: string | null
+  locationNotes: string | null
+  vendor: string | null
+  toolCost: number
+  purchaseDate: string | null
+  labelDate: string | null
   calibrationIntervalDays: number
+  calibrationDueDays: number | null
+  calibrationNotes: string | null
+  calibrationCost: number
   lastCalibratedAt: string | null
   nextCalibrationDue: string | null
-  calibrationVendor: string | null
-  notes: string | null
+  requiresApproval: boolean
+  inactive: boolean
   history: CalibrationRecord[]
   createdAt: string
   updatedAt: string
@@ -284,6 +321,8 @@ export interface CalibrationRecord {
   calibratedAt: string
   nextDue: string
   certificateNumber: string | null
+  vendor: string | null
+  cost: number
   notes: string | null
   createdAt: string
 }
