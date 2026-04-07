@@ -502,7 +502,7 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
                       <Textarea
                         value={moreInfo}
                         onChange={e => setMoreInfo(e.target.value)}
-                        placeholder="Provide additional details…"
+                        placeholder=""
                         className="text-xs bg-white/5 border-white/10 resize-none"
                         rows={2}
                       />
@@ -596,7 +596,7 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
           <Input
             value={title}
             onChange={e => setTitle(e.target.value)}
-            placeholder={cfg.placeholder}
+            placeholder=""
             className="h-9 text-sm bg-white/5 border-white/10"
             maxLength={120}
             style={{ borderColor: title ? cfg.border : undefined }}
@@ -615,11 +615,7 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
           <Textarea
             value={body}
             onChange={e => setBody(e.target.value)}
-            placeholder={
-              type === "ticket" ? "Steps to reproduce, what you expected vs what happened…" :
-              type === "compliment" ? "Tell us more about your experience…" :
-              "Any additional context…"
-            }
+            placeholder=""
             className="text-sm bg-white/5 border-white/10 resize-none"
             rows={3}
           />
