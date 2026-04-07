@@ -589,9 +589,7 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
             className="text-[10px] font-bold uppercase tracking-widest block mb-1.5"
             style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}
           >
-            {type === "compliment" ? "What did you love?" :
-             type === "ticket" ? "What's the issue?" : "Title"}{" "}
-            <span style={{ color: cfg.color }}>*</span>
+            Title <span style={{ color: cfg.color }}>*</span>
           </label>
           <Input
             value={title}
