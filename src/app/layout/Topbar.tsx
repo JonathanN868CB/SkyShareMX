@@ -142,6 +142,7 @@ function ProfileSettingsDialog({
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Mechanic cert state ────────────────────────────────────────────────────
@@ -150,6 +151,7 @@ function ProfileSettingsDialog({
   const [certNumber, setCertNumber]       = useState("")
   const [certSaving, setCertSaving]       = useState(false)
   const [certSaved, setCertSaved]         = useState(false)
+  const [certError, setCertError]         = useState<string | null>(null)
 
   const certChanged = certType !== (existingCert?.certType ?? "A&P") || certNumber !== (existingCert?.certNumber ?? "")
 
@@ -164,19 +166,25 @@ function ProfileSettingsDialog({
   async function handleSaveCert() {
     if (!profile || !certNumber.trim()) return
     setCertSaving(true)
-    await upsertMechanicCert({
-      id: existingCert?.id,
-      profileId: profile.id,
-      certType,
-      certNumber: certNumber.trim(),
-      issuedDate: existingCert?.issuedDate ?? null,
-      isPrimary: true,
-      notes: existingCert?.notes ?? null,
-    })
-    await loadCert(profile.id)
-    setCertSaving(false)
-    setCertSaved(true)
-    setTimeout(() => setCertSaved(false), 2000)
+    setCertError(null)
+    try {
+      await upsertMechanicCert({
+        id: existingCert?.id,
+        profileId: profile.id,
+        certType,
+        certNumber: certNumber.trim(),
+        issuedDate: existingCert?.issuedDate ?? null,
+        isPrimary: true,
+        notes: existingCert?.notes ?? null,
+      })
+      await loadCert(profile.id)
+      setCertSaved(true)
+      setTimeout(() => setCertSaved(false), 2000)
+    } catch (err) {
+      setCertError(err instanceof Error ? err.message : "Failed to save certificate")
+    } finally {
+      setCertSaving(false)
+    }
   }
 
   // Reset local state when dialog opens
@@ -187,6 +195,8 @@ function ProfileSettingsDialog({
       setAvatarInitials(profile.avatar_initials ?? "")
       setAvatarPreviewUrl(profile.avatar_url ?? "")
       setSaved(false)
+      setSaveError(null)
+      setCertError(null)
       loadCert(profile.id)
     }
     onOpenChange(v)
@@ -233,7 +243,8 @@ function ProfileSettingsDialog({
   async function handleSave() {
     if (!profile) return
     setSaving(true)
-    await supabase
+    setSaveError(null)
+    const { error } = await supabase
       .from("profiles")
       .update({
         display_name: displayName.trim() || null,
@@ -242,6 +253,11 @@ function ProfileSettingsDialog({
         avatar_url: avatarPreviewUrl || null,
       })
       .eq("id", profile.id)
+    if (error) {
+      setSaveError(error.message)
+      setSaving(false)
+      return
+    }
     await refreshProfile()
     setSaving(false)
     setSaved(true)
@@ -250,8 +266,8 @@ function ProfileSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md" style={{ background: "hsl(0 0% 9%)", border: "1px solid rgba(255,255,255,0.08)" }}>
-        <DialogHeader>
+      <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]" style={{ background: "hsl(0 0% 9%)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2" style={{ fontFamily: "var(--font-heading)" }}>
             <Settings size={16} style={{ color: "var(--skyshare-gold)" }} />
             Profile Settings
@@ -261,7 +277,7 @@ function ProfileSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 pt-2">
+        <div className="space-y-6 pt-2 overflow-y-auto flex-1 pr-1">
 
           {/* ── Avatar preview + upload ── */}
           <div className="flex items-center gap-4">
@@ -454,6 +470,11 @@ function ProfileSettingsDialog({
                   No certificate on file yet. This populates the signature block on logbook entries.
                 </p>
               )}
+              {certError && (
+                <p className="text-[10px]" style={{ color: "#f87171" }}>
+                  ✗ {certError}
+                </p>
+              )}
             </div>
           </div>
 
@@ -509,19 +530,26 @@ function ProfileSettingsDialog({
           </div>
 
           {/* ── Save ── */}
-          <div className="flex justify-end">
-            <Button
-              onClick={handleSave}
-              disabled={!hasChanges || saving}
-              className="h-8 px-5 text-xs font-bold uppercase tracking-wider"
-              style={{
-                background: hasChanges ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
-                color: hasChanges ? "#111" : "hsl(var(--muted-foreground))",
-                fontFamily: "var(--font-heading)",
-              }}
-            >
-              {saved ? "Saved" : saving ? "Saving..." : "Save Changes"}
-            </Button>
+          <div className="space-y-2">
+            {saveError && (
+              <p className="text-[10px] text-right" style={{ color: "#f87171" }}>
+                ✗ {saveError}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <Button
+                onClick={handleSave}
+                disabled={!hasChanges || saving}
+                className="h-8 px-5 text-xs font-bold uppercase tracking-wider"
+                style={{
+                  background: hasChanges ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
+                  color: hasChanges ? "#111" : "hsl(var(--muted-foreground))",
+                  fontFamily: "var(--font-heading)",
+                }}
+              >
+                {saved ? "Saved" : saving ? "Saving..." : "Save Changes"}
+              </Button>
+            </div>
           </div>
 
         </div>

@@ -29,12 +29,13 @@ export async function getMyProfile(): Promise<{ id: string; name: string; certTy
     .eq("user_id", user.id)
     .maybeSingle()
   if (!profile) return null
-  const { data: cert } = await supabase
+  const { data: certRows } = await supabase
     .from("bb_mechanic_certs")
     .select("cert_type, cert_number")
     .eq("profile_id", profile.id)
     .eq("is_primary", true)
-    .maybeSingle()
+    .limit(1)
+  const cert = certRows?.[0] ?? null
   return {
     id: profile.id,
     name: profile.full_name ?? profile.display_name ?? profile.email ?? "Unknown",
@@ -77,12 +78,7 @@ export async function getWorkOrders(filters?: {
 }): Promise<WorkOrder[]> {
   let query = supabase
     .from("bb_work_orders")
-    .select(`
-      *,
-      bb_work_order_mechanics ( profile_id,
-        profiles!bb_work_order_mechanics_profile_id_fkey ( id, full_name, display_name, email )
-      )
-    `)
+    .select("*")
     .order("opened_at", { ascending: false })
 
   if (filters?.status) {
@@ -109,10 +105,6 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
     .from("bb_work_orders")
     .select(`
       *,
-      bb_work_order_mechanics (
-        profile_id,
-        profiles!bb_work_order_mechanics_profile_id_fkey ( id, full_name, display_name, email )
-      ),
       bb_work_order_status_history ( * ),
       bb_work_order_audit_trail ( * )
     `)
@@ -154,7 +146,6 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 export async function createWorkOrder(payload: {
-  woType: string
   description?: string
   aircraftId?: string
   guestRegistration?: string
@@ -177,9 +168,9 @@ export async function createWorkOrder(payload: {
     .from("bb_work_orders")
     .insert({
       wo_number: woNumber,
-      wo_type: payload.woType,
       description: payload.description ?? null,
       aircraft_id: payload.aircraftId ?? null,
+      wo_type: "—",
       guest_registration: payload.guestRegistration ?? null,
       guest_serial: payload.guestSerial ?? null,
       meter_at_open: payload.meterAtOpen ?? null,
@@ -245,10 +236,13 @@ export async function updateWorkOrderStatus(
 export async function updateWorkOrder(
   id: string,
   payload: Partial<{
-    woType: string
     description: string
+    aircraftId: string | null
+    guestRegistration: string | null
+    guestSerial: string | null
     meterAtOpen: number
     meterAtClose: number
+    timesSnapshot: Record<string, unknown> | null
     discrepancyRef: string
     notes: string
   }>
@@ -256,33 +250,18 @@ export async function updateWorkOrder(
   const { error } = await supabase
     .from("bb_work_orders")
     .update({
-      ...(payload.woType !== undefined && { wo_type: payload.woType }),
       ...(payload.description !== undefined && { description: payload.description }),
+      ...(payload.aircraftId !== undefined && { aircraft_id: payload.aircraftId }),
+      ...(payload.guestRegistration !== undefined && { guest_registration: payload.guestRegistration }),
+      ...(payload.guestSerial !== undefined && { guest_serial: payload.guestSerial }),
       ...(payload.meterAtOpen !== undefined && { meter_at_open: payload.meterAtOpen }),
       ...(payload.meterAtClose !== undefined && { meter_at_close: payload.meterAtClose }),
+      ...(payload.timesSnapshot !== undefined && { times_snapshot: payload.timesSnapshot }),
       ...(payload.discrepancyRef !== undefined && { discrepancy_ref: payload.discrepancyRef }),
       ...(payload.notes !== undefined && { notes: payload.notes }),
     })
     .eq("id", id)
 
-  if (error) throw error
-}
-
-// ─── Assign / Remove Mechanic ─────────────────────────────────────────────────
-
-export async function assignMechanic(workOrderId: string, profileId: string, assignedBy: string): Promise<void> {
-  const { error } = await supabase
-    .from("bb_work_order_mechanics")
-    .upsert({ work_order_id: workOrderId, profile_id: profileId, assigned_by: assignedBy })
-  if (error) throw error
-}
-
-export async function removeMechanic(workOrderId: string, profileId: string): Promise<void> {
-  const { error } = await supabase
-    .from("bb_work_order_mechanics")
-    .delete()
-    .eq("work_order_id", workOrderId)
-    .eq("profile_id", profileId)
   if (error) throw error
 }
 
@@ -333,6 +312,7 @@ export async function updateItemStatus(itemId: string, status: WOItemStatus): Pr
 export async function updateWOItemFields(
   itemId: string,
   fields: Partial<{
+    category: string
     discrepancy: string
     correctiveAction: string
     refCode: string
@@ -346,6 +326,7 @@ export async function updateWOItemFields(
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {}
+  if (fields.category           !== undefined) payload.category              = fields.category
   if (fields.discrepancy        !== undefined) payload.discrepancy           = fields.discrepancy
   if (fields.correctiveAction   !== undefined) payload.corrective_action     = fields.correctiveAction
   if (fields.refCode            !== undefined) payload.ref_code              = fields.refCode
@@ -468,6 +449,16 @@ export async function deleteWorkOrder(id: string): Promise<void> {
   if (error) throw error
 }
 
+// ─── Delete all items on a WO (used by rebuild flow) ─────────────────────────
+
+export async function deleteAllWOItems(workOrderId: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_work_order_items")
+    .delete()
+    .eq("work_order_id", workOrderId)
+  if (error) throw error
+}
+
 // ─── Audit Trail ─────────────────────────────────────────────────────────────
 
 export async function addAuditEntry(
@@ -510,17 +501,6 @@ function mapWorkOrderRow(
   acMap: Map<string, any>,
   regMap: Map<string, string>
 ): WorkOrder {
-  const mechanics: Mechanic[] = (row.bb_work_order_mechanics ?? []).map((m: any) => {
-    const p = m.profiles
-    return {
-      id: p?.id ?? m.profile_id,
-      name: p?.full_name ?? p?.display_name ?? p?.email ?? "",
-      email: p?.email ?? "",
-      certType: null,
-      certNumber: null,
-    }
-  })
-
   return {
     id: row.id,
     woNumber: row.wo_number,
@@ -529,7 +509,6 @@ function mapWorkOrderRow(
     guestSerial: row.guest_serial,
     aircraft: buildAircraftRef(row.aircraft_id, row.guest_registration, row.guest_serial, acMap, regMap),
     status: row.status as WOStatus,
-    woType: row.wo_type,
     description: row.description,
     openedBy: row.opened_by,
     openedByName: null,
@@ -537,9 +516,9 @@ function mapWorkOrderRow(
     closedAt: row.closed_at,
     meterAtOpen: row.meter_at_open,
     meterAtClose: row.meter_at_close,
+    timesSnapshot: row.times_snapshot ?? null,
     discrepancyRef: row.discrepancy_ref,
     notes: row.notes,
-    mechanics,
     items: [],
     statusHistory: [],
     auditTrail: [],

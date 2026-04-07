@@ -165,7 +165,7 @@ export type Database = {
     }
     Enums: {
       app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Guest"
-      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence" | "Parts" | "External Requests" | "Beet Box" | "Records Vault"
+      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "Training" | "Docs & Links" | "My Journey" | "My Team" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence" | "Parts" | "External Requests" | "Beet Box" | "Records Vault"
       user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
@@ -204,26 +204,30 @@ export const APP_ROLES: AppRole[] = [
 ]
 
 export const APP_SECTIONS: AppSection[] = [
+  // ── Overview ──────────────────────────────────────────────
   "Dashboard",
   "Aircraft Info",
   "AI Assistant",
-  "Aircraft Conformity",
+  // ── Operations ────────────────────────────────────────────
+  "Discrepancy Intelligence",
+  "Records Vault",
+  "Beet Box",
+  "My Journey",
+  "My Team",
+  "Training",
+  "Vendor Map",
   "14-Day Check",
   "Projects",
+  "Compliance",
+  "Safety",
+  "Parts",
+  "External Requests",
+  // ── Pending Cert. (collapsible group) ─────────────────────
+  "Aircraft Conformity",
   "Maintenance Planning",
   "Ten or More",
   "Terminal-OGD",
-  "Training",
   "Docs & Links",
-  "My Journey",
-  "Vendor Map",
-  "Compliance",
-  "Safety",
-  "Discrepancy Intelligence",
-  "Parts",
-  "External Requests",
-  "Beet Box",
-  "Records Vault",
 ]
 
 // ─── External Requests types ─────────────────────────────────────────────────
@@ -288,6 +292,18 @@ export type InspectionCardTemplate = {
   aircraft_type: string | null
   field_schema: FieldDef[]
   created_by: string | null
+  created_at: string
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export type TemplateAuditEntry = {
+  id: string
+  template_id: string
+  action: string
+  actor_id: string | null
+  actor_name: string | null
+  details: Record<string, unknown> | null
   created_at: string
 }
 

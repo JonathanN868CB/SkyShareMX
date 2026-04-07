@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { useMmFleetOverview as useMmFleetOverviewForBadge } from "@/features/mm-audit/useMmAuditData"
 import { supabase } from "@/lib/supabase"
+import { amIAPeopleManager } from "@/features/my-journey/services/managerAssignments"
 import {
   Home,
   Plane,
@@ -52,6 +54,7 @@ type SidebarItem = {
   exact?: boolean
   section: AppSection
   superAdminOnly?: boolean
+  managersOnly?: boolean
 }
 
 type SidebarItemGroup = {
@@ -63,6 +66,7 @@ type SidebarItemGroup = {
 type SidebarSection = {
   title: string
   adminOnly?: boolean
+  managersOnly?: boolean
   items: SidebarItem[]
   groups?: SidebarItemGroup[]
 }
@@ -112,6 +116,13 @@ const sidebarSections: SidebarSection[] = [
     ],
   },
   {
+    title: "Supervisors",
+    managersOnly: true,
+    items: [
+      { name: "My Team", path: "/app/journey?tab=team", icon: Users, section: "My Journey" },
+    ],
+  },
+  {
     title: "Administration",
     adminOnly: true,
     items: [
@@ -137,7 +148,18 @@ export function AppSidebar() {
 
   const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
   const isSuperAdmin = profile?.role === "Super Admin"
-  const visibleSections = sidebarSections.filter(s => !s.adminOnly || isAdmin)
+
+  const { data: isPeopleManager = false } = useQuery({
+    queryKey: ["am-i-a-people-manager"],
+    queryFn: amIAPeopleManager,
+    enabled: !!profile?.id && !isSuperAdmin, // Super Admin always gets My Team
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const visibleSections = sidebarSections.filter(s =>
+    (!s.adminOnly || isAdmin) &&
+    (!s.managersOnly || isSuperAdmin || isPeopleManager || hasAccess("My Team"))
+  )
 
   function hasAccess(section: AppSection) {
     if (isAdmin) return true
@@ -153,9 +175,16 @@ export function AppSidebar() {
   }
 
   function renderItem(item: SidebarItem, indented = false) {
+    // Split off any query string from the item path for matching
+    const [itemBasePath, itemQuery] = item.path.split("?")
     const isActive = item.exact
-      ? location.pathname === item.path
-      : location.pathname.startsWith(item.path)
+      ? location.pathname === itemBasePath
+      : itemQuery
+        // Item has a query param — match pathname + that specific param
+        ? location.pathname === itemBasePath && location.search.includes(itemQuery)
+        // No query param — match only if pathname matches and there's no conflicting tab param
+        : location.pathname.startsWith(itemBasePath) &&
+          (!location.search.includes("tab=") || item.path.includes("?tab="))
     const accessible = hasAccess(item.section)
 
     return (

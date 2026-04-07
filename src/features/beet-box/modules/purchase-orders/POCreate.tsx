@@ -71,7 +71,8 @@ export default function POCreate() {
               <select
                 value={vendor}
                 onChange={e => setVendor(e.target.value)}
-                className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30"
+                className="w-full px-3 py-2 rounded text-sm border border-white/10 text-white focus:outline-none focus:border-white/30"
+                style={{ background: "hsl(0,0%,14%)", colorScheme: "dark" }}
                 required
               >
                 <option value="">Select vendor…</option>

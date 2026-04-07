@@ -15,6 +15,12 @@ type HandlerResponse = {
 };
 
 type ContextSource = "discrepancies" | "records" | "manuals";
+type QueryIntent = "data_aircraft" | "data_fleet" | "general";
+
+interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 interface RequestPayload {
   message?: unknown;
@@ -43,6 +49,9 @@ const FORBIDDEN_SQL = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|
 
 const VALID_MODES: Dw1ghtMode[] = ["schrute", "corporate", "troubleshooting"];
 
+// FAA N-number pattern: N followed by 3-5 digits, optionally 1-2 letters
+const TAIL_NUMBER_REGEX = /\b(N\d{3,5}[A-Z]{0,2})\b/gi;
+
 // ── Helpers ──────────────────────────────────────────────────────
 function json(statusCode: number, body: Record<string, unknown>): HandlerResponse {
   return {
@@ -61,7 +70,7 @@ function buildSystemPrompt(mode: Dw1ghtMode): string {
   return DW1GHT_CONFIG.identity + "\n\n" + DW1GHT_CONFIG.modes[mode];
 }
 
-// ── Context Sources ─────────────────────────────────────────
+// ── Context Sources ──────────────────────────────────────────────
 function getContextSources(raw: unknown): Set<ContextSource> {
   const defaults = new Set<ContextSource>(["discrepancies"]);
   if (!Array.isArray(raw)) return defaults;
@@ -70,7 +79,74 @@ function getContextSources(raw: unknown): Set<ContextSource> {
   return sources.length > 0 ? new Set(sources) : defaults;
 }
 
-// ── Voyage AI Query Embedding ───────────────────────────────
+// ── Tail Number Extraction ───────────────────────────────────────
+// Returns all N-numbers found in the message, uppercased and deduplicated.
+function extractTailNumbers(message: string): string[] {
+  const matches = message.match(TAIL_NUMBER_REGEX);
+  if (!matches) return [];
+  return [...new Set(matches.map((t) => t.toUpperCase()))];
+}
+
+// ── Aircraft ID Lookup ───────────────────────────────────────────
+// Resolves a tail number to the Supabase aircraft UUID.
+async function lookupAircraftId(tailNumber: string): Promise<string | null> {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE;
+  if (!url || !key) return null;
+
+  const supabase = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+  const { data, error } = await supabase
+    .from("aircraft_registrations")
+    .select("aircraft_id")
+    .eq("registration", tailNumber)
+    .eq("is_current", true)
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) {
+    console.log(`[DW1GHT] No aircraft_id found for tail ${tailNumber}`);
+    return null;
+  }
+  return data.aircraft_id as string;
+}
+
+// ── Fleet Confirmation Detection ─────────────────────────────────
+// Returns true if the current message is a short affirmative reply to a
+// prior DW1GHT fleet-confirmation request found in history.
+function isFleetConfirmationReply(message: string, history: HistoryMessage[]): boolean {
+  if (message.trim().length > 60) return false;
+  const affirmative = /\b(yes|yeah|yep|correct|go ahead|all|fleet|all aircraft|all pc-12s?|confirm|proceed|sure|do it)\b/i;
+  if (!affirmative.test(message)) return false;
+  // Check that the last assistant turn asked about fleet confirmation
+  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+  if (!lastAssistant) return false;
+  return /fleet|all aircraft|all pc-12|specific tail/i.test(lastAssistant.content);
+}
+
+// ── Mode-aware short replies ─────────────────────────────────────
+function tailMissingReply(mode: Dw1ghtMode): string {
+  switch (mode) {
+    case "schrute":
+      return "Tail number. I need a tail number. Which aircraft are you asking about? Specify it.";
+    case "corporate":
+      return "Please specify the aircraft tail number you're referring to, and I'll search the records.";
+    case "troubleshooting":
+      return "Which aircraft? Provide the tail number and I'll pull the relevant records.";
+  }
+}
+
+function fleetConfirmReply(mode: Dw1ghtMode): string {
+  switch (mode) {
+    case "schrute":
+      return "I can run a fleet-wide search across all aircraft in the system. Confirming — do you want all aircraft, or a specific tail number?";
+    case "corporate":
+      return "This appears to be a fleet-wide query. Please confirm — should I search all aircraft records, or did you have a specific tail number in mind?";
+    case "troubleshooting":
+      return "I can search across the full fleet for this. Confirming — all aircraft, or a specific tail number?";
+  }
+}
+
+// ── Voyage AI Query Embedding ────────────────────────────────────
 async function embedQuery(query: string): Promise<number[] | null> {
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey) {
@@ -102,9 +178,11 @@ async function embedQuery(query: string): Promise<number[] | null> {
   }
 }
 
-// ── RAG Retrieval via rv_match_chunks ───────────────────────
+// ── RAG Retrieval via rv_match_chunks ────────────────────────────
+// aircraftId: pass a UUID to scope search to one aircraft, null for fleet-wide.
 async function retrieveRecordsContext(
   queryEmbedding: number[],
+  aircraftId: string | null,
 ): Promise<{ chunks: RagChunk[]; error: string | null }> {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE;
@@ -113,44 +191,57 @@ async function retrieveRecordsContext(
     return { chunks: [], error: "Database not configured for RAG" };
   }
 
-  const supabase = createClient(url, key);
+  const supabase = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 
   try {
     const { data, error } = await supabase.rpc("rv_match_chunks", {
       query_embedding: `[${queryEmbedding.join(",")}]`,
-      p_aircraft_id: null, // fleet-wide
+      p_aircraft_id: aircraftId,
       p_limit: DW1GHT_CONFIG.ragChunkLimit,
       p_threshold: DW1GHT_CONFIG.ragThreshold,
     });
 
     if (error) {
+      console.error("[DW1GHT] rv_match_chunks error:", error.message);
       return { chunks: [], error: error.message };
     }
 
     return { chunks: (data ?? []) as RagChunk[], error: null };
   } catch (err) {
-    return { chunks: [], error: err instanceof Error ? err.message : "RAG query failed" };
+    const msg = err instanceof Error ? err.message : "RAG query failed";
+    console.error("[DW1GHT] retrieveRecordsContext exception:", msg);
+    return { chunks: [], error: msg };
   }
 }
 
-// ── SQL Classification ──────────────────────────────────────────
+// ── Intent Classification ────────────────────────────────────────
+// Returns:
+//   "data_aircraft" — question needs data for a specific aircraft
+//   "data_fleet"    — question needs data across the whole fleet
+//   "general"       — no database access needed
 async function classifyQuestion(
   client: Anthropic,
   message: string,
-): Promise<"data" | "general"> {
+): Promise<QueryIntent> {
   const res = await client.messages.create({
     model: DW1GHT_CONFIG.model,
-    max_tokens: 10,
-    system: `You classify user questions. If the question requires querying a database of aircraft discrepancies, maintenance records, fleet statistics, technician history, or aircraft details, respond with exactly: DATA
-If the question is general aviation knowledge, FAA regulations, greetings, personality chat, or anything that does NOT need database access, respond with exactly: GENERAL
-Respond with only one word: DATA or GENERAL`,
+    max_tokens: 20,
+    system: `You classify aviation maintenance questions. Choose exactly one of three categories:
+
+DATA_AIRCRAFT — the question requires database or document access for one or more specific aircraft (e.g. asks about discrepancies, records, logbooks, maintenance history for a particular aircraft — even if no tail number is given yet)
+DATA_FLEET — the question explicitly asks about the entire fleet, all aircraft, fleet-wide statistics, or all PC-12s
+GENERAL — general aviation knowledge, FAA regulations, how-to questions, greetings, or anything that does NOT need database access
+
+Respond with only one word: DATA_AIRCRAFT, DATA_FLEET, or GENERAL`,
     messages: [{ role: "user", content: message }],
   });
   const text = res.content[0].type === "text" ? res.content[0].text.trim().toUpperCase() : "GENERAL";
-  return text.startsWith("DATA") ? "data" : "general";
+  if (text.startsWith("DATA_FLEET")) return "data_fleet";
+  if (text.startsWith("DATA_AIRCRAFT") || text.startsWith("DATA")) return "data_aircraft";
+  return "general";
 }
 
-// ── SQL Generation ──────────────────────────────────────────────
+// ── SQL Generation ───────────────────────────────────────────────
 async function generateSQL(
   client: Anthropic,
   message: string,
@@ -171,12 +262,11 @@ async function generateSQL(
   let sql = res.content[0].type === "text" ? res.content[0].text.trim() : "NO_SQL";
   if (sql === "NO_SQL" || !sql.toUpperCase().startsWith("SELECT")) return null;
   if (FORBIDDEN_SQL.test(sql)) return null;
-  // Strip trailing semicolons — the RPC wraps this in a subquery
   sql = sql.replace(/;\s*$/, "");
   return sql;
 }
 
-// ── Execute SQL via Supabase ────────────────────────────────────
+// ── Execute SQL via Supabase ─────────────────────────────────────
 async function runQuery(sql: string): Promise<{ data: unknown[] | null; error: string | null }> {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE;
@@ -187,7 +277,7 @@ async function runQuery(sql: string): Promise<{ data: unknown[] | null; error: s
     return { data: null, error: "Database not configured" };
   }
 
-  const supabase = createClient(url, key);
+  const supabase = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 
   try {
     const { data, error } = await supabase.rpc("exec_readonly_sql", { query: sql });
@@ -201,7 +291,7 @@ async function runQuery(sql: string): Promise<{ data: unknown[] | null; error: s
   }
 }
 
-// ── Main Handler ────────────────────────────────────────────────
+// ── Main Handler ─────────────────────────────────────────────────
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS_HEADERS };
@@ -233,91 +323,127 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   const mode = getMode(payload.mode);
   const sources = getContextSources(payload.contextSources);
-  const history = Array.isArray(payload.history) ? payload.history : [];
+  const history = (Array.isArray(payload.history) ? payload.history : []) as HistoryMessage[];
   const message = payload.message.trim();
   const client = new Anthropic({ apiKey });
 
+  const useDiscrepancies = sources.has("discrepancies");
+  const useRecords = sources.has("records");
+
   console.log("[DW1GHT] Context sources:", [...sources].join(", "));
 
-  // Keep conversation history within window
   const recentHistory = history.slice(-(DW1GHT_CONFIG.historyWindow * 2));
 
-  // Step 1: Classify the question — does it need the database?
-  const classification = await classifyQuestion(client, message);
-  console.log("[DW1GHT] Mode:", mode, "| Classification:", classification, "| Question:", message.slice(0, 80));
+  // ── Step 1: Extract tail numbers from the message ────────────────
+  const tailNumbers = extractTailNumbers(message);
+  const hasTail = tailNumbers.length > 0;
+  console.log("[DW1GHT] Tail numbers found:", hasTail ? tailNumbers.join(", ") : "none");
 
-  // ── General knowledge path (no database needed) ───────────────
-  if (classification === "general") {
-    const messages: Anthropic.MessageParam[] = [
-      ...recentHistory,
-      { role: "user", content: message },
-    ];
+  // ── Step 2: Check if this is a confirmed fleet follow-up ─────────
+  const confirmedFleet = isFleetConfirmationReply(message, recentHistory);
 
+  // ── Step 3: Fire RAG in parallel with classification ─────────────
+  // RAG starts immediately if "records" is ON — the toggle is the gate.
+  const ragPromise = useRecords
+    ? embedQuery(message).then(async (embedding) => {
+        if (!embedding) return { chunks: [] as RagChunk[], error: "Embedding generation failed", aircraftId: null as string | null };
+        console.log("[DW1GHT] Query embedded, searching rv_page_chunks...");
+        // Aircraft ID resolved after classification — placeholder null, resolved below
+        return { embedding, chunks: null as RagChunk[] | null, error: null, aircraftId: null as string | null };
+      })
+    : Promise.resolve(null);
+
+  // ── Step 4: Classify intent ───────────────────────────────────────
+  const intent = confirmedFleet ? "data_fleet" : await classifyQuestion(client, message);
+  console.log("[DW1GHT] Mode:", mode, "| Intent:", intent, "| Tail:", hasTail ? tailNumbers.join(",") : "none", "| Question:", message.slice(0, 80));
+
+  // ── Step 5: Intent routing ────────────────────────────────────────
+
+  // GENERAL — no database needed and no RAG data expected
+  if (intent === "general") {
+    // Still need to drain the ragPromise to avoid unhandled rejection
+    await ragPromise;
+    const msgs: Anthropic.MessageParam[] = [...recentHistory, { role: "user", content: message }];
     const response = await client.messages.create({
       model: DW1GHT_CONFIG.model,
       max_tokens: DW1GHT_CONFIG.maxTokens[mode],
       system: buildSystemPrompt(mode),
-      messages,
+      messages: msgs,
     });
-
     const reply = response.content[0].type === "text" ? response.content[0].text : "";
+    return json(200, { reply, mode, queryType: "general", usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens } });
+  }
+
+  // DATA_AIRCRAFT — needs a tail number
+  if (intent === "data_aircraft" && !hasTail) {
+    await ragPromise;
     return json(200, {
-      reply,
+      reply: tailMissingReply(mode),
       mode,
-      queryType: "general",
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-      },
+      queryType: "clarification",
+      usage: { input_tokens: 0, output_tokens: 0 },
     });
   }
 
-  // ── Data path ─────────────────────────────────────────────────
+  // DATA_FLEET (first time) — pause and ask to confirm
+  if (intent === "data_fleet" && !confirmedFleet) {
+    await ragPromise;
+    return json(200, {
+      reply: fleetConfirmReply(mode),
+      mode,
+      queryType: "clarification",
+      usage: { input_tokens: 0, output_tokens: 0 },
+    });
+  }
+
+  // ── Step 6: Resolve aircraft ID for RAG scoping ───────────────────
+  // data_aircraft: scope RAG to the specific tail. data_fleet: fleet-wide (null).
+  let ragAircraftId: string | null = null;
+  if (intent === "data_aircraft" && hasTail) {
+    ragAircraftId = await lookupAircraftId(tailNumbers[0]);
+    console.log("[DW1GHT] Aircraft ID for", tailNumbers[0], ":", ragAircraftId ?? "not found (will search fleet-wide)");
+  }
+
+  // ── Step 7: Execute RAG with correct aircraft scope ───────────────
+  let ragResult: { chunks: RagChunk[]; error: string | null } = { chunks: [], error: null };
+  if (useRecords) {
+    const partial = await ragPromise;
+    if (partial && "embedding" in partial && partial.embedding) {
+      const result = await retrieveRecordsContext(partial.embedding, ragAircraftId);
+      ragResult = result;
+      console.log("[DW1GHT] RAG result:", ragResult.error ? `ERROR: ${ragResult.error}` : `${ragResult.chunks.length} chunks (aircraft: ${ragAircraftId ?? "fleet-wide"})`);
+    }
+  }
+
+  const hasRagData = ragResult.chunks.length > 0;
+
+  // ── Step 8: SQL pipeline ──────────────────────────────────────────
   const conversationContext = recentHistory
     .slice(-4)
-    .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)
+    .map((m) => `${m.role}: ${m.content}`)
     .join("\n");
 
-  // Run SQL and RAG pipelines in parallel based on active sources
-  const useDiscrepancies = sources.has("discrepancies");
-  const useRecords = sources.has("records");
+  const sqlResult = useDiscrepancies
+    ? await generateSQL(client, message, conversationContext).then(async (sql) => {
+        console.log("[DW1GHT] Generated SQL:", sql ?? "NO_SQL");
+        if (!sql) return { sql: null, data: null, error: null };
+        const result = await runQuery(sql);
+        console.log("[DW1GHT] Query result:", result.error ? `ERROR: ${result.error}` : `${result.data?.length ?? 0} rows`);
+        return { sql, ...result };
+      })
+    : { sql: null, data: null, error: null };
 
-  const [sqlResult, ragResult] = await Promise.all([
-    // SQL pipeline (discrepancy history)
-    useDiscrepancies
-      ? generateSQL(client, message, conversationContext).then(async (sql) => {
-          console.log("[DW1GHT] Generated SQL:", sql ?? "NO_SQL");
-          if (!sql) return { sql: null, data: null, error: null };
-          const result = await runQuery(sql);
-          console.log("[DW1GHT] Query result:", result.error ? `ERROR: ${result.error}` : `${result.data?.length ?? 0} rows`);
-          return { sql, ...result };
-        })
-      : Promise.resolve({ sql: null, data: null, error: null }),
-
-    // RAG pipeline (aircraft records)
-    useRecords
-      ? embedQuery(message).then(async (embedding) => {
-          if (!embedding) return { chunks: [] as RagChunk[], error: "Embedding generation failed" };
-          console.log("[DW1GHT] Query embedded, searching rv_page_chunks...");
-          const result = await retrieveRecordsContext(embedding);
-          console.log("[DW1GHT] RAG result:", result.error ? `ERROR: ${result.error}` : `${result.chunks.length} chunks`);
-          return result;
-        })
-      : Promise.resolve({ chunks: [] as RagChunk[], error: null }),
-  ]);
-
-  // ── Build combined data context ───────────────────────────────
+  // ── Step 9: Build data context ────────────────────────────────────
   const contextSections: string[] = [];
   let sqlGenerated = false;
   let resultCount = 0;
   let ragChunksUsed = 0;
 
-  // SQL results section
   if (useDiscrepancies) {
     if (sqlResult.sql) {
       sqlGenerated = true;
       if (sqlResult.error) {
-        contextSections.push(`DISCREPANCY DATABASE QUERY FAILED.\nSQL attempted: ${sqlResult.sql}\nError: ${sqlResult.error}\n\nTell the user the query encountered an issue. Do not expose raw SQL or error details — just say the retrieval hit a snag and ask them to try rephrasing.`);
+        contextSections.push(`DISCREPANCY DATABASE QUERY FAILED.\nSQL attempted: ${sqlResult.sql}\nError: ${sqlResult.error}\n\nTell the user the query encountered an issue. Do not expose raw SQL or error details.`);
       } else if (!sqlResult.data || sqlResult.data.length === 0) {
         contextSections.push(`DISCREPANCY DATABASE QUERY RETURNED NO RESULTS.\nSQL executed: ${sqlResult.sql}\n\nTell the user no matching discrepancy records were found. Be specific about what was searched for.`);
       } else {
@@ -327,32 +453,33 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         contextSections.push(`DISCREPANCY DATABASE RESULTS (${sqlResult.data.length} rows${overflow ? `, showing first ${DW1GHT_CONFIG.sqlResultLimit}` : ""}):\n${JSON.stringify(truncated, null, 2)}${overflow ? `\n\n(${sqlResult.data.length - DW1GHT_CONFIG.sqlResultLimit} additional rows not shown)` : ""}`);
       }
     } else {
-      contextSections.push(`DISCREPANCY DATABASE: Could not generate a SQL query for this question. The discrepancy history was searched but no structured query could be formed.`);
+      contextSections.push(`DISCREPANCY DATABASE: Could not generate a SQL query for this question.`);
     }
   }
 
-  // RAG results section
   if (useRecords) {
     if (ragResult.error && ragResult.chunks.length === 0) {
       contextSections.push(`RECORDS VAULT SEARCH FAILED: ${ragResult.error}`);
     } else if (ragResult.chunks.length === 0) {
-      contextSections.push(`RECORDS VAULT: No semantically similar content found in uploaded aircraft records.`);
+      const scope = ragAircraftId ? `aircraft ${tailNumbers[0]}` : "all fleet records";
+      contextSections.push(`RECORDS VAULT: No semantically similar content found in uploaded records for ${scope}.`);
     } else {
       ragChunksUsed = ragResult.chunks.length;
-      const chunkTexts = ragResult.chunks.map((c) =>
-        `[Source: ${c.original_filename}, p.${c.page_number}, category: ${c.source_category}, similarity: ${c.similarity.toFixed(3)}]\n${c.chunk_text}`
-      ).join("\n\n");
-      contextSections.push(`RECORDS VAULT RESULTS (semantic search, ${ragResult.chunks.length} chunks from aircraft records):\n${chunkTexts}`);
+      const chunkTexts = ragResult.chunks
+        .map((c) => `[Source: ${c.original_filename}, p.${c.page_number}, category: ${c.source_category}, similarity: ${c.similarity.toFixed(3)}]\n${c.chunk_text}`)
+        .join("\n\n");
+      const scope = ragAircraftId ? `aircraft ${tailNumbers[0]}` : "fleet-wide";
+      contextSections.push(`RECORDS VAULT RESULTS (semantic search, ${ragResult.chunks.length} chunks, scope: ${scope}):\n${chunkTexts}`);
     }
   }
 
-  // If neither pipeline produced anything useful, tell the user
   if (contextSections.length === 0) {
-    contextSections.push(`No context sources are active. The user should enable at least one data source (Discrepancy History or Aircraft Records) to search fleet data.`);
+    contextSections.push(`No context sources are active. Enable Discrepancy History or Aircraft Records to search fleet data.`);
   }
 
   const dataContext = contextSections.join("\n\n─────────────────────────────────────\n\n");
 
+  // ── Step 10: Generate final response ─────────────────────────────
   const messages: Anthropic.MessageParam[] = [
     ...recentHistory,
     {
@@ -372,7 +499,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   return json(200, {
     reply,
     mode,
-    queryType: "data",
+    queryType: (sqlGenerated || hasRagData) ? "data" : "general",
     sqlGenerated,
     resultCount,
     ragChunksUsed,

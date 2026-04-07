@@ -42,20 +42,3 @@ export const TRAINING_STATUS_LABELS: Record<TrainingStatus, string> = {
   not_trained:   "Not Trained",
 }
 
-export const WO_TYPES = [
-  "100-Hour Inspection",
-  "Annual Inspection",
-  "Phase Inspection",
-  "Scheduled Maintenance — Traxxall Import",
-  "Unscheduled — Squawk",
-  "Unscheduled — Hydraulic",
-  "Unscheduled — Avionics",
-  "Unscheduled — Engine",
-  "Unscheduled — Structural",
-  "Landing Gear Inspection",
-  "Engine Run-Up / Test",
-  "Airworthiness Directive",
-  "Service Bulletin",
-  "Altimeter/Transponder Check",
-  "Other",
-]

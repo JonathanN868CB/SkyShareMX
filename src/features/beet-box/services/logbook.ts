@@ -208,6 +208,60 @@ export async function upsertEntryLine(
 
 // ─── Group / multi-signatory helpers ─────────────────────────────────────────
 
+// Times snapshot type — mirrors AircraftTimesSnapshot from WorkOrderCreate (without parseWarnings)
+type TimesSnapshot = {
+  airframeHrs?: number | null
+  landings?: number | null
+  eng1Tsn?: number | null
+  eng1Csn?: number | null
+  eng2Tsn?: number | null
+  eng2Csn?: number | null
+  propTsn?: number | null
+  propCsn?: number | null
+  apuHrs?: number | null
+  apuStarts?: number | null
+  hobbs?: number | null
+  [key: string]: number | null | undefined
+}
+
+function timesForSection(snapshot: TimesSnapshot | null | undefined, section: LogbookSection): {
+  totalAircraftTime?: number
+  landings?: number
+  hobbs?: number
+} {
+  if (!snapshot) return {}
+  switch (section) {
+    case "Airframe":
+      return {
+        ...(snapshot.airframeHrs != null && { totalAircraftTime: snapshot.airframeHrs }),
+        ...(snapshot.landings    != null && { landings: snapshot.landings }),
+        ...(snapshot.hobbs       != null && { hobbs: snapshot.hobbs }),
+      }
+    case "Engine 1":
+      return {
+        ...(snapshot.eng1Tsn != null && { totalAircraftTime: snapshot.eng1Tsn }),
+        ...(snapshot.eng1Csn != null && { landings: snapshot.eng1Csn }),
+      }
+    case "Engine 2":
+      return {
+        ...(snapshot.eng2Tsn != null && { totalAircraftTime: snapshot.eng2Tsn }),
+        ...(snapshot.eng2Csn != null && { landings: snapshot.eng2Csn }),
+      }
+    case "Propeller":
+      return {
+        ...(snapshot.propTsn != null && { totalAircraftTime: snapshot.propTsn }),
+        ...(snapshot.propCsn != null && { landings: snapshot.propCsn }),
+      }
+    case "APU":
+      return {
+        ...(snapshot.apuHrs    != null && { totalAircraftTime: snapshot.apuHrs }),
+        ...(snapshot.apuStarts != null && { landings: snapshot.apuStarts }),
+      }
+    default:
+      return {}
+  }
+}
+
 // Find the existing draft entry for a WO + logbook section, or create one.
 // One draft entry is shared across all mechanics signing within that section.
 export async function getOrCreateDraftLogbookEntry(
@@ -217,6 +271,7 @@ export async function getOrCreateDraftLogbookEntry(
     aircraftId: string | null
     guestRegistration: string | null
     guestSerial: string | null
+    timesSnapshot?: TimesSnapshot | null
   },
   section: LogbookSection
 ): Promise<LogbookEntry> {
@@ -233,6 +288,9 @@ export async function getOrCreateDraftLogbookEntry(
     return (await getLogbookEntryById(existing.id))!
   }
 
+  // Pre-populate times from the WO's snapshot for this section
+  const sectionTimes = timesForSection(wo.timesSnapshot, section)
+
   // Create a new draft — mechanic fields left empty; filled in via signatories.
   // guest_registration fallback satisfies the DB CHECK constraint when no aircraft is linked.
   return createLogbookEntry({
@@ -246,6 +304,37 @@ export async function getOrCreateDraftLogbookEntry(
     mechanicName: "",
     certificateType: "A&P",
     certificateNumber: "",
+    ...sectionTimes,
+  })
+}
+
+// Create a fresh, standalone logbook entry for a component being installed.
+// NEVER merges with an existing section draft — this is always a new entry
+// representing the first page of the incoming component's logbook history.
+export async function createComponentInstallEntry(
+  wo: {
+    id: string
+    woNumber: string
+    aircraftId: string | null
+    guestRegistration: string | null
+    guestSerial: string | null
+  },
+  section: LogbookSection,
+  componentSerial: string
+): Promise<LogbookEntry> {
+  return createLogbookEntry({
+    workOrderId: wo.id,
+    woNumber: wo.woNumber,
+    aircraftId: wo.aircraftId ?? undefined,
+    guestRegistration: wo.guestRegistration ?? (wo.aircraftId ? undefined : wo.woNumber),
+    guestSerial: wo.guestSerial ?? undefined,
+    logbookSection: section,
+    sectionTitle: `${section} — S/N ${componentSerial} (Installation)`,
+    mechanicName: "",
+    certificateType: "A&P",
+    certificateNumber: "",
+    // Times intentionally blank — this component starts fresh at installation.
+    // The mechanic will enter TSN/CSN for the new component when completing the entry.
   })
 }
 
@@ -295,7 +384,8 @@ export async function upsertEntrySignatory(
   return mapSignatoryRow(data)
 }
 
-// Append a line to an entry linked to a specific signatory + WO item.
+// Upsert a line for a specific WO item on an entry (delete existing first, then insert).
+// This makes sign-off idempotent — repeated sign/undo/sign cycles don't stack lines.
 export async function addSignatoryLine(
   entryId: string,
   text: string,
@@ -303,6 +393,15 @@ export async function addSignatoryLine(
   woItemId: string | null,
   refCode: string = ""
 ): Promise<void> {
+  // Remove any existing line for this WO item on this entry before inserting
+  if (woItemId) {
+    await supabase
+      .from("bb_logbook_entry_lines")
+      .delete()
+      .eq("entry_id", entryId)
+      .eq("wo_item_id", woItemId)
+  }
+
   // Get next line number for this entry
   const { count } = await supabase
     .from("bb_logbook_entry_lines")
@@ -321,6 +420,44 @@ export async function addSignatoryLine(
     })
 
   if (error) throw error
+}
+
+// Remove all logbook lines for a given WO item and clean up any signatories
+// who no longer have any lines on that entry (called on sign-off undo).
+export async function removeItemLogbookLines(woItemId: string): Promise<void> {
+  // 1. Find the lines before deleting so we know which entry/signatory pairs to check
+  const { data: lines } = await supabase
+    .from("bb_logbook_entry_lines")
+    .select("entry_id, signatory_id")
+    .eq("wo_item_id", woItemId)
+
+  // 2. Delete the lines
+  const { error } = await supabase
+    .from("bb_logbook_entry_lines")
+    .delete()
+    .eq("wo_item_id", woItemId)
+  if (error) throw error
+
+  // 3. For each affected (entry_id, signatory_id) pair, remove the signatory
+  //    if they have no remaining lines on that entry
+  const pairs = (lines ?? []).filter(l => l.signatory_id)
+  const checked = new Set<string>()
+  for (const { entry_id, signatory_id } of pairs) {
+    const key = `${entry_id}:${signatory_id}`
+    if (checked.has(key)) continue
+    checked.add(key)
+    const { count } = await supabase
+      .from("bb_logbook_entry_lines")
+      .select("id", { count: "exact", head: true })
+      .eq("entry_id", entry_id)
+      .eq("signatory_id", signatory_id)
+    if ((count ?? 0) === 0) {
+      await supabase
+        .from("bb_logbook_entry_signatories")
+        .delete()
+        .eq("id", signatory_id)
+    }
+  }
 }
 
 async function fetchAircraftMaps(aircraftIds: string[]) {
