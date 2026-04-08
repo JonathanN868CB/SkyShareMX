@@ -829,6 +829,7 @@ export default function UsersPage() {
   const [inviteOpen, setInviteOpen]     = useState(false)
   const [lastSeenSort, setLastSeenSort] = useState<"asc" | "desc" | null>(null)
   const [pendingSearch, setPendingSearch] = useState("")
+  const [userSearch, setUserSearch]       = useState("")
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -933,6 +934,13 @@ export default function UsersPage() {
     const tb = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0
     return lastSeenSort === "desc" ? tb - ta : ta - tb
   })
+
+  const filteredProfiles = userSearch.trim()
+    ? sortedProfiles.filter(p => {
+        const q = userSearch.toLowerCase()
+        return (p.full_name ?? "").toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
+      })
+    : sortedProfiles
 
   async function resendInvite(user: Profile) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -1047,10 +1055,37 @@ export default function UsersPage() {
         {/* Team Members Tab */}
         <TabsContent value="team">
           <Card className="card-elevated border-0">
+            {/* Search */}
+            <div className="px-5 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+                <input
+                  value={userSearch}
+                  onChange={e => setUserSearch(e.target.value)}
+                  placeholder="Search by name or email…"
+                  className="w-full h-10 pl-10 pr-10 rounded-lg text-sm text-white focus:outline-none transition-all"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: userSearch ? "1px solid var(--skyshare-gold)" : "1px solid rgba(255,255,255,0.15)",
+                    boxShadow: userSearch ? "0 0 0 2px rgba(212,160,23,0.1)" : "none",
+                  }}
+                />
+                {userSearch && (
+                  <button
+                    onClick={() => setUserSearch("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition-colors"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
             {loadingProfiles ? (
               <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
-            ) : profiles.length === 0 ? (
-              <div className="py-16 text-center text-muted-foreground text-sm">No users found</div>
+            ) : filteredProfiles.length === 0 ? (
+              <div className="py-16 text-center text-muted-foreground text-sm">
+                {userSearch ? `No users matching "${userSearch}"` : "No users found"}
+              </div>
             ) : (
               <Table>
                 <TableHeader>
@@ -1071,7 +1106,7 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedProfiles.map(user => (
+                  {filteredProfiles.map(user => (
                     <TableRow key={user.id} className="border-white/[0.05] hover:bg-white/[0.03]">
 
                       {/* User */}
