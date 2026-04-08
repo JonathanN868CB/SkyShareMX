@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
   ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight, ChevronLeft,
-  Plus, X, Clock, UserX, Package, Loader2,
+  Plus, X, Clock, Package, Loader2,
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
   BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
   ShieldCheck, Wrench, ChevronDown, Pencil, ArrowLeftRight,
@@ -552,8 +552,6 @@ function ItemDetailPanel({
   const noPartsRequired = item.noPartsRequired ?? false
 
   const clockedNames  = new Set(laborEntries.map(e => e.mechanicName))
-  const allMechanics  = mechanics
-  const notClocked    = allMechanics.filter(m => !clockedNames.has(m.name))
 
   return (
     <div className="flex flex-col h-full">
@@ -997,28 +995,8 @@ function ItemDetailPanel({
             </div>
           )}
 
-          {/* Not clocked in */}
-          {notClocked.length > 0 && (
-            <div className="mb-4">
-              <p className="text-white/30 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <UserX className="w-3.5 h-3.5" /> Not clocked in
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {notClocked.map(m => (
-                  <span
-                    key={m.id}
-                    className="text-white/40 text-sm px-3 py-1.5 rounded"
-                    style={{ background: "hsl(0,0%,13%)" }}
-                  >
-                    {m.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {allMechanics.length === 0 && laborEntries.length === 0 && (
-            <p className="text-white/25 text-sm italic mb-2">No mechanics assigned to this work order.</p>
+          {laborEntries.length === 0 && (
+            <p className="text-white/25 text-sm italic mb-2">No time logged yet.</p>
           )}
 
           {/* Log time form */}
