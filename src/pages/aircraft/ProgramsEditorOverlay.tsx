@@ -41,7 +41,7 @@ function ProgramEditCard({
   field: DataField
   onChange: (changes: Partial<DataField>) => void
 }) {
-  const isNone = !field.value || field.value === "None" || field.value === "—"
+  const isNone = field.value === "None"
 
   return (
     <div className="rounded-lg p-4 flex flex-col gap-3"

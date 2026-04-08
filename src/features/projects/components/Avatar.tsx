@@ -7,8 +7,8 @@ interface AvatarProps {
 }
 
 export function Avatar({ profile, size = "sm", className = "" }: AvatarProps) {
-  const dim = size === "sm" ? 24 : 32
-  const fontSize = size === "sm" ? "9px" : "11px"
+  const dim = size === "sm" ? 26 : 34
+  const fontSize = size === "sm" ? "9px" : "12px"
 
   if (profile.avatar_url) {
     return (

@@ -455,7 +455,7 @@ export default function SettingsDashboard() {
                     className={cn("grid grid-cols-12 gap-3 px-5 py-4 items-center", idx > 0 && "border-t")}
                     style={{ borderColor: "hsl(0,0%,17%)", background: "hsl(0,0%,11%)" }}>
                     <div className="col-span-4 flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                      <div className="w-[34px] h-[34px] rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
                         style={{ background: "rgba(212,160,23,0.12)", color: "var(--skyshare-gold)" }}>
                         {m.name.charAt(0)}
                       </div>

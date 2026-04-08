@@ -330,7 +330,7 @@ function SuggestionRow({
         <button onClick={handleExpand} className="w-full flex items-center gap-3 px-4 py-3 text-left">
 
           {/* Avatar */}
-          <Avatar className="h-7 w-7 flex-shrink-0">
+          <Avatar className="h-[30px] w-[30px] flex-shrink-0">
             {suggestion.profiles?.avatar_url ? (
               <img src={suggestion.profiles.avatar_url} alt="" className="h-full w-full object-cover rounded-full" />
             ) : (

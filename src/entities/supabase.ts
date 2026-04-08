@@ -243,6 +243,24 @@ export type FieldDef = {
   hint?: string
 }
 
+// ─── Aircraft Photos ──────────────────────────────────────────────────────────
+
+export type AircraftPhoto = {
+  tail_number: string
+  storage_path: string
+  photo_url: string
+  uploaded_by: string | null
+  photographer_name: string
+  uploaded_at: string
+}
+
+export type AircraftPhotoRating = {
+  tail_number: string
+  profile_id: string
+  rating: number
+  rated_at: string
+}
+
 export type ExternalRequest = {
   id: string
   title: string
