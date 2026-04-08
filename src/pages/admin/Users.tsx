@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import {
   Users, UserPlus, CheckCircle, XCircle, Settings,
   Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut, Link2,
-  ChevronUp, ChevronDown, ChevronsUpDown,
+  ChevronUp, ChevronDown, ChevronsUpDown, Search,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
@@ -15,7 +15,7 @@ import { useAuth } from "@/features/auth"
 import { Button } from "@/shared/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs"
-import { Avatar, AvatarFallback } from "@/shared/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/shared/ui/avatar"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/shared/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu"
@@ -826,8 +826,10 @@ export default function UsersPage() {
   const [permTarget, setPermTarget]   = useState<Profile | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
   const [linkTarget, setLinkTarget]   = useState<Profile | null>(null)
-  const [inviteOpen, setInviteOpen]   = useState(false)
+  const [inviteOpen, setInviteOpen]     = useState(false)
   const [lastSeenSort, setLastSeenSort] = useState<"asc" | "desc" | null>(null)
+  const [pendingSearch, setPendingSearch] = useState("")
+  const [userSearch, setUserSearch]       = useState("")
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -914,12 +916,31 @@ export default function UsersPage() {
   })
 
   const pendingInvites = profiles.filter(p => p.status === "Pending")
+  const filteredPending = pendingSearch.trim()
+    ? pendingInvites
+        .map(p => {
+          const q = pendingSearch.toLowerCase()
+          const nameScore  = (p.full_name ?? "").toLowerCase().includes(q) ? 2 : 0
+          const emailScore = p.email.toLowerCase().includes(q) ? 1 : 0
+          return { p, score: nameScore + emailScore }
+        })
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map(({ p }) => p)
+    : pendingInvites
 
   const sortedProfiles = lastSeenSort === null ? profiles : [...profiles].sort((a, b) => {
     const ta = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0
     const tb = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0
     return lastSeenSort === "desc" ? tb - ta : ta - tb
   })
+
+  const filteredProfiles = userSearch.trim()
+    ? sortedProfiles.filter(p => {
+        const q = userSearch.toLowerCase()
+        return (p.full_name ?? "").toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
+      })
+    : sortedProfiles
 
   async function resendInvite(user: Profile) {
     const { data: { session } } = await supabase.auth.getSession()
@@ -1034,10 +1055,37 @@ export default function UsersPage() {
         {/* Team Members Tab */}
         <TabsContent value="team">
           <Card className="card-elevated border-0">
+            {/* Search */}
+            <div className="px-5 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+                <input
+                  value={userSearch}
+                  onChange={e => setUserSearch(e.target.value)}
+                  placeholder="Search by name or email…"
+                  className="w-full h-10 pl-10 pr-10 rounded-lg text-sm text-white focus:outline-none transition-all"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: userSearch ? "1px solid var(--skyshare-gold)" : "1px solid rgba(255,255,255,0.15)",
+                    boxShadow: userSearch ? "0 0 0 2px rgba(212,160,23,0.1)" : "none",
+                  }}
+                />
+                {userSearch && (
+                  <button
+                    onClick={() => setUserSearch("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition-colors"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
             {loadingProfiles ? (
               <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
-            ) : profiles.length === 0 ? (
-              <div className="py-16 text-center text-muted-foreground text-sm">No users found</div>
+            ) : filteredProfiles.length === 0 ? (
+              <div className="py-16 text-center text-muted-foreground text-sm">
+                {userSearch ? `No users matching "${userSearch}"` : "No users found"}
+              </div>
             ) : (
               <Table>
                 <TableHeader>
@@ -1058,19 +1106,20 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedProfiles.map(user => (
+                  {filteredProfiles.map(user => (
                     <TableRow key={user.id} className="border-white/[0.05] hover:bg-white/[0.03]">
 
                       {/* User */}
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
-                            <AvatarFallback className="text-xs font-bold" style={{ background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)" }}>
-                              {getInitials(user.full_name, user.email)}
+                          <Avatar className="h-[34px] w-[34px]">
+                            <AvatarImage src={user.avatar_url ?? undefined} className="object-cover" />
+                            <AvatarFallback className="text-xs font-bold" style={{ background: user.avatar_color ?? "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)" }}>
+                              {getInitials(user.display_name ?? user.full_name, user.email)}
                             </AvatarFallback>
                           </Avatar>
                           <div>
-                            <p className="text-sm font-medium text-foreground">{user.full_name ?? "—"}</p>
+                            <p className="text-sm font-medium text-foreground">{user.display_name ?? user.full_name ?? "—"}</p>
                             <p className="text-xs text-muted-foreground">{user.email}</p>
                           </div>
                         </div>
@@ -1241,10 +1290,37 @@ export default function UsersPage() {
         {/* Pending Invites Tab */}
         <TabsContent value="requests">
           <Card className="card-elevated border-0">
+            {/* Search */}
+            <div className="px-5 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+                <input
+                  value={pendingSearch}
+                  onChange={e => setPendingSearch(e.target.value)}
+                  placeholder="Search by name or email…"
+                  className="w-full h-10 pl-10 pr-4 rounded-lg text-sm text-white focus:outline-none transition-all"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: pendingSearch ? "1px solid var(--skyshare-gold)" : "1px solid rgba(255,255,255,0.15)",
+                    boxShadow: pendingSearch ? "0 0 0 2px rgba(212,160,23,0.1)" : "none",
+                  }}
+                />
+                {pendingSearch && (
+                  <button
+                    onClick={() => setPendingSearch("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition-colors"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
             {loadingProfiles ? (
               <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
             ) : pendingInvites.length === 0 ? (
               <div className="py-16 text-center text-muted-foreground text-sm">No pending invites</div>
+            ) : filteredPending.length === 0 ? (
+              <div className="py-10 text-center text-muted-foreground text-sm">No matches for "{pendingSearch}"</div>
             ) : (
               <Table>
                 <TableHeader>
@@ -1257,13 +1333,13 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pendingInvites.map(user => (
+                  {filteredPending.map(user => (
                     <TableRow key={user.id} className="border-white/[0.05] hover:bg-white/[0.03]">
 
                       {/* User */}
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
+                          <Avatar className="h-[34px] w-[34px]">
                             <AvatarFallback className="text-xs font-bold" style={{ background: "rgba(212,160,23,0.15)", color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
                               {getInitials(user.full_name, user.email)}
                             </AvatarFallback>

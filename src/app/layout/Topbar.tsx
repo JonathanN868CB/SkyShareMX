@@ -140,6 +140,7 @@ function ProfileSettingsDialog({
   const [avatarInitials, setAvatarInitials] = useState(profile?.avatar_initials ?? "")
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(profile?.avatar_url ?? "")
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -154,6 +155,12 @@ function ProfileSettingsDialog({
   const [certError, setCertError]         = useState<string | null>(null)
 
   const certChanged = certType !== (existingCert?.certType ?? "A&P") || certNumber !== (existingCert?.certNumber ?? "")
+
+  // Load cert whenever profile becomes available (covers page-refresh race where
+  // the drawer opens before auth finishes, causing handleOpenChange to skip loadCert).
+  useEffect(() => {
+    if (profile?.id) loadCert(profile.id)
+  }, [profile?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadCert(profileId: string) {
     const certs = await getMechanicCerts(profileId)
@@ -215,10 +222,19 @@ function ProfileSettingsDialog({
     if (!file || !user) return
 
     // Validate file
-    if (!file.type.startsWith("image/")) return
-    if (file.size > 2 * 1024 * 1024) return // 2MB max
+    if (!file.type.startsWith("image/")) {
+      setUploadError("File must be an image.")
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("File must be 10 MB or smaller.")
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      return
+    }
 
     setUploading(true)
+    setUploadError(null)
     const ext = file.name.split(".").pop() || "jpg"
     const path = `${user.id}/avatar.${ext}`
 
@@ -226,7 +242,9 @@ function ProfileSettingsDialog({
       .from("avatars")
       .upload(path, file, { upsert: true })
 
-    if (!error) {
+    if (error) {
+      setUploadError(error.message || "Upload failed. Please try again.")
+    } else {
       const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path)
       // Add cache-bust so the browser picks up the new image
       setAvatarPreviewUrl(`${urlData.publicUrl}?t=${Date.now()}`)
@@ -264,9 +282,23 @@ function ProfileSettingsDialog({
     setTimeout(() => setSaved(false), 2000)
   }
 
+  const saveButtonStyle: React.CSSProperties = {
+    background: hasChanges ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
+    color: hasChanges ? "#111" : "hsl(var(--muted-foreground))",
+    fontFamily: "var(--font-heading)",
+    animation: hasChanges ? "profile-save-pulse 1.8s ease-in-out infinite" : "none",
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]" style={{ background: "hsl(0 0% 9%)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <style>{`
+          @keyframes profile-save-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(212,160,23,0.5); }
+            50%       { box-shadow: 0 0 0 7px rgba(212,160,23,0); }
+          }
+        `}</style>
+
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2" style={{ fontFamily: "var(--font-heading)" }}>
             <Settings size={16} style={{ color: "var(--skyshare-gold)" }} />
@@ -326,14 +358,6 @@ function ProfileSettingsDialog({
                 {profile?.role}
               </p>
               <div className="flex items-center gap-2 mt-2">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="text-[10px] px-2 py-1 rounded transition-colors hover:bg-white/10"
-                  style={{ color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.3)" }}
-                >
-                  {uploading ? "Uploading..." : "Upload Photo"}
-                </button>
                 {avatarPreviewUrl && (
                   <button
                     onClick={handleRemoveAvatar}
@@ -344,11 +368,16 @@ function ProfileSettingsDialog({
                   </button>
                 )}
               </div>
+              {uploadError && (
+                <p className="text-[10px] mt-1" style={{ color: "#f87171" }}>
+                  ✗ {uploadError}
+                </p>
+              )}
             </div>
           </div>
 
           {/* ── Display Name ── */}
-          <div>
+          <div style={{ position: "relative" }}>
             <label className="text-[10px] font-bold uppercase tracking-widest mb-1.5 block" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
               Display Name
             </label>
@@ -358,6 +387,14 @@ function ProfileSettingsDialog({
               placeholder={profile?.full_name ?? "Enter a display name"}
               className="h-9 text-sm bg-white/5 border-white/10"
             />
+            <Button
+              onClick={handleSave}
+              disabled={!hasChanges || saving}
+              className="absolute right-0 h-6 px-3 text-[10px] font-bold uppercase tracking-wider"
+              style={{ ...saveButtonStyle, borderRadius: 4, top: -15 }}
+            >
+              {saved ? "Saved ✓" : saving ? "Saving..." : "Save Changes"}
+            </Button>
             <p className="text-[10px] mt-1.5" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
               This is cosmetic only. Your account identity remains {profile?.full_name} ({profile?.email}).
             </p>
@@ -440,9 +477,14 @@ function ProfileSettingsDialog({
                 <div className="flex gap-2 items-center">
                   <Input
                     value={certNumber}
-                    onChange={e => setCertNumber(e.target.value)}
+                    onChange={e => {
+                      // Allow only alphanumeric characters (A&P numbers can contain letters)
+                      const sanitized = e.target.value.replace(/[^a-zA-Z0-9]/g, "")
+                      setCertNumber(sanitized)
+                    }}
                     placeholder="e.g. 3444980"
                     className="h-9 text-sm bg-white/5 border-white/10 font-mono flex-1"
+                    autoComplete="off"
                   />
                   <Button
                     onClick={handleSaveCert}
@@ -468,6 +510,11 @@ function ProfileSettingsDialog({
               {!existingCert && (
                 <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
                   No certificate on file yet. This populates the signature block on logbook entries.
+                </p>
+              )}
+              {certNumber && /[^a-zA-Z0-9]/.test(certNumber.replace(/^\s+|\s+$/g, '')) && (
+                <p className="text-[10px]" style={{ color: "#fbbf24" }}>
+                  ⚠ Only alphanumeric characters allowed (special characters will be removed)
                 </p>
               )}
               {certError && (
@@ -541,11 +588,7 @@ function ProfileSettingsDialog({
                 onClick={handleSave}
                 disabled={!hasChanges || saving}
                 className="h-8 px-5 text-xs font-bold uppercase tracking-wider"
-                style={{
-                  background: hasChanges ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
-                  color: hasChanges ? "#111" : "hsl(var(--muted-foreground))",
-                  fontFamily: "var(--font-heading)",
-                }}
+                style={saveButtonStyle}
               >
                 {saved ? "Saved" : saving ? "Saving..." : "Save Changes"}
               </Button>
@@ -736,7 +779,7 @@ export function Topbar() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2.5 rounded-sm px-2 py-1.5 hover:bg-accent transition-colors outline-none">
-              <Avatar className="h-7 w-7">
+              <Avatar className="h-[30px] w-[30px]">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt="" className="h-full w-full object-cover rounded-full" />
                 ) : (

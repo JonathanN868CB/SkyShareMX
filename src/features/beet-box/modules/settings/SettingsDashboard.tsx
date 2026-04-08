@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react"
 import {
   Shield, Users, Settings, ChevronRight, Check, X,
-  Lock, UserCheck, AlertTriangle, Building2, User,
-  Pencil, Plus, Loader2, BadgeCheck,
+  Lock, AlertTriangle, Building2, User,
+  Pencil, Plus, Loader2, BadgeCheck, Wrench, Coffee,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { Button } from "@/shared/ui/button"
-import { getMyProfile, getTechnicians } from "../../services"
+import { getMyProfile, getTechnicians, setBbLaborEligible } from "../../services"
 import type { Mechanic } from "../../types"
 import type { Permission } from "../../data/mockData"
 import { supabase } from "@/lib/supabase"
@@ -241,12 +241,23 @@ export default function SettingsDashboard() {
   useEffect(() => {
     if (tab === "team" && !teamLoaded) {
       setTeamLoading(true)
-      getTechnicians()
+      getTechnicians(false) // false = show everyone, including benched
         .then(m => { setMechanics(m); setTeamLoaded(true) })
         .catch(() => {})
         .finally(() => setTeamLoading(false))
     }
   }, [tab, teamLoaded])
+
+  async function toggleLabor(mechId: string, current: boolean) {
+    const next = !current
+    setMechanics(prev => prev.map(m => m.id === mechId ? { ...m, laborEligible: next } : m))
+    try {
+      await setBbLaborEligible(mechId, next)
+    } catch {
+      // revert on failure
+      setMechanics(prev => prev.map(m => m.id === mechId ? { ...m, laborEligible: current } : m))
+    }
+  }
 
   // ── Roles state (local demo) ───────────────────────────────────────────────
   const [roles, setRoles] = useState<RoleData[]>(DEFAULT_ROLES)
@@ -434,26 +445,44 @@ export default function SettingsDashboard() {
                 <div className="grid grid-cols-12 gap-3 px-5 py-3 text-xs font-bold uppercase tracking-wider text-white/35"
                   style={{ background: "hsl(0,0%,13%)", borderBottom: "1px solid hsl(0,0%,20%)" }}>
                   <span className="col-span-4">Name</span>
-                  <span className="col-span-4">Email</span>
+                  <span className="col-span-3">Email</span>
                   <span className="col-span-2">Cert</span>
                   <span className="col-span-2">Cert #</span>
+                  <span className="col-span-1 text-center" title="Labor eligible — click to bench or reinstate">Labor</span>
                 </div>
                 {mechanics.map((m, idx) => (
                   <div key={m.id}
                     className={cn("grid grid-cols-12 gap-3 px-5 py-4 items-center", idx > 0 && "border-t")}
                     style={{ borderColor: "hsl(0,0%,17%)", background: "hsl(0,0%,11%)" }}>
                     <div className="col-span-4 flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                      <div className="w-[34px] h-[34px] rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
                         style={{ background: "rgba(212,160,23,0.12)", color: "var(--skyshare-gold)" }}>
                         {m.name.charAt(0)}
                       </div>
                       <span className="text-white/85 text-sm font-medium truncate">{m.name}</span>
                     </div>
-                    <span className="col-span-4 text-white/40 text-sm truncate">{m.email}</span>
+                    <span className="col-span-3 text-white/40 text-sm truncate">{m.email}</span>
                     <div className="col-span-2">
                       <CertBadge certType={m.certType} />
                     </div>
                     <span className="col-span-2 text-white/40 text-xs font-mono">{m.certNumber ?? "—"}</span>
+                    <div className="col-span-1 flex justify-center">
+                      <button
+                        onClick={() => toggleLabor(m.id, m.laborEligible)}
+                        title={m.laborEligible ? "On the clock — click to bench" : "Benched — click to reinstate"}
+                        className="group relative p-1.5 rounded-lg transition-all"
+                        style={{
+                          background: m.laborEligible ? "rgba(212,160,23,0.1)" : "rgba(255,255,255,0.04)",
+                          border: m.laborEligible ? "1px solid rgba(212,160,23,0.25)" : "1px solid rgba(255,255,255,0.08)",
+                        }}
+                      >
+                        {m.laborEligible ? (
+                          <Wrench className="w-4 h-4" style={{ color: "var(--skyshare-gold)" }} />
+                        ) : (
+                          <Coffee className="w-4 h-4" style={{ color: "rgba(255,255,255,0.2)" }} />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
