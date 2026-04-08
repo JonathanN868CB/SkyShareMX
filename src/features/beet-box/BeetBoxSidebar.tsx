@@ -4,30 +4,53 @@ import {
   ClipboardList, Package, ShoppingCart, Wrench,
   FileText, BookMarked, GraduationCap,
   PanelLeftOpen, PanelLeftClose, Settings, Boxes,
-  Zap, BookText,
+  Zap, BookText, BookOpen, BarChart3, PieChart, ShieldCheck, Building2,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { BeetIcon } from "./shared/BeetIcon"
 import { SuggestionWidget } from "@/features/site-suggestions"
 
-const OPS_ITEMS = [
+const WORK_ITEMS = [
   { label: "Work Orders",       path: "/app/beet-box/work-orders",     icon: ClipboardList },
-  { label: "Invoicing",        path: "/app/beet-box/invoicing",        icon: FileText      },
-  { label: "Inventory",        path: "/app/beet-box/inventory",        icon: Package       },
-  { label: "Parts",            path: "/app/beet-box/parts",            icon: Boxes         },
-  { label: "Purchase Orders",  path: "/app/beet-box/purchase-orders",  icon: ShoppingCart  },
-  { label: "Tool Calibration", path: "/app/beet-box/tool-calibration", icon: Wrench        },
-  { label: "Settings",         path: "/app/beet-box/settings",         icon: Settings      },
+  { label: "Tool Calibration",  path: "/app/beet-box/tool-calibration", icon: Wrench       },
 ]
 
-const MANAGERS_ITEMS = [
-  { label: "Flat Rates",             path: "/app/beet-box/flat-rates",     icon: Zap      },
-  { label: "Canned Actions",         path: "/app/beet-box/canned-actions", icon: BookText },
+const PARTS_ITEMS = [
+  { label: "Parts Requests",   path: "/app/beet-box/parts",            icon: Boxes        },
+  { label: "Purchase Orders",  path: "/app/beet-box/purchase-orders",  icon: ShoppingCart },
+  { label: "Inventory",        path: "/app/beet-box/inventory",        icon: Package      },
+  { label: "Suppliers",        path: "/app/beet-box/suppliers",        icon: Building2    },
+  { label: "Parts Overview",   path: "/app/beet-box/parts-overview",   icon: BarChart3    },
 ]
 
-const KNOWLEDGE_ITEMS = [
-  { label: "SOP Library", path: "/app/beet-box/sop-library", icon: BookMarked    },
-  { label: "Training",    path: "/app/beet-box/training",    icon: GraduationCap },
+const BILLING_ITEMS = [
+  { label: "Invoicing",   path: "/app/beet-box/invoicing",   icon: FileText },
+  { label: "Flat Rates",  path: "/app/beet-box/flat-rates",  icon: Zap      },
+]
+
+const REFERENCE_ITEMS = [
+  { label: "Parts Catalog", path: "/app/beet-box/catalog",     icon: BookOpen      },
+  { label: "SOP Library",   path: "/app/beet-box/sop-library", icon: BookMarked    },
+  { label: "Training",      path: "/app/beet-box/training",    icon: GraduationCap },
+]
+
+const MANAGEMENT_ITEMS = [
+  { label: "Reports",        path: "/app/beet-box/reports",        icon: PieChart    },
+  { label: "Compliance",     path: "/app/beet-box/compliance",     icon: ShieldCheck },
+  { label: "Canned Actions", path: "/app/beet-box/canned-actions", icon: BookText    },
+]
+
+const SETTINGS_ITEMS = [
+  { label: "Settings", path: "/app/beet-box/settings", icon: Settings },
+]
+
+const NAV_SECTIONS = [
+  { label: "Work",                items: WORK_ITEMS       },
+  { label: "Parts & Procurement", items: PARTS_ITEMS      },
+  { label: "Billing",             items: BILLING_ITEMS    },
+  { label: "Reference",           items: REFERENCE_ITEMS  },
+  { label: "Management",          items: MANAGEMENT_ITEMS },
+  { label: "Settings",            items: SETTINGS_ITEMS   },
 ]
 
 // Shared style for both toggle buttons (sidebar + WO rail) — exported so WorkOrderDetail can match
@@ -185,133 +208,54 @@ export function BeetBoxSidebar() {
 
       {/* ── Navigation ──────────────────────────────────────────────────────── */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3">
+        {NAV_SECTIONS.map((section, idx) => (
+          <div key={section.label}>
+            {idx > 0 && (
+              <div className="mx-3 mb-4" style={{ height: "1px", background: "hsl(0 0% 16%)" }} />
+            )}
 
-        {!narrow && (
-          <p
-            className="px-3 mb-2"
-            style={{ fontFamily: "var(--font-heading)", fontSize: "10px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--skyshare-gold)", opacity: 0.55 }}
-          >
-            Operations
-          </p>
-        )}
-
-        <ul className="space-y-0.5 mb-5">
-          {OPS_ITEMS.map(item => (
-            <li key={item.path}>
-              <NavLink
-                to={item.path}
-                title={narrow ? item.label : undefined}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center py-2 rounded-sm text-sm transition-all duration-150",
-                    narrow ? "justify-center px-1" : "gap-3 px-3",
-                    isActive ? "text-white font-medium" : "text-white/45 hover:text-white/80 font-normal"
-                  )
-                }
-                style={({ isActive }) =>
-                  isActive ? {
-                    background: narrow ? "rgba(212,160,23,0.15)" : "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
-                    fontFamily: "var(--font-heading)",
-                    letterSpacing: "0.02em",
-                  } : {}
-                }
+            {!narrow && (
+              <p
+                className="px-3 mb-2"
+                style={{ fontFamily: "var(--font-heading)", fontSize: "10px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--skyshare-gold)", opacity: 0.55 }}
               >
-                {({ isActive }) => (
-                  <>
-                    <item.icon className="w-[17px] h-[17px] flex-shrink-0" style={isActive ? { color: "var(--skyshare-gold)" } : {}} />
-                    {!narrow && <span className="truncate tracking-wide">{item.label}</span>}
-                  </>
-                )}
-              </NavLink>
-            </li>
-          ))}
-        </ul>
+                {section.label}
+              </p>
+            )}
 
-        <div className="mx-3 mb-4" style={{ height: "1px", background: "hsl(0 0% 16%)" }} />
-
-        {!narrow && (
-          <p
-            className="px-3 mb-2"
-            style={{ fontFamily: "var(--font-heading)", fontSize: "10px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--skyshare-gold)", opacity: 0.55 }}
-          >
-            Managers
-          </p>
-        )}
-
-        <ul className="space-y-0.5 mb-5">
-          {MANAGERS_ITEMS.map(item => (
-            <li key={item.path}>
-              <NavLink
-                to={item.path}
-                title={narrow ? item.label : undefined}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center py-2 rounded-sm text-sm transition-all duration-150",
-                    narrow ? "justify-center px-1" : "gap-3 px-3",
-                    isActive ? "text-white font-medium" : "text-white/45 hover:text-white/80 font-normal"
-                  )
-                }
-                style={({ isActive }) =>
-                  isActive ? {
-                    background: narrow ? "rgba(212,160,23,0.15)" : "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
-                    fontFamily: "var(--font-heading)",
-                    letterSpacing: "0.02em",
-                  } : {}
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <item.icon className="w-[17px] h-[17px] flex-shrink-0" style={isActive ? { color: "var(--skyshare-gold)" } : {}} />
-                    {!narrow && <span className="truncate tracking-wide">{item.label}</span>}
-                  </>
-                )}
-              </NavLink>
-            </li>
-          ))}
-        </ul>
-
-        <div className="mx-3 mb-4" style={{ height: "1px", background: "hsl(0 0% 16%)" }} />
-
-        {!narrow && (
-          <p
-            className="px-3 mb-2"
-            style={{ fontFamily: "var(--font-heading)", fontSize: "10px", fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--skyshare-gold)", opacity: 0.55 }}
-          >
-            Knowledge
-          </p>
-        )}
-
-        <ul className="space-y-0.5">
-          {KNOWLEDGE_ITEMS.map(item => (
-            <li key={item.path}>
-              <NavLink
-                to={item.path}
-                title={narrow ? item.label : undefined}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center py-2 rounded-sm text-sm transition-all duration-150",
-                    narrow ? "justify-center px-1" : "gap-3 px-3",
-                    isActive ? "text-white font-medium" : "text-white/45 hover:text-white/80 font-normal"
-                  )
-                }
-                style={({ isActive }) =>
-                  isActive ? {
-                    background: narrow ? "rgba(212,160,23,0.15)" : "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
-                    fontFamily: "var(--font-heading)",
-                    letterSpacing: "0.02em",
-                  } : {}
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <item.icon className="w-[17px] h-[17px] flex-shrink-0" style={isActive ? { color: "var(--skyshare-gold)" } : {}} />
-                    {!narrow && <span className="truncate tracking-wide">{item.label}</span>}
-                  </>
-                )}
-              </NavLink>
-            </li>
-          ))}
-        </ul>
+            <ul className="space-y-0.5 mb-5">
+              {section.items.map(item => (
+                <li key={item.path}>
+                  <NavLink
+                    to={item.path}
+                    title={narrow ? item.label : undefined}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center py-2 rounded-sm text-sm transition-all duration-150",
+                        narrow ? "justify-center px-1" : "gap-3 px-3",
+                        isActive ? "text-white font-medium" : "text-white/45 hover:text-white/80 font-normal"
+                      )
+                    }
+                    style={({ isActive }) =>
+                      isActive ? {
+                        background: narrow ? "rgba(212,160,23,0.15)" : "linear-gradient(to right, rgba(212,160,23,0.15), transparent)",
+                        fontFamily: "var(--font-heading)",
+                        letterSpacing: "0.02em",
+                      } : {}
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <item.icon className="w-[17px] h-[17px] flex-shrink-0" style={isActive ? { color: "var(--skyshare-gold)" } : {}} />
+                        {!narrow && <span className="truncate tracking-wide">{item.label}</span>}
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </nav>
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}

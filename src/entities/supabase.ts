@@ -203,6 +203,16 @@ export const APP_ROLES: AppRole[] = [
   "Guest",
 ]
 
+/**
+ * APP_SECTIONS — Authoritative list of all module/nav sections
+ *
+ * Keep synchronized with FOUR places:
+ * • sidebarSections in app/layout/AppSidebar.tsx
+ * • HARDCODED_RULES in pages/admin/PermissionsIndex.tsx
+ * • PERMISSION_GROUPS in pages/admin/Users.tsx
+ *
+ * When adding a new section, update all four places to keep navigation and permissions in sync.
+ */
 export const APP_SECTIONS: AppSection[] = [
   // ── Overview ──────────────────────────────────────────────
   "Dashboard",

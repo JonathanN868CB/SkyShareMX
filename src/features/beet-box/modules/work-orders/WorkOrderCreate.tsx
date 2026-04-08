@@ -42,6 +42,7 @@ interface ParsedTask {
   importId:        string
   section:         LogbookSection
   taskNumber:      string
+  refCode:         string
   description:     string
   nextDueDate:     string | null
   nextDueHours:    string | null
@@ -110,6 +111,16 @@ function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
     return null
   }
 
+  function getStringFromRow(labelVariants: string[], colIdx: number): string | null {
+    for (const lbl of labelVariants) {
+      const row = rowMap.get(lbl.toLowerCase())
+      if (!row) continue
+      const v = String(row[colIdx] ?? "").trim()
+      if (v) return v
+    }
+    return null
+  }
+
   // ── Columnar parsing ─────────────────────────────────────────────────────
   if (isColumnar) {
     const afC  = colAF  > 0 ? colAF  : 1
@@ -122,9 +133,11 @@ function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
 
     const eng1Tsn = e1C > 0 ? getFromRow(["hrs", "tsn"], e1C) : null
     const eng1Csn = e1C > 0 ? getFromRow(["enc", "starts", "cycles"], e1C) : null
+    const eng1Serial = e1C > 0 ? getStringFromRow(["s/n", "serial", "sn", "serial no", "serial number"], e1C) : null
 
     const eng2Tsn = e2C > 0 ? getFromRow(["hrs", "tsn"], e2C) : null
     const eng2Csn = e2C > 0 ? getFromRow(["enc", "starts", "cycles"], e2C) : null
+    const eng2Serial = e2C > 0 ? getStringFromRow(["s/n", "serial", "sn", "serial no", "serial number"], e2C) : null
 
     // APU: dedicated column first, then A/F column fallback rows
     const apuHrs    = apuC > 0
@@ -133,6 +146,9 @@ function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
     const apuStarts = apuC > 0
       ? getFromRow(["apus", "starts", "start(apu)"], apuC)
       : getFromRow(["start(apu)", "apu starts", "apus"], afC)
+    const apuSerial = apuC > 0
+      ? getStringFromRow(["s/n", "serial", "sn", "serial no", "serial number"], apuC)
+      : null
 
     const parseWarnings: string[] = []
     if (airframeHrs === null) parseWarnings.push("Airframe hours not found — enter manually")
@@ -140,10 +156,10 @@ function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
 
     return {
       airframeHrs, landings,
-      eng1Tsn, eng1Csn,
-      eng2Tsn, eng2Csn,
-      propTsn: null, propCsn: null,
-      apuHrs, apuStarts,
+      eng1Tsn, eng1Csn, eng1Serial,
+      eng2Tsn, eng2Csn, eng2Serial,
+      propTsn: null, propCsn: null, propSerial: null,
+      apuHrs, apuStarts, apuSerial,
       hobbs: null,
       parseWarnings,
     }
@@ -162,12 +178,16 @@ function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
     landings:    kv("ldg", "landings", "landing"),
     eng1Tsn:     kv("eng hrs", "engine hrs", "e1 hrs", "tsn"),
     eng1Csn:     kv("enc", "eng cycles", "csn"),
+    eng1Serial:  null,
     eng2Tsn:     kv("e2 hrs", "eng2 hrs"),
     eng2Csn:     kv("e2 cycles", "e2 csn"),
+    eng2Serial:  null,
     propTsn:     kv("prop hrs", "prop tsn"),
     propCsn:     kv("prop cycles"),
+    propSerial:  null,
     apuHrs:      kv("apu hrs", "apu hours", "hrs(apu)"),
     apuStarts:   kv("apu starts", "start(apu)", "apus"),
+    apuSerial:   null,
     hobbs:       kv("hobbs"),
     parseWarnings: [],
   }
@@ -176,10 +196,11 @@ function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
 function emptySnapshot(warnings: string[]): AircraftTimesSnapshot {
   return {
     airframeHrs: null, landings: null,
-    eng1Tsn: null, eng1Csn: null,
-    eng2Tsn: null, eng2Csn: null,
-    propTsn: null, propCsn: null,
-    apuHrs: null, apuStarts: null, hobbs: null,
+    eng1Tsn: null, eng1Csn: null, eng1Serial: null,
+    eng2Tsn: null, eng2Csn: null, eng2Serial: null,
+    propTsn: null, propCsn: null, propSerial: null,
+    apuHrs: null, apuStarts: null, apuSerial: null,
+    hobbs: null,
     parseWarnings: warnings,
   }
 }
@@ -204,12 +225,18 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
   const iNDHrs   = col(headers, "Next Due")
   const iRemain  = col(headers, "Remaining Time")
   const iRTSDays = col(headers, "RTS Days Remaining")
+  // Try to find an assembly serial number column (Traxxall may call it various things)
+  const iSerial  = ["Assembly S/N", "Component S/N", "S/N", "Serial No", "Serial Number", "Serial"]
+    .reduce((found, name) => found >= 0 ? found : col(headers, name), -1)
 
   let aircraftReg   = ""
   let aircraftModel = ""
 
   const times = lastSheet ? parseLastActuals(lastSheet) : null
   const currentHrsAirframe = times?.airframeHrs != null ? String(times.airframeHrs) : ""
+
+  // Collect first serial seen per MA code from Task Export rows
+  const maSerials: Record<string, string> = {}
 
   const tasks: ParsedTask[] = []
 
@@ -224,6 +251,12 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
     if (!aircraftModel) aircraftModel = String(row[iAcModel]  ?? "").trim()
 
     const ma      = String(row[iMA]     ?? "").trim()
+
+    // Capture assembly serial from Task Export if the column exists
+    if (iSerial >= 0 && ma && !maSerials[ma]) {
+      const s = String(row[iSerial] ?? "").trim()
+      if (s) maSerials[ma] = s
+    }
     const section = MA_MAP[ma] ?? "Other"
     const ata     = String(row[iATA]    ?? "").trim()
     const taskNo  = String(row[iTaskNo] ?? "").trim()
@@ -244,7 +277,7 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
     const taskNumber = [ata ? `ATA ${ata}` : null, taskNo || null].filter(Boolean).join(" — ")
 
     tasks.push({
-      importId: `import-${i}`, section, taskNumber,
+      importId: `import-${i}`, section, taskNumber, refCode: taskNo,
       description: desc, nextDueDate: ndd, nextDueHours: ndh,
       remainingDisplay: remain, urgencyDays, selected: true,
     })
@@ -256,7 +289,16 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
     return a.urgencyDays - b.urgencyDays
   })
 
-  return { aircraftReg, aircraftModel, currentHrsAirframe, times, tasks }
+  // Merge Task Export serials into the times snapshot (Last Actuals serials take precedence)
+  const patchedTimes = times ? {
+    ...times,
+    eng1Serial: times.eng1Serial ?? maSerials["ENG1"] ?? null,
+    eng2Serial: times.eng2Serial ?? maSerials["ENG2"] ?? null,
+    propSerial: times.propSerial ?? maSerials["PROP1"] ?? maSerials["PROP"] ?? null,
+    apuSerial:  times.apuSerial  ?? maSerials["APU"]  ?? null,
+  } : null
+
+  return { aircraftReg, aircraftModel, currentHrsAirframe, times: patchedTimes, tasks }
 }
 
 // ─── Drag-and-drop helpers ────────────────────────────────────────────────────
@@ -814,6 +856,7 @@ export default function WorkOrderCreate() {
       importId:         `manual-${Date.now()}`,
       section,
       taskNumber:       newTaskNum.trim(),
+      refCode:          newTaskNum.trim(),
       description:      newTaskDesc.trim(),
       nextDueDate:      null,
       nextDueHours:     null,
@@ -894,6 +937,7 @@ export default function WorkOrderCreate() {
           category:            t.description,
           logbookSection:      t.section,
           taskNumber:          t.taskNumber || null,
+          refCode:             t.refCode || null,
           discrepancy:         `Perform ${t.description}.`,
           correctiveAction,
           estimatedHours,
@@ -1310,6 +1354,13 @@ export default function WorkOrderCreate() {
               const allSelected   = sectionTasks.every(t => t.selected)
               const someSelected  = sectionTasks.some(t => t.selected)
               const isCollapsed   = collapsedSections.has(section)
+              const snap          = parsed.times as any
+              const sectionSerial: string | null =
+                section === "Airframe"  ? null :
+                section === "Engine 1"  ? (snap?.eng1Serial ?? null) :
+                section === "Engine 2"  ? (snap?.eng2Serial ?? null) :
+                section === "Propeller" ? (snap?.propSerial ?? null) :
+                section === "APU"       ? (snap?.apuSerial  ?? null) : null
 
               return (
                 <div key={section}>
@@ -1346,6 +1397,12 @@ export default function WorkOrderCreate() {
                     <span className="text-sm font-bold uppercase tracking-widest" style={{ color }}>
                       {section}
                     </span>
+
+                    {sectionSerial && (
+                      <span className="text-white/35 text-[10px] font-mono truncate" title={`S/N ${sectionSerial}`}>
+                        S/N {sectionSerial}
+                      </span>
+                    )}
 
                     <span className="text-white/30 text-xs font-mono">
                       {sectionTasks.filter(t => t.selected).length}/{sectionTasks.length}

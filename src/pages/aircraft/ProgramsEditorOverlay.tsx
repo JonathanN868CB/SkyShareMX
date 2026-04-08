@@ -78,7 +78,7 @@ function ProgramEditCard({
             <input
               value={field.value === "None" || field.value === "—" ? "" : field.value}
               onChange={e => onChange({ value: e.target.value || "" })}
-              placeholder="e.g. JSSI Tip-to-Tail"
+              placeholder=""
               style={inputMd}
               onFocus={focusGold}
               onBlur={blurGold}
@@ -104,7 +104,7 @@ function ProgramEditCard({
                 <input
                   value={raw === "—" ? "" : raw}
                   onChange={e => onChange({ [item.key]: e.target.value || "—" })}
-                  placeholder={item.label}
+                  placeholder=""
                   style={inputSm}
                   onFocus={focusGold}
                   onBlur={blurGold}
@@ -112,6 +112,21 @@ function ProgramEditCard({
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Portal URL — only when enrolled */}
+      {!isNone && (
+        <div>
+          <div style={lbl}>Portal / Login URL</div>
+          <input
+            value={field.link ?? ""}
+            onChange={e => onChange({ link: e.target.value || undefined })}
+            placeholder="https://..."
+            style={{ ...inputSm, fontFamily: "'Courier Prime','Courier New',monospace" }}
+            onFocus={focusGold}
+            onBlur={blurGold}
+          />
         </div>
       )}
 

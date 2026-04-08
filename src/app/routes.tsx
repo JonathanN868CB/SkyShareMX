@@ -31,6 +31,13 @@ const CannedActionsManager = lazy(() => import("@/features/beet-box/modules/mana
 const BeetBoxParts       = lazy(() => import("@/pages/Parts"))
 const BeetBoxPartsNew    = lazy(() => import("@/pages/PartsNew"))
 const BeetBoxPartsDetail = lazy(() => import("@/pages/PartsDetail"))
+const CatalogBrowser     = lazy(() => import("@/features/beet-box/modules/catalog/CatalogBrowser"))
+const CatalogDetail      = lazy(() => import("@/features/beet-box/modules/catalog/CatalogDetail"))
+const PartsOverview      = lazy(() => import("@/features/beet-box/modules/parts-overview/PartsOverview"))
+const ReportsDashboard   = lazy(() => import("@/features/beet-box/modules/reports/ReportsDashboard"))
+const ComplianceDash     = lazy(() => import("@/features/beet-box/modules/compliance/ComplianceDashboard"))
+const SuppliersList      = lazy(() => import("@/features/beet-box/modules/suppliers/SuppliersList"))
+const SupplierDetail     = lazy(() => import("@/features/beet-box/modules/suppliers/SupplierDetail"))
 
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
@@ -51,9 +58,6 @@ const VendorDetailPage = lazy(() => import("@/pages/VendorDetailPage"))
 const Compliance   = lazy(() => import("@/pages/Compliance"))
 const SafetyHouse  = lazy(() => import("@/pages/SafetyHouse"))
 const DiscrepancyIntelligence = lazy(() => import("@/pages/DiscrepancyIntelligence"))
-const Parts = lazy(() => import("@/pages/Parts"))
-const PartsNew = lazy(() => import("@/pages/PartsNew"))
-const PartsDetail = lazy(() => import("@/pages/PartsDetail"))
 const ExternalRequests = lazy(() => import("@/pages/external-requests/ExternalRequestsPage"))
 const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/ExternalRequestDetailPage"))
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
@@ -139,9 +143,6 @@ const routes: RouteObject[] = [
       { path: "compliance",   element: wrap(<Compliance />) },
       { path: "safety",       element: wrap(<SafetyHouse />) },
       { path: "discrepancy-intelligence", element: wrap(<DiscrepancyIntelligence />) },
-      { path: "parts",        element: wrap(<Parts />) },
-      { path: "parts/new",    element: wrap(<PartsNew />) },
-      { path: "parts/:id",    element: wrap(<PartsDetail />) },
       { path: "external-requests",     element: wrap(<ExternalRequests />) },
       { path: "external-requests/:id", element: wrap(<ExternalRequestDetail />) },
       { path: "training",    element: wrap(<MyTraining />) },
@@ -210,6 +211,13 @@ const routes: RouteObject[] = [
       { path: "parts",                            element: wrap(<BeetBoxParts />) },
       { path: "parts/new",                        element: wrap(<BeetBoxPartsNew />) },
       { path: "parts/:id",                        element: wrap(<BeetBoxPartsDetail />) },
+      { path: "catalog",                          element: wrap(<CatalogBrowser />) },
+      { path: "catalog/:id",                      element: wrap(<CatalogDetail />) },
+      { path: "parts-overview",                   element: wrap(<PartsOverview />) },
+      { path: "reports",                          element: wrap(<ReportsDashboard />) },
+      { path: "compliance",                       element: wrap(<ComplianceDash />) },
+      { path: "suppliers",                        element: wrap(<SuppliersList />) },
+      { path: "suppliers/:id",                    element: wrap(<SupplierDetail />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────

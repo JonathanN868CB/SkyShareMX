@@ -158,6 +158,10 @@ export interface WOItemPart {
   description: string
   qty: number
   unitPrice: number
+  catalogId: string | null
+  inventoryPartId: string | null
+  serialNumber: string | null
+  condition: string | null
 }
 
 export interface WOItemLabor {
@@ -228,6 +232,7 @@ export interface InventoryPart {
   vendorName: string | null
   isConsumable: boolean
   notes: string | null
+  catalogId: string | null
   transactions: PartTransaction[]
   createdAt: string
   updatedAt: string
@@ -248,11 +253,87 @@ export interface PartTransaction {
   createdAt: string
 }
 
+// ─── Parts Catalog ───────────────────────────────────────────────────────────
+
+export type PartClassification = "oem" | "pma" | "tso" | "standard_hardware" | "consumable" | "raw_material"
+export type CatalogRelationshipType = "supersedes" | "interchanges_with"
+
+export interface CatalogEntry {
+  id: string
+  partNumber: string
+  description: string | null
+  ataChapter: string | null
+  partType: PartClassification | null
+  unitOfMeasure: string
+  manufacturer: string | null
+  isSerialized: boolean
+  isShelfLife: boolean
+  shelfLifeMonths: number | null
+  isRotable: boolean
+  aircraftApplicability: string[] | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  // Optionally loaded relations
+  vendors?: CatalogVendorLink[]
+  relationships?: CatalogRelationshipRow[]
+  inventoryOnHand?: number
+}
+
+export interface CatalogVendorLink {
+  id: string
+  catalogId: string
+  vendorId: string
+  vendorName: string
+  leadTimeDays: number | null
+  lastUnitCost: number | null
+  isPreferred: boolean
+  notes: string | null
+  createdAt: string
+}
+
+export interface CatalogRelationshipRow {
+  id: string
+  relatedPartId: string
+  relatedPartNumber: string
+  relatedDescription: string | null
+  relationshipType: CatalogRelationshipType
+  direction: "outgoing" | "incoming"
+  notes: string | null
+}
+
+// ─── Parts Suppliers ─────────────────────────────────────────────────────────
+
+export type SupplierType = "oem" | "distributor" | "repair_station" | "broker"
+export type SupplierApprovalStatus = "pending" | "approved" | "conditional" | "suspended" | "revoked"
+
+export interface PartsSupplier {
+  id: string
+  name: string
+  vendorType: SupplierType
+  approvalStatus: SupplierApprovalStatus
+  approvalDate: string | null
+  certificateType: string | null
+  certificateNumber: string | null
+  traceabilityVerified: boolean
+  lastAuditDate: string | null
+  contactName: string | null
+  phone: string | null
+  email: string | null
+  accountNumber: string | null
+  website: string | null
+  notes: string | null
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 export interface PurchaseOrder {
   id: string
   poNumber: string
+  vendorId: string | null
   vendorName: string
   vendorContact: string | null
   status: POStatus
@@ -271,12 +352,41 @@ export interface POLine {
   lineNumber: number
   partNumber: string
   description: string
+  catalogId: string | null
+  partsRequestLineId: string | null
   qtyOrdered: number
   qtyReceived: number
   unitCost: number
   woRef: string | null
   createdAt: string
   updatedAt: string
+}
+
+// ─── Receiving / Traceability ────────────────────────────────────────────────
+
+export type CertificateType = "faa_8130-3" | "easa_form1" | "manufacturer_cert" | "none"
+export type InspectionStatus = "accepted" | "quarantine" | "rejected"
+
+export interface ReceivingRecord {
+  id: string
+  poLineId: string
+  partNumber: string
+  catalogId: string | null
+  qtyReceived: number
+  condition: PartCondition
+  serialNumber: string | null
+  batchLot: string | null
+  tagNumber: string | null
+  tagDate: string | null
+  certifyingAgency: string | null
+  certificateType: CertificateType
+  inspectionStatus: InspectionStatus
+  locationBin: string | null
+  receivedBy: string | null
+  receivedByName: string
+  receivedAt: string
+  notes: string | null
+  createdAt: string
 }
 
 // ─── Tool Calibration ─────────────────────────────────────────────────────────

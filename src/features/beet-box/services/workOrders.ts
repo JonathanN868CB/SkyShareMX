@@ -80,6 +80,7 @@ export async function getWorkOrders(filters?: {
     .from("bb_work_orders")
     .select("*")
     .order("opened_at", { ascending: false })
+    .range(0, 9999)
 
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
@@ -382,12 +383,55 @@ export async function addItemPart(
       description: part.description,
       qty: part.qty,
       unit_price: part.unitPrice,
+      catalog_id: part.catalogId ?? null,
+      inventory_part_id: part.inventoryPartId ?? null,
+      serial_number: part.serialNumber ?? null,
+      condition: part.condition ?? null,
     })
     .select()
     .single()
 
   if (error) throw error
-  return { id: data.id, itemId: data.item_id, partNumber: data.part_number, description: data.description, qty: data.qty, unitPrice: data.unit_price }
+  return {
+    id: data.id, itemId: data.item_id, partNumber: data.part_number,
+    description: data.description, qty: data.qty, unitPrice: data.unit_price,
+    catalogId: data.catalog_id ?? null, inventoryPartId: data.inventory_part_id ?? null,
+    serialNumber: data.serial_number ?? null, condition: data.condition ?? null,
+  }
+}
+
+export async function issuePartFromInventory(
+  itemId: string,
+  inv: { id: string; partNumber: string; description: string; unitCost: number; catalogId: string | null; condition: string },
+  qty: number,
+  woNumber: string,
+  performedBy: { id: string; name: string }
+): Promise<WOItemPart> {
+  // 1. Add part to WO item
+  const saved = await addItemPart(itemId, {
+    partNumber: inv.partNumber,
+    description: inv.description,
+    qty,
+    unitPrice: inv.unitCost,
+    catalogId: inv.catalogId,
+    inventoryPartId: inv.id,
+    serialNumber: null,
+    condition: inv.condition,
+  })
+
+  // 2. Create "issue" transaction (negative qty = removing from stock)
+  const { recordTransaction } = await import("./inventory")
+  await recordTransaction(inv.id, {
+    type: "issue",
+    qty: -qty,
+    unitCost: inv.unitCost,
+    performedBy: performedBy.id,
+    performedName: performedBy.name,
+    woRef: woNumber,
+    notes: `Issued to WO ${woNumber}`,
+  })
+
+  return saved
 }
 
 export async function removeItemPart(partId: string): Promise<void> {
@@ -558,6 +602,10 @@ function mapItemRow(row: any): WOItem {
       description: p.description,
       qty: p.qty,
       unitPrice: p.unit_price,
+      catalogId: p.catalog_id ?? null,
+      inventoryPartId: p.inventory_part_id ?? null,
+      serialNumber: p.serial_number ?? null,
+      condition: p.condition ?? null,
     })),
     labor: (row.bb_work_order_item_labor ?? []).map(mapLaborRow),
     createdAt: row.created_at,
@@ -607,4 +655,65 @@ function mapAuditEntryRow(row: any): AuditEntry {
     itemNumber:  row.item_number,
     createdAt:   row.created_at,
   }
+}
+
+// ─── SOP ↔ WO Item Linking ──────────────────────────────────────────────────
+
+export interface WOItemSOP {
+  id: string
+  itemId: string
+  sopId: string
+  sopNumber: string
+  sopTitle: string
+  linkedBy: string | null
+  linkedAt: string
+  notes: string | null
+}
+
+export async function getItemSOPs(itemId: string): Promise<WOItemSOP[]> {
+  const { data, error } = await supabase
+    .from("bb_wo_item_sops")
+    .select("id, item_id, sop_id, linked_by, linked_at, notes, bb_sops!inner(sop_number, title)")
+    .eq("item_id", itemId)
+    .order("linked_at", { ascending: false })
+
+  if (error) throw error
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    itemId: row.item_id,
+    sopId: row.sop_id,
+    sopNumber: row.bb_sops?.sop_number ?? "",
+    sopTitle: row.bb_sops?.title ?? "",
+    linkedBy: row.linked_by,
+    linkedAt: row.linked_at,
+    notes: row.notes,
+  }))
+}
+
+export async function linkSOPToItem(
+  itemId: string,
+  sopId: string,
+  linkedBy: string,
+  notes?: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("bb_wo_item_sops")
+    .insert({
+      item_id: itemId,
+      sop_id: sopId,
+      linked_by: linkedBy,
+      notes: notes ?? null,
+    })
+
+  if (error) throw error
+}
+
+export async function unlinkSOPFromItem(linkId: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_wo_item_sops")
+    .delete()
+    .eq("id", linkId)
+
+  if (error) throw error
 }

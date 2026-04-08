@@ -244,7 +244,7 @@ export function PartsDetailView({ requestId }: Props) {
       : `${request.aircraft_tail} — ${request.job_description}`
     const aogPrefix = request.aog ? "🔴 AOG: " : ""
     const actorName = profile.display_name || profile.full_name || "Parts team"
-    const meta = { request_id: request.id, path: `/app/beet-box/parts/${request.id}` }
+    const meta = { request_id: request.id, link: `/app/beet-box/parts/${request.id}` }
 
     if (newStatus === "ordered") {
       // Notify requester that their part was ordered
@@ -337,7 +337,7 @@ export function PartsDetailView({ requestId }: Props) {
       const jobLabel = request.order_type === "stock"
         ? `Stock — ${request.job_description}`
         : `${request.aircraft_tail} — ${request.job_description}`
-      const meta = { request_id: request.id, path: `/app/beet-box/parts/${request.id}` }
+      const meta = { request_id: request.id, link: `/app/beet-box/parts/${request.id}` }
 
       await notifyProfileIds(
         [request.requested_by],
@@ -525,6 +525,40 @@ export function PartsDetailView({ requestId }: Props) {
         {/* Status + controls */}
         <div className="flex items-center gap-3">
           <PartsStatusBadge status={request.status} size="md" />
+          {request.status !== "cancelled" && request.status !== "closed" && request.status !== "denied" && (
+            <button
+              onClick={() => navigate("/app/beet-box/purchase-orders/new", {
+                state: {
+                  fromRequest: {
+                    requestId: request.id,
+                    requestedBy: request.requested_by,
+                    currentStatus: request.status,
+                    woRef: request.work_order ?? "",
+                    jobDescription: request.job_description,
+                    dateNeeded: request.date_needed,
+                    lines: lines.map(l => ({
+                      requestLineId: l.id,
+                      partNumber: l.part_number,
+                      description: l.description ?? "",
+                      qty: l.quantity,
+                      catalogId: null,
+                    }))
+                  }
+                }
+              })}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+              style={{
+                background: "rgba(212,160,23,0.12)",
+                border: "1px solid rgba(212,160,23,0.3)",
+                color: "rgba(212,160,23,0.9)",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = "rgba(212,160,23,0.2)" }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(212,160,23,0.12)" }}
+            >
+              <Package className="w-3.5 h-3.5" />
+              Create PO
+            </button>
+          )}
           {canEdit && request.status === "cancelled" && (
             <button
               onClick={() => changeStatus("requested")}

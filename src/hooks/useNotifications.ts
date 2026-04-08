@@ -46,6 +46,17 @@ export function useNotifications() {
       .eq("read", false)
   }, [profile?.id])
 
+  const deleteOne = useCallback(async (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id))
+    await supabase.from("notifications").delete().eq("id", id)
+  }, [])
+
+  const clearAll = useCallback(async () => {
+    if (!profile?.id) return
+    setNotifications([])
+    await supabase.from("notifications").delete().eq("recipient_profile_id", profile.id)
+  }, [profile?.id])
+
   useEffect(() => {
     if (!profile?.id) return
     fetchNotifications()
@@ -70,5 +81,5 @@ export function useNotifications() {
     return () => { supabase.removeChannel(channel) }
   }, [profile?.id, fetchNotifications])
 
-  return { notifications, unreadCount, loading, markRead, markAllRead }
+  return { notifications, unreadCount, loading, markRead, markAllRead, deleteOne, clearAll }
 }

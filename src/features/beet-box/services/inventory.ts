@@ -1,6 +1,24 @@
 import { supabase } from "@/lib/supabase"
 import type { InventoryPart, PartTransaction, TransactionType } from "../types"
 
+// Lightweight search for the inventory picker inside work orders.
+// Returns up to 50 results — uses live Supabase query instead of in-memory filter.
+export async function searchPartsLimited(search?: string): Promise<InventoryPart[]> {
+  let query = supabase
+    .from("bb_inventory_parts")
+    .select("*")
+    .order("part_number")
+    .limit(50)
+
+  if (search && search.length >= 2) {
+    query = query.or(`part_number.ilike.%${search}%,description.ilike.%${search}%`)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map((row) => mapPartRow(row, []))
+}
+
 export async function getParts(filters?: {
   lowStock?: boolean
   search?: string
@@ -9,6 +27,7 @@ export async function getParts(filters?: {
     .from("bb_inventory_parts")
     .select("*")
     .order("part_number")
+    .range(0, 9999)
 
   if (filters?.search) {
     query = query.or(`part_number.ilike.%${filters.search}%,description.ilike.%${filters.search}%`)
@@ -63,6 +82,7 @@ export async function createPart(
       vendor_name: payload.vendorName ?? null,
       is_consumable: payload.isConsumable,
       notes: payload.notes ?? null,
+      catalog_id: payload.catalogId ?? null,
     })
     .select()
     .single()
@@ -90,6 +110,7 @@ export async function updatePart(
       ...(payload.vendorName !== undefined && { vendor_name: payload.vendorName }),
       ...(payload.isConsumable !== undefined && { is_consumable: payload.isConsumable }),
       ...(payload.notes !== undefined && { notes: payload.notes }),
+      ...(payload.catalogId !== undefined && { catalog_id: payload.catalogId }),
     })
     .eq("id", id)
 
@@ -183,6 +204,7 @@ function mapPartRow(row: any, txns: any[]): InventoryPart {
     vendorName: row.vendor_name,
     isConsumable: row.is_consumable,
     notes: row.notes,
+    catalogId: row.catalog_id ?? null,
     transactions: txns.map((t) => ({
       id: t.id,
       partId: t.part_id,
