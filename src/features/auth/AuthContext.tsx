@@ -15,6 +15,7 @@ interface AuthContextValue {
   profile: Profile | null
   permissions: AppSection[]
   loading: boolean
+  isFirstLogin: boolean
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
@@ -27,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [permissions, setPermissions] = useState<AppSection[]>([])
   const [loading, setLoading] = useState(true)
+  const [isFirstLogin, setIsFirstLogin] = useState(false)
 
   useEffect(() => {
     // On the OAuth callback page, getSession() may return null before the PKCE
@@ -70,6 +72,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(profileData ?? null)
 
     if (profileData) {
+      const firstLogin = !profileData.last_seen_at
+      setIsFirstLogin(firstLogin)
       supabase
         .from("profiles")
         .update({ last_seen_at: new Date().toISOString() })
@@ -110,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ session, user: session?.user ?? null, profile, permissions, loading, signInWithGoogle, signOut, refreshProfile }}
+      value={{ session, user: session?.user ?? null, profile, permissions, loading, isFirstLogin, signInWithGoogle, signOut, refreshProfile }}
     >
       {children}
     </AuthContext.Provider>

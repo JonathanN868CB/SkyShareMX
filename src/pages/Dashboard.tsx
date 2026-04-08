@@ -192,8 +192,8 @@ function CoreValueModal({
 /* ─── Component ─────────────────────────────────────────────────── */
 
 export default function Dashboard() {
-  const { profile } = useAuth()
-  const firstName = profile?.first_name ?? profile?.full_name?.split(" ")[0] ?? "there"
+  const { profile, isFirstLogin } = useAuth()
+  const firstName = profile?.display_name?.split(" ")[0] ?? profile?.full_name?.split(" ")[0] ?? "there"
   const [openValue, setOpenValue] = useState<(typeof coreValues)[number] | null>(null)
 
   return (
@@ -214,7 +214,7 @@ export default function Dashboard() {
               className="text-[2.6rem] leading-none text-foreground"
               style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
             >
-              Welcome back, {firstName.toUpperCase()}
+              {isFirstLogin ? "Welcome," : "Welcome back,"} {firstName.toUpperCase()}
             </h1>
             <div
               className="mt-2 mb-2"
