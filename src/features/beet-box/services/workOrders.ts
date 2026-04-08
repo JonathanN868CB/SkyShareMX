@@ -655,3 +655,64 @@ function mapAuditEntryRow(row: any): AuditEntry {
     createdAt:   row.created_at,
   }
 }
+
+// ─── SOP ↔ WO Item Linking ──────────────────────────────────────────────────
+
+export interface WOItemSOP {
+  id: string
+  itemId: string
+  sopId: string
+  sopNumber: string
+  sopTitle: string
+  linkedBy: string | null
+  linkedAt: string
+  notes: string | null
+}
+
+export async function getItemSOPs(itemId: string): Promise<WOItemSOP[]> {
+  const { data, error } = await supabase
+    .from("bb_wo_item_sops")
+    .select("id, item_id, sop_id, linked_by, linked_at, notes, bb_sops!inner(sop_number, title)")
+    .eq("item_id", itemId)
+    .order("linked_at", { ascending: false })
+
+  if (error) throw error
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    itemId: row.item_id,
+    sopId: row.sop_id,
+    sopNumber: row.bb_sops?.sop_number ?? "",
+    sopTitle: row.bb_sops?.title ?? "",
+    linkedBy: row.linked_by,
+    linkedAt: row.linked_at,
+    notes: row.notes,
+  }))
+}
+
+export async function linkSOPToItem(
+  itemId: string,
+  sopId: string,
+  linkedBy: string,
+  notes?: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("bb_wo_item_sops")
+    .insert({
+      item_id: itemId,
+      sop_id: sopId,
+      linked_by: linkedBy,
+      notes: notes ?? null,
+    })
+
+  if (error) throw error
+}
+
+export async function unlinkSOPFromItem(linkId: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_wo_item_sops")
+    .delete()
+    .eq("id", linkId)
+
+  if (error) throw error
+}
