@@ -199,6 +199,15 @@ export function useUpdateTemplateFields() {
         .eq("id", id)
       if (error) throw error
 
+      // Propagate the updated field_schema to every token enrolled with this
+      // template so the public form (QR, link, dispatch) immediately reflects
+      // the new checklist without needing to re-enroll each aircraft.
+      const { error: propError } = await db
+        .from("fourteen_day_check_tokens")
+        .update({ field_schema })
+        .eq("template_id", id)
+      if (propError) throw propError
+
       await db.from("inspection_card_template_audit").insert({
         template_id: id,
         action,
@@ -252,9 +261,23 @@ export function useAssignTemplate() {
       actorId: string
       actorName: string
     }) => {
+      // When assigning a new template, fetch its field_schema and write both
+      // the pointer and the snapshot together so the public form immediately
+      // shows the correct checklist.
+      const tokenUpdate: Record<string, unknown> = { template_id: templateId }
+      if (templateId) {
+        const { data: tpl, error: tplErr } = await db
+          .from("inspection_card_templates")
+          .select("field_schema")
+          .eq("id", templateId)
+          .single()
+        if (tplErr || !tpl) throw new Error("Failed to load template fields")
+        tokenUpdate.field_schema = tpl.field_schema
+      }
+
       const { error } = await db
         .from("fourteen_day_check_tokens")
-        .update({ template_id: templateId })
+        .update(tokenUpdate)
         .eq("id", tokenId)
       if (error) throw error
 
