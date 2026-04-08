@@ -32,6 +32,7 @@ import type {
 import { TimesEditModal } from "./TimesEditModal"
 import { supabase } from "@/lib/supabase"
 import { WOStatusBadge } from "../../shared/StatusBadge"
+import { useAuth } from "@/features/auth"
 
 // ─── Status pipeline ──────────────────────────────────────────────────────────
 const NEXT_STATUS: Partial<Record<WOStatus, WOStatus>> = {
@@ -42,7 +43,7 @@ const NEXT_STATUS_LABEL: Partial<Record<WOStatus, string>> = {
   waiting_on_parts: "Parts Received — Resume", in_review: "Approve → Billing", billing: "Complete Work Order",
 }
 const PREV_STATUS: Partial<Record<WOStatus, WOStatus>> = {
-  open: "draft", in_review: "open", billing: "in_review",
+  open: "draft", in_review: "open", billing: "in_review", completed: "billing",
 }
 const STATUS_GLOW_COLOR: Record<WOStatus, string> = {
   draft:            "rgba(161,161,170,0.55)",
@@ -1468,6 +1469,8 @@ export default function WorkOrderDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { profile } = useAuth()
+  const isSuperAdmin = profile?.role === "Super Admin"
 
   // Handle Traxxall import: build a synthetic WO from navigate state
   const importState = location.state as {
@@ -2184,6 +2187,7 @@ export default function WorkOrderDetail() {
 
   async function regressStatus() {
     if (!wo || isTransitioning) return
+    if (wo.status === "completed" && !isSuperAdmin) return
     const prev = PREV_STATUS[wo.status]
     if (!prev) return
     triggerSlide("left")
@@ -2304,7 +2308,7 @@ export default function WorkOrderDetail() {
                 void:             { text: "#fca5a5", bg: "rgba(252,165,165,0.13)", border: "rgba(252,165,165,0.55)", glow: "rgba(252,165,165,0.2)"  },
               }
               const c       = SC[wo.status]
-              const hasPrev = !!PREV_STATUS[wo.status] && !isLocked
+              const hasPrev = !!PREV_STATUS[wo.status] && (!isLocked || isSuperAdmin)
               const hasNext = !!NEXT_STATUS[wo.status]
               const cp      = hasPrev ? SC[PREV_STATUS[wo.status]!] : null
               const cn2     = hasNext ? SC[NEXT_STATUS[wo.status]!] : null

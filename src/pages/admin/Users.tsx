@@ -1112,7 +1112,7 @@ export default function UsersPage() {
                       {/* User */}
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
+                          <Avatar className="h-[34px] w-[34px]">
                             <AvatarImage src={user.avatar_url ?? undefined} className="object-cover" />
                             <AvatarFallback className="text-xs font-bold" style={{ background: user.avatar_color ?? "var(--skyshare-gold)", color: "hsl(0 0% 8%)", fontFamily: "var(--font-heading)" }}>
                               {getInitials(user.display_name ?? user.full_name, user.email)}
@@ -1339,7 +1339,7 @@ export default function UsersPage() {
                       {/* User */}
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
+                          <Avatar className="h-[34px] w-[34px]">
                             <AvatarFallback className="text-xs font-bold" style={{ background: "rgba(212,160,23,0.15)", color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
                               {getInitials(user.full_name, user.email)}
                             </AvatarFallback>

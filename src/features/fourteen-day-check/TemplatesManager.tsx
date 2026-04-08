@@ -810,7 +810,11 @@ function TemplateDetail({
               opacity: savingFields ? 0.6 : 1,
             }}
           >
-            {savingFields ? "Saving…" : "Save Fields"}
+            {savingFields
+              ? "Saving…"
+              : assignedTokenIds.size > 0
+                ? `Save & Push to ${assignedTokenIds.size} Aircraft`
+                : "Save Fields"}
           </button>
           <button
             onClick={() => { setFields(template.field_schema); setFieldsDirty(false) }}
