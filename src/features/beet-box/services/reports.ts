@@ -22,6 +22,7 @@ export async function getInventoryAnalytics(): Promise<InventoryAnalytics> {
   const { data: all, error } = await supabase
     .from("bb_inventory_parts")
     .select("id, part_number, description, qty_on_hand, unit_cost, reorder_point, location_bin, condition")
+    .range(0, 9999)
 
   if (error) throw error
   const parts = all ?? []
@@ -123,10 +124,10 @@ export interface WOMetrics {
 
 export async function getWOMetrics(): Promise<WOMetrics> {
   const [woRes, itemRes, laborRes, partsRes] = await Promise.all([
-    supabase.from("bb_work_orders").select("id, wo_number, status, description, opened_at"),
-    supabase.from("bb_work_order_items").select("id, work_order_id"),
-    supabase.from("bb_work_order_item_labor").select("hours"),
-    supabase.from("bb_work_order_item_parts").select("qty"),
+    supabase.from("bb_work_orders").select("id, wo_number, status, description, opened_at").range(0, 9999),
+    supabase.from("bb_work_order_items").select("id, work_order_id").range(0, 9999),
+    supabase.from("bb_work_order_item_labor").select("hours").range(0, 9999),
+    supabase.from("bb_work_order_item_parts").select("qty").range(0, 9999),
   ])
 
   const wos = woRes.data ?? []
@@ -178,6 +179,7 @@ export async function getPurchasingSummary(): Promise<PurchasingSummary> {
   const { data: pos, error } = await supabase
     .from("bb_purchase_orders")
     .select("id, vendor_name, status, bb_purchase_order_lines(qty_ordered, qty_received, unit_cost)")
+    .range(0, 9999)
 
   if (error) throw error
   const orders = pos ?? []
@@ -228,6 +230,7 @@ export async function getCatalogSummary(): Promise<CatalogSummary> {
   const { data, error } = await supabase
     .from("parts_catalog")
     .select("id, part_type, is_serialized, is_rotable, is_shelf_life")
+    .range(0, 9999)
 
   if (error) throw error
   const entries = data ?? []

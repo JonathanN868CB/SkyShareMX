@@ -80,6 +80,7 @@ export async function getWorkOrders(filters?: {
     .from("bb_work_orders")
     .select("*")
     .order("opened_at", { ascending: false })
+    .range(0, 9999)
 
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]

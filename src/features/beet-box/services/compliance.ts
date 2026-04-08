@@ -55,6 +55,7 @@ export async function getPersonnelCompliance(): Promise<PersonnelCompliance[]> {
   const { data: training } = await supabase
     .from("bb_training_records")
     .select("mechanic_id, status, expiry_date")
+    .range(0, 9999)
 
   const now = new Date()
   const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
@@ -106,6 +107,7 @@ export async function getToolCalibrationCompliance(): Promise<ToolCalibrationSta
     .from("bb_tools")
     .select("id, tool_number, description, status, next_calibration_due, last_calibrated_at, calibration_interval_days")
     .order("next_calibration_due", { ascending: true, nullsFirst: false })
+    .range(0, 9999)
 
   if (error) throw error
 

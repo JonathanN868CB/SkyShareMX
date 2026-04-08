@@ -19,7 +19,8 @@ export async function getPartsOverviewStats(): Promise<PartsOverviewStats> {
     // Total inventory value
     supabase
       .from("bb_inventory_parts")
-      .select("qty_on_hand, unit_cost"),
+      .select("qty_on_hand, unit_cost")
+      .range(0, 9999),
 
     // Below reorder point
     supabase
@@ -74,6 +75,7 @@ export async function getReorderAlerts(): Promise<ReorderAlert[]> {
     .gt("reorder_point", 0)
     .filter("qty_on_hand", "lte", "reorder_point")
     .order("qty_on_hand", { ascending: true })
+    .range(0, 9999)
 
   if (error) throw error
   if (!data || data.length === 0) return []
@@ -84,6 +86,7 @@ export async function getReorderAlerts(): Promise<ReorderAlert[]> {
     .from("bb_purchase_order_lines")
     .select("part_number, created_at")
     .in("part_number", partNumbers)
+    .range(0, 9999)
     .order("created_at", { ascending: false })
 
   // Build a map: partNumber → most recent PO date
@@ -155,6 +158,7 @@ export async function getTransactionSummary(
     .from("bb_part_transactions")
     .select("type")
     .gte("transaction_date", since.toISOString())
+    .range(0, 9999)
 
   if (error) throw error
 

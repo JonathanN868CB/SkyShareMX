@@ -9,6 +9,7 @@ export async function getParts(filters?: {
     .from("bb_inventory_parts")
     .select("*")
     .order("part_number")
+    .range(0, 9999)
 
   if (filters?.search) {
     query = query.or(`part_number.ilike.%${filters.search}%,description.ilike.%${filters.search}%`)
