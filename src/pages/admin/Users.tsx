@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import {
   Users, UserPlus, CheckCircle, XCircle, Settings,
   Shield, Clock, AlertTriangle, Mail, Trash2, Send, RefreshCw, LogOut, Link2,
-  ChevronUp, ChevronDown, ChevronsUpDown,
+  ChevronUp, ChevronDown, ChevronsUpDown, Search,
 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 import { supabase } from "@/lib/supabase"
@@ -826,8 +826,9 @@ export default function UsersPage() {
   const [permTarget, setPermTarget]   = useState<Profile | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Profile | null>(null)
   const [linkTarget, setLinkTarget]   = useState<Profile | null>(null)
-  const [inviteOpen, setInviteOpen]   = useState(false)
+  const [inviteOpen, setInviteOpen]     = useState(false)
   const [lastSeenSort, setLastSeenSort] = useState<"asc" | "desc" | null>(null)
+  const [pendingSearch, setPendingSearch] = useState("")
 
   const isAdmin = me?.role === "Super Admin" || me?.role === "Admin"
 
@@ -914,6 +915,18 @@ export default function UsersPage() {
   })
 
   const pendingInvites = profiles.filter(p => p.status === "Pending")
+  const filteredPending = pendingSearch.trim()
+    ? pendingInvites
+        .map(p => {
+          const q = pendingSearch.toLowerCase()
+          const nameScore  = (p.full_name ?? "").toLowerCase().includes(q) ? 2 : 0
+          const emailScore = p.email.toLowerCase().includes(q) ? 1 : 0
+          return { p, score: nameScore + emailScore }
+        })
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map(({ p }) => p)
+    : pendingInvites
 
   const sortedProfiles = lastSeenSort === null ? profiles : [...profiles].sort((a, b) => {
     const ta = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0
@@ -1241,10 +1254,26 @@ export default function UsersPage() {
         {/* Pending Invites Tab */}
         <TabsContent value="requests">
           <Card className="card-elevated border-0">
+            {/* Search */}
+            {!loadingProfiles && pendingInvites.length > 0 && (
+              <div className="px-4 pt-4 pb-2">
+                <div className="relative max-w-xs">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }} />
+                  <input
+                    value={pendingSearch}
+                    onChange={e => setPendingSearch(e.target.value)}
+                    placeholder="Search invites…"
+                    className="w-full h-8 pl-8 pr-3 rounded-md text-sm bg-white/5 border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/25 transition-colors"
+                  />
+                </div>
+              </div>
+            )}
             {loadingProfiles ? (
               <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
             ) : pendingInvites.length === 0 ? (
               <div className="py-16 text-center text-muted-foreground text-sm">No pending invites</div>
+            ) : filteredPending.length === 0 ? (
+              <div className="py-10 text-center text-muted-foreground text-sm">No matches for "{pendingSearch}"</div>
             ) : (
               <Table>
                 <TableHeader>
@@ -1257,7 +1286,7 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pendingInvites.map(user => (
+                  {filteredPending.map(user => (
                     <TableRow key={user.id} className="border-white/[0.05] hover:bg-white/[0.03]">
 
                       {/* User */}
