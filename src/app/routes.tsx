@@ -35,6 +35,7 @@ const CatalogBrowser     = lazy(() => import("@/features/beet-box/modules/catalo
 const CatalogDetail      = lazy(() => import("@/features/beet-box/modules/catalog/CatalogDetail"))
 const PartsOverview      = lazy(() => import("@/features/beet-box/modules/parts-overview/PartsOverview"))
 const ReportsDashboard   = lazy(() => import("@/features/beet-box/modules/reports/ReportsDashboard"))
+const ComplianceDash     = lazy(() => import("@/features/beet-box/modules/compliance/ComplianceDashboard"))
 
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
@@ -218,6 +219,7 @@ const routes: RouteObject[] = [
       { path: "catalog/:id",                      element: wrap(<CatalogDetail />) },
       { path: "parts-overview",                   element: wrap(<PartsOverview />) },
       { path: "reports",                          element: wrap(<ReportsDashboard />) },
+      { path: "compliance",                       element: wrap(<ComplianceDash />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────
