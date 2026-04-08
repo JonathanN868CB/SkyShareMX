@@ -510,7 +510,12 @@ function EntryDocument({ entryId, fromWO }: { entryId: string; fromWO: string | 
   const reg         = entry.aircraft?.registration ?? entry.guestRegistration ?? "—"
   const make        = entry.aircraft?.make ?? "—"
   const model       = entry.aircraft?.modelFull ?? "—"
-  const serial      = entry.aircraft?.serialNumber ?? entry.guestSerial ?? "—"
+  // For component sections (Engine, Prop, APU), guestSerial carries the component serial.
+  // For Airframe, use the aircraft's own serial number.
+  const isComponentSection = fields.logbookSection !== "Airframe" && fields.logbookSection !== "Other"
+  const serial = isComponentSection
+    ? (entry.guestSerial ?? entry.aircraft?.serialNumber ?? "—")
+    : (entry.aircraft?.serialNumber ?? entry.guestSerial ?? "—")
   const hasSigs     = entry.signatories.length > 0
   const displaySigs = hasSigs ? entry.signatories : null
 
@@ -682,18 +687,20 @@ function EntryDocument({ entryId, fromWO }: { entryId: string; fromWO: string | 
                 )}
               </div>
 
-              {/* A/C Total Time */}
+              {/* A/C / Engine / Prop Total Time */}
               <div style={{ display: "flex", gap: "6px", lineHeight: "1.8", alignItems: "center" }}>
-                <span style={{ fontWeight: 700, minWidth: "64px", color: "#555", flexShrink: 0 }}>A/C TT:</span>
+                <span style={{ fontWeight: 700, minWidth: "64px", color: "#555", flexShrink: 0 }}>
+                  {(fields.logbookSection === "Engine 1" || fields.logbookSection === "Engine 2") ? "ENG TT:" :
+                   fields.logbookSection === "Propeller" ? "PROP TT:" :
+                   fields.logbookSection === "APU" ? "APU HRS:" :
+                   "A/C TT:"}
+                </span>
                 <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                  {fields.totalAircraftTime != null && (
-                    <span style={{ color: "#aaa", textDecoration: "line-through", fontSize: "11px" }}>{fields.totalAircraftTime.toFixed(1)}</span>
-                  )}
                   {isLocked ? (
                     <span style={{ color: "#111" }}>{fields.totalAircraftTimeNew?.toFixed(1) ?? "—"}</span>
                   ) : (
                     <input
-                      type="number" step="0.1" placeholder="0.0"
+                      type="text" inputMode="decimal" placeholder="0.0"
                       value={fields.totalAircraftTimeNew ?? ""}
                       onChange={e => setFields(f => ({ ...f, totalAircraftTimeNew: e.target.value ? parseFloat(e.target.value) : null }))}
                       onBlur={e => saveField({ totalAircraftTimeNew: e.target.value ? parseFloat(e.target.value) : null })}
@@ -703,18 +710,20 @@ function EntryDocument({ entryId, fromWO }: { entryId: string; fromWO: string | 
                 </div>
               </div>
 
-              {/* Landings */}
+              {/* Landings / Cycles / Starts */}
               <div style={{ display: "flex", gap: "6px", lineHeight: "1.8", alignItems: "center" }}>
-                <span style={{ fontWeight: 700, minWidth: "64px", color: "#555", flexShrink: 0 }}>Landings:</span>
+                <span style={{ fontWeight: 700, minWidth: "64px", color: "#555", flexShrink: 0 }}>
+                  {(fields.logbookSection === "Engine 1" || fields.logbookSection === "Engine 2") ? "Cycles:" :
+                   fields.logbookSection === "Propeller" ? "Cycles:" :
+                   fields.logbookSection === "APU" ? "Starts:" :
+                   "Landings:"}
+                </span>
                 <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                  {fields.landings != null && (
-                    <span style={{ color: "#aaa", textDecoration: "line-through", fontSize: "11px" }}>{fields.landings}</span>
-                  )}
                   {isLocked ? (
                     <span style={{ color: "#111" }}>{fields.landingsNew ?? "—"}</span>
                   ) : (
                     <input
-                      type="number" step="1" placeholder="0"
+                      type="text" inputMode="numeric" placeholder="0"
                       value={fields.landingsNew ?? ""}
                       onChange={e => setFields(f => ({ ...f, landingsNew: e.target.value ? parseInt(e.target.value) : null }))}
                       onBlur={e => saveField({ landingsNew: e.target.value ? parseInt(e.target.value) : null })}
@@ -728,14 +737,11 @@ function EntryDocument({ entryId, fromWO }: { entryId: string; fromWO: string | 
               <div style={{ display: "flex", gap: "6px", lineHeight: "1.8", alignItems: "center" }}>
                 <span style={{ fontWeight: 700, minWidth: "64px", color: "#555", flexShrink: 0 }}>Hobbs:</span>
                 <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                  {fields.hobbs != null && (
-                    <span style={{ color: "#aaa", textDecoration: "line-through", fontSize: "11px" }}>{fields.hobbs.toFixed(1)}</span>
-                  )}
                   {isLocked ? (
                     <span style={{ color: "#111" }}>{fields.hobbsNew?.toFixed(1) ?? "—"}</span>
                   ) : (
                     <input
-                      type="number" step="0.1" placeholder="0.0"
+                      type="text" inputMode="decimal" placeholder="0.0"
                       value={fields.hobbsNew ?? ""}
                       onChange={e => setFields(f => ({ ...f, hobbsNew: e.target.value ? parseFloat(e.target.value) : null }))}
                       onBlur={e => saveField({ hobbsNew: e.target.value ? parseFloat(e.target.value) : null })}

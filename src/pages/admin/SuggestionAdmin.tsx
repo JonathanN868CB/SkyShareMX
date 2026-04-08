@@ -291,6 +291,24 @@ function SuggestionRow({
       await supabase.from("site_suggestions").update({ status: newStatus }).eq("id", suggestion.id)
     }
 
+    // Notify the submitter
+    const notifTitle =
+      action === "complete"   ? "Your submission has been resolved" :
+      action === "needs_info" ? "More info needed on your submission" :
+                                "New reply on your submission"
+    const preview = actionText.trim()
+    await supabase.from("notifications").insert({
+      recipient_profile_id: suggestion.user_id,
+      type: "suggestion_replied",
+      title: notifTitle,
+      message: `Re: "${suggestion.title}"${preview ? ` — ${preview.slice(0, 80)}${preview.length > 80 ? "…" : ""}` : ""}`,
+      metadata: {
+        suggestion_id: suggestion.id,
+        suggestion_type: suggestion.type,
+        link: `/app/dashboard?widget=suggestion&id=${suggestion.id}`,
+      },
+    })
+
     toast.success(
       action === "needs_info" ? "Pushed back — user notified" :
       action === "complete"   ? "Marked complete" : "Reply sent"

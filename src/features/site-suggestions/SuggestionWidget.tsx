@@ -114,6 +114,22 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
   const [sendingInfo, setSendingInfo]     = useState(false)
   const [unreadCount, setUnreadCount]     = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingExpandIdRef = useRef<string | null>(null)
+
+  // ── Auto-open via URL params (from notification click) ───────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("widget") === "suggestion") {
+      setOpen(true)
+      setActiveTab("mine")
+      const id = params.get("id")
+      if (id) pendingExpandIdRef.current = id
+      const newUrl = new URL(window.location.href)
+      newUrl.searchParams.delete("widget")
+      newUrl.searchParams.delete("id")
+      window.history.replaceState({}, "", newUrl.toString())
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Fetch user's items + unread count ─────────────────────────────────────
   const fetchMyItems = useCallback(async () => {
@@ -131,6 +147,12 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
 
     const items = (data ?? []) as MyItem[]
     setMyItems(items)
+
+    // Expand a specific item if navigation came from a notification
+    if (pendingExpandIdRef.current) {
+      setExpandedId(pendingExpandIdRef.current)
+      pendingExpandIdRef.current = null
+    }
 
     const count = items
       .flatMap(i => i.suggestion_replies)

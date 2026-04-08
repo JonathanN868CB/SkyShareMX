@@ -1,28 +1,48 @@
 import { useState, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
-import { ArrowLeft, Plus, Trash2 } from "lucide-react"
+import { useNavigate, useLocation } from "react-router-dom"
+import { ArrowLeft, Plus, Trash2, Package } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
 import { useAuth } from "@/features/auth"
 import { createPurchaseOrder, getVendorsForPO } from "../../services/purchaseOrders"
 import { PartNumberCombobox } from "@/features/parts/components/PartNumberCombobox"
+import { supabase } from "@/lib/supabase"
+import { notifyProfileIds } from "@/features/parts/helpers"
 
 interface DraftLine {
   id: string
   partNumber: string
   description: string
   catalogId: string | null
+  requestLineId: string | null
   qty: string
   unitCost: string
   woRef: string
 }
 
 function emptyLine(): DraftLine {
-  return { id: String(Date.now()), partNumber: "", description: "", catalogId: null, qty: "1", unitCost: "", woRef: "" }
+  return { id: String(Date.now()), partNumber: "", description: "", catalogId: null, requestLineId: null, qty: "1", unitCost: "", woRef: "" }
+}
+
+interface FromRequestState {
+  requestId: string
+  requestedBy: string
+  currentStatus?: string
+  woRef: string
+  jobDescription: string
+  dateNeeded?: string
+  lines: Array<{
+    requestLineId: string
+    partNumber: string
+    description: string
+    qty: number
+    catalogId: string | null
+  }>
 }
 
 export default function POCreate() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { profile } = useAuth()
   const [vendors, setVendors] = useState<{ id: string; name: string }[]>([])
   const [vendorId, setVendorId] = useState("")
@@ -33,9 +53,29 @@ export default function POCreate() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
 
+  const fromRequest: FromRequestState | null = (location.state as any)?.fromRequest ?? null
+
   useEffect(() => {
     getVendorsForPO().then(setVendors).catch(console.error)
   }, [])
+
+  // Pre-fill from parts request if navigated here via "Create PO" button
+  useEffect(() => {
+    if (!fromRequest) return
+    setLines(
+      fromRequest.lines.map(l => ({
+        id: String(Date.now()) + l.requestLineId,
+        partNumber: l.partNumber,
+        description: l.description,
+        catalogId: l.catalogId,
+        requestLineId: l.requestLineId,
+        qty: String(l.qty),
+        unitCost: "",
+        woRef: fromRequest.woRef,
+      }))
+    )
+    if (fromRequest.dateNeeded) setExpectedDelivery(fromRequest.dateNeeded)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function addLine() {
     setLines(l => [...l, emptyLine()])
@@ -75,12 +115,63 @@ export default function POCreate() {
             unitCost: parseFloat(l.unitCost) || 0,
             woRef: l.woRef.trim() || undefined,
             catalogId: l.catalogId || undefined,
+            partsRequestLineId: l.requestLineId ?? undefined,
           })),
       })
+
+      // Navigate immediately — PO is created, that's the critical part
       navigate(`/app/beet-box/purchase-orders/${po.id}`)
-    } catch (err) {
+
+      // Sync parts request status in the background (non-blocking)
+      if (fromRequest) {
+        try {
+          const linkedLineIds = lines.filter(l => l.requestLineId).map(l => l.requestLineId!)
+
+          if (linkedLineIds.length > 0) {
+            await supabase
+              .from("parts_request_lines")
+              .update({ line_status: "ordered" })
+              .in("id", linkedLineIds)
+          }
+
+          // Check if all lines on the request are now ordered
+          const { data: allLines } = await supabase
+            .from("parts_request_lines")
+            .select("line_status")
+            .eq("request_id", fromRequest.requestId)
+
+          const allOrdered = allLines?.every(l => l.line_status === "ordered") ?? false
+          if (allOrdered) {
+            await supabase
+              .from("parts_requests")
+              .update({ status: "ordered" })
+              .eq("id", fromRequest.requestId)
+
+            await supabase.from("parts_status_history").insert({
+              request_id: fromRequest.requestId,
+              old_status: fromRequest.currentStatus ?? "approved",
+              new_status: "ordered",
+              changed_by: profile?.id,
+              note: `PO ${po.poNumber} created`,
+            })
+          }
+
+          const approverName = profile?.display_name || profile?.full_name || "Purchasing"
+          await notifyProfileIds(
+            [fromRequest.requestedBy],
+            "parts_ordered",
+            "Parts have been ordered",
+            `${approverName} created PO ${po.poNumber} for your parts request${fromRequest.woRef ? ` — WO# ${fromRequest.woRef}` : ""}`,
+            { link: `/app/beet-box/parts/${fromRequest.requestId}` }
+          )
+        } catch (syncErr) {
+          console.warn("Parts request sync after PO create failed:", syncErr)
+        }
+      }
+    } catch (err: any) {
       console.error("Failed to create PO:", err)
-      setError("Failed to create purchase order. Please try again.")
+      const msg = err?.message || err?.details || err?.hint || JSON.stringify(err)
+      setError(`Error: ${msg}`)
       setSubmitting(false)
     }
   }
@@ -102,6 +193,23 @@ export default function POCreate() {
       <div className="stripe-divider" />
 
       <div className="px-8 py-6 max-w-4xl">
+        {fromRequest && (
+          <div
+            className="mb-5 flex items-start gap-3 px-4 py-3 rounded-lg"
+            style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.2)" }}
+          >
+            <Package className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: "rgba(212,160,23,0.8)" }} />
+            <div>
+              <p className="text-sm font-medium" style={{ color: "rgba(212,160,23,0.9)" }}>
+                Creating PO from parts request{fromRequest.woRef ? ` — WO# ${fromRequest.woRef}` : ""}
+              </p>
+              {fromRequest.jobDescription && (
+                <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.45)" }}>{fromRequest.jobDescription}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6">
 
           {/* Vendor + delivery */}

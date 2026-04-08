@@ -18,8 +18,8 @@ export function TimesCard({ title, color, subtitle, children }: {
 }
 
 // ─── Sub-component: Times row with always-visible stepper ────────────────────
-export function TimesRow({ label, value, unit, step, onChange }: {
-  label: string; value: string; unit: string; step: string; onChange: (v: string) => void
+export function TimesRow({ label, value, unit, step, original, onChange }: {
+  label: string; value: string; unit: string; step: string; original?: string; onChange: (v: string) => void
 }) {
   const stepNum = parseFloat(step) || 1
   function nudge(dir: 1 | -1) {
@@ -27,10 +27,32 @@ export function TimesRow({ label, value, unit, step, onChange }: {
     const next = isNaN(cur) ? (dir > 0 ? stepNum : 0) : Math.round((cur + dir * stepNum) * 10000) / 10000
     onChange(String(next))
   }
+  const delta = (() => {
+    if (original == null || original === "") return null
+    const cur = parseFloat(value)
+    const orig = parseFloat(original)
+    if (isNaN(cur) || isNaN(orig)) return null
+    const diff = Math.round((cur - orig) * 10000) / 10000
+    if (diff === 0) return null
+    return diff
+  })()
   return (
     <div className="flex items-center justify-between gap-4">
       <label className="text-white/50 text-xs leading-tight flex-1" style={{ fontFamily: "var(--font-heading)" }}>{label}</label>
       <div className="flex items-center gap-2 flex-shrink-0">
+        {delta != null && (
+          <span
+            className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0"
+            style={{
+              color:      delta > 0 ? "#4ade80" : "#f87171",
+              background: delta > 0 ? "rgba(74,222,128,0.12)" : "rgba(248,113,113,0.12)",
+              border:     `1px solid ${delta > 0 ? "rgba(74,222,128,0.25)" : "rgba(248,113,113,0.25)"}`,
+            }}
+          >
+            {delta > 0 ? "+" : ""}{delta}
+          </span>
+        )}
+
         <div
           className="flex items-stretch rounded-lg overflow-hidden w-32"
           style={{ background: "hsl(0,0%,10%)", border: "1px solid hsl(0,0%,34%)" }}
@@ -199,6 +221,8 @@ export function TimesEditModal({ open, onClose, aircraftLabel, initialTimes, hob
   const [edits,      setEdits]      = useState<TimesEditDraft>(() => snapshotToEditDraft(initialTimes))
   const [deltaHrs,   setDeltaHrs]   = useState("")
   const [deltaCycles, setDeltaCycles] = useState("")
+  // Snapshot of the values at modal-open time — used to compute per-field deltas
+  const orig = snapshotToEditDraft(initialTimes)
 
   // Re-seed edits whenever the modal is opened with new data
   const [lastInitial, setLastInitial] = useState(initialTimes)
@@ -329,17 +353,17 @@ export function TimesEditModal({ open, onClose, aircraftLabel, initialTimes, hob
           {/* ── Airframe ── */}
           <TimesCard title="Airframe" color="#d4a017">
             <TimesRow label="Total Time (TT)" unit="hrs" step="0.1"
-              value={edits.airframeHrs}
+              value={edits.airframeHrs} original={orig.airframeHrs}
               onChange={v => setEdits(p => ({ ...p, airframeHrs: v }))} />
             <TimesRow label="Total Landings" unit="" step="1"
-              value={edits.landings}
+              value={edits.landings} original={orig.landings}
               onChange={v => setEdits(p => ({ ...p, landings: v }))} />
           </TimesCard>
 
           {/* ── Hobbs ── */}
           <TimesCard title="Hobbs Meter" color="#34d399">
             <TimesRow label="Current Reading" unit="hrs" step="0.1"
-              value={edits.hobbs}
+              value={edits.hobbs} original={orig.hobbs}
               onChange={v => setEdits(p => ({ ...p, hobbs: v }))} />
             {(() => {
               const hobbsVal = parseFloat(edits.hobbs)
@@ -385,10 +409,10 @@ export function TimesEditModal({ open, onClose, aircraftLabel, initialTimes, hob
             <SerialRow label="Serial Number" value={edits.eng1Serial}
               onChange={v => setEdits(p => ({ ...p, eng1Serial: v }))} />
             <TimesRow label="Time Since New (TSN)" unit="hrs" step="0.1"
-              value={edits.eng1Tsn}
+              value={edits.eng1Tsn} original={orig.eng1Tsn}
               onChange={v => setEdits(p => ({ ...p, eng1Tsn: v }))} />
             <TimesRow label="Cycles Since New (ENC)" unit="" step="1"
-              value={edits.eng1Csn}
+              value={edits.eng1Csn} original={orig.eng1Csn}
               onChange={v => setEdits(p => ({ ...p, eng1Csn: v }))} />
           </TimesCard>
 
@@ -397,10 +421,10 @@ export function TimesEditModal({ open, onClose, aircraftLabel, initialTimes, hob
             <SerialRow label="Serial Number" value={edits.eng2Serial}
               onChange={v => setEdits(p => ({ ...p, eng2Serial: v }))} />
             <TimesRow label="Time Since New (TSN)" unit="hrs" step="0.1"
-              value={edits.eng2Tsn}
+              value={edits.eng2Tsn} original={orig.eng2Tsn}
               onChange={v => setEdits(p => ({ ...p, eng2Tsn: v }))} />
             <TimesRow label="Cycles Since New (ENC)" unit="" step="1"
-              value={edits.eng2Csn}
+              value={edits.eng2Csn} original={orig.eng2Csn}
               onChange={v => setEdits(p => ({ ...p, eng2Csn: v }))} />
           </TimesCard>
 
@@ -409,10 +433,10 @@ export function TimesEditModal({ open, onClose, aircraftLabel, initialTimes, hob
             <SerialRow label="Serial Number" value={edits.propSerial}
               onChange={v => setEdits(p => ({ ...p, propSerial: v }))} />
             <TimesRow label="Time Since New (TSN)" unit="hrs" step="0.1"
-              value={edits.propTsn}
+              value={edits.propTsn} original={orig.propTsn}
               onChange={v => setEdits(p => ({ ...p, propTsn: v }))} />
             <TimesRow label="Cycles Since New" unit="" step="1"
-              value={edits.propCsn}
+              value={edits.propCsn} original={orig.propCsn}
               onChange={v => setEdits(p => ({ ...p, propCsn: v }))} />
           </TimesCard>
 
@@ -421,10 +445,10 @@ export function TimesEditModal({ open, onClose, aircraftLabel, initialTimes, hob
             <SerialRow label="Serial Number" value={edits.apuSerial}
               onChange={v => setEdits(p => ({ ...p, apuSerial: v }))} />
             <TimesRow label="APU Hours" unit="hrs" step="0.1"
-              value={edits.apuHrs}
+              value={edits.apuHrs} original={orig.apuHrs}
               onChange={v => setEdits(p => ({ ...p, apuHrs: v }))} />
             <TimesRow label="APU Starts / Cycles" unit="" step="1"
-              value={edits.apuStarts}
+              value={edits.apuStarts} original={orig.apuStarts}
               onChange={v => setEdits(p => ({ ...p, apuStarts: v }))} />
           </TimesCard>
 

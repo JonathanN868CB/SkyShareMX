@@ -302,6 +302,32 @@ export interface CatalogRelationshipRow {
   notes: string | null
 }
 
+// ─── Parts Suppliers ─────────────────────────────────────────────────────────
+
+export type SupplierType = "oem" | "distributor" | "repair_station" | "broker"
+export type SupplierApprovalStatus = "pending" | "approved" | "conditional" | "suspended" | "revoked"
+
+export interface PartsSupplier {
+  id: string
+  name: string
+  vendorType: SupplierType
+  approvalStatus: SupplierApprovalStatus
+  approvalDate: string | null
+  certificateType: string | null
+  certificateNumber: string | null
+  traceabilityVerified: boolean
+  lastAuditDate: string | null
+  contactName: string | null
+  phone: string | null
+  email: string | null
+  accountNumber: string | null
+  website: string | null
+  notes: string | null
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 export interface PurchaseOrder {
@@ -327,6 +353,7 @@ export interface POLine {
   partNumber: string
   description: string
   catalogId: string | null
+  partsRequestLineId: string | null
   qtyOrdered: number
   qtyReceived: number
   unitCost: number

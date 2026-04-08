@@ -123,21 +123,22 @@ export async function autoGenerateReorderPOs(
   if (alertErr) throw alertErr
   if (!alerts || alerts.length === 0) return []
 
-  // 2. Look up preferred vendors from catalog
+  // 2. Look up preferred suppliers from catalog vendor links → bb_parts_suppliers
   const catalogIds = alerts.map(a => a.catalog_id).filter(Boolean) as string[]
   let vendorMap = new Map<string, { vendorId: string; vendorName: string }>()
 
   if (catalogIds.length > 0) {
     const { data: vendorLinks } = await supabase
       .from("parts_catalog_vendors")
-      .select("catalog_id, vendor_id, vendor_name, is_preferred")
+      .select("catalog_id, vendor_id, is_preferred, bb_parts_suppliers!inner(name)")
       .in("catalog_id", catalogIds)
       .order("is_preferred", { ascending: false })
       .range(0, 9999)
 
     for (const vl of vendorLinks ?? []) {
       if (!vendorMap.has(vl.catalog_id)) {
-        vendorMap.set(vl.catalog_id, { vendorId: vl.vendor_id, vendorName: vl.vendor_name })
+        const supplierName = (vl as any).bb_parts_suppliers?.name ?? "Unknown"
+        vendorMap.set(vl.catalog_id, { vendorId: vl.vendor_id, vendorName: supplierName })
       }
     }
   }

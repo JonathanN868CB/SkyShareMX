@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react"
-import { Camera, Star } from "lucide-react"
+import { Camera, Star, Shield, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react"
 import Cropper from "react-easy-crop"
 import type { Area } from "react-easy-crop"
 import { useAuth } from "@/features/auth"
@@ -12,7 +12,7 @@ import IdentityEditorOverlay from "./IdentityEditorOverlay"
 import PropulsionEditorOverlay from "./PropulsionEditorOverlay"
 import DocumentationEditorOverlay from "./DocumentationEditorOverlay"
 import ExportModal from "./ExportModal"
-import MmAuditWidget from "@/features/mm-audit/MmAuditWidget"
+import { useSourceDocuments, useMmFleetOverview } from "@/features/mm-audit/useMmAuditData"
 
 interface Props {
   aircraft: AircraftBase
@@ -368,7 +368,34 @@ const ENROLLMENT_LABELS = [
 ]
 
 function ProgramBlock({ field }: { field: DataField }) {
-  const s = fieldStatus(field.value)
+  const s    = fieldStatus(field.value)
+  const href = s === "enrolled" && field.link?.startsWith("http") ? field.link : null
+
+  const nameRow = (
+    <div className="flex items-baseline justify-between gap-2 flex-wrap">
+      <span className="text-sm"
+        style={{
+          color: s === "enrolled" ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+          fontWeight: s === "enrolled" ? 600 : 400,
+          opacity: s === "enrolled" ? 1 : 0.85,
+          fontFamily: "var(--font-body)",
+        }}>
+        {field.label}
+        {href && (
+          <span style={{ color: "var(--skyshare-gold)", fontSize: "0.8rem", marginLeft: 5, lineHeight: 1 }}>↗</span>
+        )}
+      </span>
+      <span className="text-xs text-right font-mono"
+        style={{
+          color: s === "enrolled" ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+          opacity: s === "enrolled" ? 1 : s === "none" ? 0.55 : 0.65,
+          fontStyle: s === "none" ? "italic" : "normal",
+          whiteSpace: "nowrap",
+        }}>
+        {s === "enrolled" ? field.value : s === "none" ? "Not enrolled" : "—"}
+      </span>
+    </div>
+  )
 
   return (
     <div className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
@@ -380,26 +407,15 @@ function ProgramBlock({ field }: { field: DataField }) {
         }}>
         <StatusDot value={field.value} size={8} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-baseline justify-between gap-2 flex-wrap">
-            <span className="text-sm"
-              style={{
-                color: s === "enrolled" ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
-                fontWeight: s === "enrolled" ? 600 : 400,
-                opacity: s === "enrolled" ? 1 : 0.65,
-                fontFamily: "var(--font-body)",
-              }}>
-              {field.label}
-            </span>
-            <span className="text-xs text-right font-mono"
-              style={{
-                color: s === "enrolled" ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
-                opacity: s === "enrolled" ? 1 : s === "none" ? 0.38 : 0.45,
-                fontStyle: s === "none" ? "italic" : "normal",
-                whiteSpace: "nowrap",
-              }}>
-              {s === "enrolled" ? field.value : s === "none" ? "Not enrolled" : "—"}
-            </span>
-          </div>
+          {href ? (
+            <a href={href} target="_blank" rel="noopener noreferrer"
+              style={{ display: "block", textDecoration: "none", borderRadius: 4, margin: "-3px -5px", padding: "3px 5px", transition: "background 0.12s ease" }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.07)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+              {nameRow}
+            </a>
+          ) : nameRow}
+
 
           {s === "enrolled" && (
             <div className="mt-2 grid gap-y-2"
@@ -414,7 +430,7 @@ function ProgramBlock({ field }: { field: DataField }) {
                 .map(item => (
                   <div key={item.key}>
                     <div className="text-xs mb-0.5"
-                      style={{ fontFamily: "var(--font-heading)", color: "hsl(var(--muted-foreground))", opacity: 0.45, fontSize: "0.6rem", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                      style={{ fontFamily: "var(--font-heading)", color: "hsl(var(--muted-foreground))", opacity: 0.65, fontSize: "0.6rem", letterSpacing: "0.1em", textTransform: "uppercase" }}>
                       {item.label}
                     </div>
                     <div className="text-xs"
@@ -963,27 +979,27 @@ function CMMForm({
         <div>
           {fldLbl("Manufacturer")}
           <EditInput value={form.manufacturer} onChange={v => setForm(f => ({ ...f, manufacturer: v }))}
-            placeholder="e.g. Goodrich Corporation" />
+            placeholder="" />
         </div>
         <div>
           {fldLbl("Doc / Part #")}
           <EditInput value={form.docNumber} onChange={v => setForm(f => ({ ...f, docNumber: v }))}
-            placeholder="e.g. 2-1559" mono small />
+            placeholder="" mono small />
         </div>
         <div>
           {fldLbl("ATA Chapter")}
           <EditInput value={form.ataChapter} onChange={v => setForm(f => ({ ...f, ataChapter: v }))}
-            placeholder="e.g. 21-00-08" mono small />
+            placeholder="" mono small />
         </div>
         <div>
           {fldLbl("Revision")}
           <EditInput value={form.revision} onChange={v => setForm(f => ({ ...f, revision: v }))}
-            placeholder="e.g. 5" mono small />
+            placeholder="" mono small />
         </div>
         <div>
           {fldLbl("Revision Date")}
           <EditInput value={form.revisionDate} onChange={v => setForm(f => ({ ...f, revisionDate: v }))}
-            placeholder="e.g. Dec 13/18" mono small />
+            placeholder="" mono small />
         </div>
       </div>
 
@@ -992,12 +1008,12 @@ function CMMForm({
         <div>
           {fldLbl("Title / Description")}
           <EditInput value={form.title} onChange={v => setForm(f => ({ ...f, title: v }))}
-            placeholder="e.g. Air Conditioning System Components" />
+            placeholder="" />
         </div>
         <div>
           {fldLbl("Applicability")}
           <EditInput value={form.applicability} onChange={v => setForm(f => ({ ...f, applicability: v }))}
-            placeholder="e.g. Cessna 525 A/B (CJ2/3)" />
+            placeholder="" />
         </div>
       </div>
 
@@ -1515,11 +1531,11 @@ function CMMsOverlay({
                           </div>
                           <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))" }}>
                             {([
-                              { key: "manufacturer", label: "Manufacturer",  ph: "e.g. Goodrich Corporation", mono: false },
-                              { key: "docNumber",    label: "Doc / Part #",  ph: "e.g. 2-1559",              mono: true  },
-                              { key: "ataChapter",   label: "ATA Chapter",   ph: "e.g. 21-00-08",            mono: true  },
-                              { key: "revision",     label: "Revision",      ph: "e.g. 5",                   mono: true  },
-                              { key: "revisionDate", label: "Revision Date", ph: "e.g. Dec 13/18",           mono: true  },
+                              { key: "manufacturer", label: "Manufacturer",  ph: "", mono: false },
+                              { key: "docNumber",    label: "Doc / Part #",  ph: "", mono: true  },
+                              { key: "ataChapter",   label: "ATA Chapter",   ph: "", mono: true  },
+                              { key: "revision",     label: "Revision",      ph: "", mono: true  },
+                              { key: "revisionDate", label: "Revision Date", ph: "", mono: true  },
                             ] as const).map(({ key, label, ph, mono }) => (
                               <div key={key}>
                                 {fldLbl(label)}
@@ -1535,12 +1551,12 @@ function CMMsOverlay({
                             <div>
                               {fldLbl("Title / Description")}
                               <EditInput value={editAcForm.title ?? ""} onChange={v => setEditAcForm(f => ({ ...f, title: v }))}
-                                placeholder="e.g. Air Conditioning System Components" />
+                                placeholder="" />
                             </div>
                             <div>
                               {fldLbl("Applicability")}
                               <EditInput value={editAcForm.applicability ?? ""} onChange={v => setEditAcForm(f => ({ ...f, applicability: v }))}
-                                placeholder="e.g. Cessna 525 A/B" />
+                                placeholder="" />
                             </div>
                           </div>
                           <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -2045,6 +2061,15 @@ function AircraftPhotoCard({ tailNumber }: { tailNumber: string }) {
   )
 }
 
+const PURPLE = "#a78bfa"
+
+function DocAuditShield({ status }: { status: "current" | "due_soon" | "overdue" | "never_audited" }) {
+  if (status === "current")       return <ShieldCheck size={14} color={PURPLE}        strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+  if (status === "due_soon")      return <ShieldAlert  size={14} color="#f59e0b"       strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+  if (status === "overdue")       return <ShieldX      size={14} color="#ef4444"       strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+  /* never_audited */             return <Shield       size={14} color="rgba(167,139,250,0.35)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+}
+
 // ─── Documentation Card ───────────────────────────────────────────────────────
 function DocumentationCard({
   fields,
@@ -2066,6 +2091,31 @@ function DocumentationCard({
   mmAuditAircraftId?: string
 }) {
   const [showCMMs, setShowCMMs] = useState(false)
+  const { data: sourceDocs } = useSourceDocuments()
+  const { data: fleetData } = useMmFleetOverview()
+
+  function resolveField(f: DataField) {
+    if (!f.libraryManualId || !sourceDocs) return null
+    return sourceDocs.find(d => d.id === f.libraryManualId) ?? null
+  }
+
+  function getDocAuditStatus(sourceDocumentId: string): "current" | "due_soon" | "overdue" | "never_audited" {
+    if (!fleetData || !mmAuditAircraftId) return "never_audited"
+    const row = fleetData.rows.find(
+      r => r.aircraft_id === mmAuditAircraftId && r.source_document_id === sourceDocumentId
+    )
+    if (!row?.latest_audit) return "never_audited"
+    const due = new Date(row.latest_audit.next_due_date)
+    const daysUntilDue = Math.ceil((due.getTime() - Date.now()) / 86_400_000)
+    if (daysUntilDue < 0)   return "overdue"
+    if (daysUntilDue <= 30) return "due_soon"
+    return "current"
+  }
+
+  function formatRevDate(d: string | null): string {
+    if (!d) return ""
+    return new Date(d).toLocaleDateString("en-US", { month: "short", year: "numeric" })
+  }
 
   return (
     <>
@@ -2135,43 +2185,95 @@ function DocumentationCard({
 
         <div className="px-5 py-1">
           {fields.map((f, i) => {
-            const s           = fieldStatus(f.value)
-            const trimmedVal  = f.value.trim()
-            const href        = f.link || (trimmedVal.toLowerCase().startsWith("http") ? trimmedVal : null)
-            const isOnFile    = !!href || (s === "enrolled" && !f.value.startsWith("None"))
-            return (
-              <div key={i} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
-                <div className="flex items-center gap-3">
-                  <StatusDot value={isOnFile ? "active" : f.value} size={8} />
-                  <span className="text-sm flex-1"
-                    style={{
-                      color: s === "enrolled" ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
-                      opacity: s === "enrolled" ? 1 : 0.55,
-                    }}>
-                    {f.label}
-                  </span>
-                  {href && (
+            const libDoc = resolveField(f)
+
+            // ── Library-linked row ──
+            if (libDoc) {
+              const href = libDoc.document_url
+              const note = `${libDoc.document_number} · Rev ${libDoc.current_revision}${libDoc.current_rev_date ? " · " + formatRevDate(libDoc.current_rev_date) : ""}`
+              const auditStatus = getDocAuditStatus(libDoc.id)
+              const inner = (
+                <div className="flex items-start gap-3">
+                  <DocAuditShield status={auditStatus} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm" style={{ color: "hsl(var(--foreground))", fontWeight: 500 }}>
+                        {libDoc.document_name}
+                      </span>
+                      {href && <span style={{ color: "#a78bfa", fontSize: "0.8rem", lineHeight: 1, flexShrink: 0 }}>↗</span>}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: "#a78bfa", opacity: 0.7, fontFamily: "'Courier Prime','Courier New',monospace" }}>
+                      {note}
+                    </div>
+                  </div>
+                </div>
+              )
+              return (
+                <div key={i} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
+                  {href ? (
                     <a href={href} target="_blank" rel="noopener noreferrer"
-                      className="text-xs"
-                      style={{ color: "var(--skyshare-gold)", textDecoration: "underline", textDecorationStyle: "dotted" }}>
-                      Open ↗
+                      style={{ display: "block", textDecoration: "none", borderRadius: 4, margin: "-4px -6px", padding: "4px 6px", transition: "background 0.12s ease" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(167,139,250,0.07)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                      {inner}
                     </a>
-                  )}
-                  {!href && s === "none" && (
-                    <span className="text-xs italic" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>N/A</span>
+                  ) : inner}
+                </div>
+              )
+            }
+
+            // ── Standard row ──
+            const s          = fieldStatus(f.value)
+            const trimmedVal = f.value.trim()
+            const href       = f.link || (trimmedVal.toLowerCase().startsWith("http") ? trimmedVal : null)
+            const isOnFile   = !!href || (s === "enrolled" && !f.value.startsWith("None"))
+            const note       = f.note && f.note.trim() ? f.note.trim() : null
+
+            const inner = (
+              <div className="flex items-start gap-3">
+                <StatusDot value={isOnFile ? "active" : f.value} size={8} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm"
+                      style={{
+                        color: href ? "hsl(var(--foreground))" : s === "enrolled" ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+                        opacity: href ? 1 : s === "enrolled" ? 1 : 0.8,
+                        fontWeight: href ? 500 : 400,
+                      }}>
+                      {f.label}
+                    </span>
+                    {href && (
+                      <span style={{ color: "var(--skyshare-gold)", fontSize: "0.8rem", lineHeight: 1, flexShrink: 0 }}>↗</span>
+                    )}
+                  </div>
+                  {note && (
+                    <div className="text-xs mt-0.5"
+                      style={{
+                        color: href ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
+                        opacity: href ? 0.75 : 0.6,
+                        fontFamily: "'Courier Prime','Courier New',monospace",
+                      }}>
+                      {note}
+                    </div>
                   )}
                 </div>
               </div>
             )
+
+            return (
+              <div key={i} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
+                {href ? (
+                  <a href={href} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "block", textDecoration: "none", borderRadius: 4, margin: "-4px -6px", padding: "4px 6px", transition: "background 0.12s ease" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.07)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    {inner}
+                  </a>
+                ) : inner}
+              </div>
+            )
           })}
         </div>
-
-        {mmAuditAircraftId && (
-          <>
-            <div style={{ height: "0.5px", background: "rgba(167,139,250,0.15)", margin: "0 20px" }} />
-            <MmAuditWidget aircraftId={mmAuditAircraftId} />
-          </>
-        )}
 
       </div>   {/* card-elevated */}
     </>
@@ -2634,6 +2736,7 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
         <DocumentationEditorOverlay
           initialFields={baseDetail.documentation}
           tailNumber={aircraft.tailNumber}
+          canLinkLibrary={canEditSection}
           onSave={handleDocumentationSave}
           onClose={() => setShowDocumentationEditor(false)}
         />

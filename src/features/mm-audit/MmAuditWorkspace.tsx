@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
-import { ArrowLeft, CheckCircle2, ChevronRight, AlertTriangle, ExternalLink, History, Loader2, Filter, Pencil, Save, X, Undo2 } from "lucide-react"
+import { ArrowLeft, CheckCircle2, ChevronRight, AlertTriangle, ExternalLink, History, Loader2, Filter, Link, Pencil, Save, X, Undo2 } from "lucide-react"
 import { useAuth } from "@/features/auth"
-import { useMmWorkspaceData, useStageRevisionChange, useRevertStagedRevision, type WorkspaceDocGroup, type WorkspaceItem } from "./useMmAuditData"
+import { useMmWorkspaceData, useStageRevisionChange, useRevertStagedRevision, useUpsertSourceDocument, type WorkspaceDocGroup, type WorkspaceItem } from "./useMmAuditData"
 import MmBatchReviewDialog from "./MmBatchReviewDialog"
 import MmAuditHistory from "./MmAuditHistory"
 import type { AuditStatus } from "./types"
@@ -245,8 +245,31 @@ function DocGroupCard({
   const [newRev, setNewRev] = useState(group.current_revision)
   const [showRevConfirm, setShowRevConfirm] = useState(false)
   const [showRevertConfirm, setShowRevertConfirm] = useState(false)
-  const stageMut = useStageRevisionChange()
-  const revertMut = useRevertStagedRevision()
+  const [editingUrl, setEditingUrl] = useState(false)
+  const [newUrl, setNewUrl] = useState(group.document_url ?? "")
+  const stageMut   = useStageRevisionChange()
+  const revertMut  = useRevertStagedRevision()
+  const upsertMut  = useUpsertSourceDocument()
+
+  function handleSaveUrl(e: React.MouseEvent) {
+    e.stopPropagation()
+    upsertMut.mutate(
+      {
+        id: group.source_document_id,
+        document_number: group.document_number,
+        document_name: group.document_name,
+        document_url: newUrl.trim() || null,
+        current_revision: group.current_revision,
+        current_rev_date: group.current_rev_date,
+      },
+      {
+        onSuccess: () => {
+          setEditingUrl(false)
+          onRevisionUpdated()
+        },
+      }
+    )
+  }
 
   const reviewedCount = group.items.filter(i => i.status === "current").length
   const totalCount = group.items.length
@@ -328,31 +351,47 @@ function DocGroupCard({
             style={{ color: C, transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
           />
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold truncate" style={{ color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-heading)" }}>
-                {group.document_name}
+            <span className="text-xs font-semibold truncate block" style={{ color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-heading)" }}>
+              {group.document_name}
+            </span>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.35)" }}>
+                {group.document_number} · {totalCount} aircraft
               </span>
-              {group.document_url && (
+              {group.document_url ? (
                 <a
                   href={group.document_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={e => e.stopPropagation()}
-                  title="Open source document"
                   className="flex items-center gap-1 flex-shrink-0 transition-opacity hover:opacity-80"
-                  style={{ color: C, fontSize: "10px", fontFamily: "var(--font-heading)" }}
+                  style={{ color: C, fontSize: "10px", fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
                 >
-                  <ExternalLink className="h-3 w-3" />
+                  <ExternalLink className="h-3 w-3" /> Open ↗
                 </a>
-              )}
+              ) : canEdit ? (
+                <button
+                  onClick={e => { e.stopPropagation(); setNewUrl(""); setEditingUrl(true) }}
+                  className="flex items-center gap-1 flex-shrink-0 transition-opacity hover:opacity-80"
+                  style={{ color: rgba(0.45), fontSize: "10px", fontFamily: "var(--font-heading)", letterSpacing: "0.04em", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                >
+                  <Link className="h-3 w-3" /> Add URL
+                </button>
+              ) : null}
             </div>
-            <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.35)" }}>
-              {group.document_number} · {totalCount} aircraft
-            </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
+          {canEdit && !expanded && !editingRev && (
+            <button
+              onClick={e => { e.stopPropagation(); onToggle(); handleStartEdit(e) }}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-opacity hover:opacity-80"
+              style={{ background: rgba(0.08), border: `1px solid ${rgba(0.18)}`, color: C, fontFamily: "var(--font-heading)" }}
+            >
+              <Pencil className="h-3 w-3" /> Rev
+            </button>
+          )}
           {group.all_reviewed ? (
             <span
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider"
@@ -475,17 +514,79 @@ function DocGroupCard({
             {canEdit && !group.all_reviewed && !editingRev && (
               <button
                 onClick={(e) => { e.stopPropagation(); onBatchReview() }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"
-                style={{ background: "#10b981", color: "#fff", fontFamily: "var(--font-heading)" }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"
+                style={{ background: "rgba(16,185,129,0.15)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", fontFamily: "var(--font-heading)" }}
               >
-                <CheckCircle2 className="h-3.5 w-3.5" />
+                <CheckCircle2 className="h-3 w-3" />
                 {group.has_revision_change
-                  ? `Mark All Updated from Rev ${group.previous_revision} → Rev ${group.current_revision} (${pendingCount} pending)`
-                  : `Mark All Reviewed — No Changes at Rev ${group.current_revision} (${pendingCount} pending)`
+                  ? `Mark All · Rev ${group.previous_revision}→${group.current_revision} (${pendingCount})`
+                  : `Mark All · No Changes (${pendingCount})`
                 }
               </button>
             )}
           </div>
+
+          {/* ── Document URL ─────────────────────────────────────────── */}
+          {canEdit && (
+            <div
+              className="flex items-center justify-between rounded-lg px-4 py-2.5"
+              style={{ background: rgba(0.04), border: `1px solid ${rgba(0.08)}` }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider flex-shrink-0"
+                  style={{ color: rgba(0.5), fontFamily: "var(--font-heading)" }}>
+                  Document URL
+                </span>
+                {editingUrl ? (
+                  <input
+                    value={newUrl}
+                    onChange={e => setNewUrl(e.target.value)}
+                    placeholder="https://..."
+                    autoFocus
+                    className="flex-1 rounded px-2 py-1 text-xs outline-none"
+                    style={{ background: rgba(0.1), border: `1px solid ${C}`, color: "#fff", fontFamily: "'Courier Prime','Courier New',monospace", minWidth: 0 }}
+                    onKeyDown={e => { if (e.key === "Enter") handleSaveUrl(e as any); if (e.key === "Escape") setEditingUrl(false) }}
+                  />
+                ) : (
+                  group.document_url ? (
+                    <a href={group.document_url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs truncate transition-opacity hover:opacity-80"
+                      style={{ color: C, fontFamily: "'Courier Prime','Courier New',monospace" }}>
+                      {group.document_url}
+                    </a>
+                  ) : (
+                    <span className="text-xs italic" style={{ color: rgba(0.3) }}>No URL set</span>
+                  )
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                {editingUrl ? (
+                  <>
+                    <button
+                      onClick={handleSaveUrl}
+                      disabled={upsertMut.isPending}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-opacity hover:opacity-80"
+                      style={{ background: rgba(0.15), color: C, fontFamily: "var(--font-heading)", border: `1px solid ${rgba(0.2)}` }}
+                    >
+                      <Save className="h-3 w-3" /> {upsertMut.isPending ? "Saving…" : "Save"}
+                    </button>
+                    <button onClick={() => setEditingUrl(false)} className="p-1 rounded transition-opacity hover:opacity-80" style={{ color: rgba(0.4) }}>
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setNewUrl(group.document_url ?? ""); setEditingUrl(true) }}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-opacity hover:opacity-80"
+                    style={{ background: rgba(0.08), border: `1px solid ${rgba(0.15)}`, color: rgba(0.6), fontFamily: "var(--font-heading)" }}
+                  >
+                    <Link className="h-3 w-3" /> {group.document_url ? "Edit URL" : "Add URL"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ── Revision Change Confirmation ──────────────────────────── */}
           {showRevConfirm && newRev.trim() !== oldRev && (
@@ -606,7 +707,7 @@ function DocGroupCard({
                 </tr>
               </thead>
               <tbody>
-                {group.items.map(item => {
+                {[...group.items].sort((a, b) => a.registration.localeCompare(b.registration, undefined, { numeric: true, sensitivity: "base" })).map(item => {
                   const s = statusStyle[item.status]
                   const auditedRev = item.latest_audit?.audited_revision ?? null
                   const revMatches = auditedRev === group.current_revision
