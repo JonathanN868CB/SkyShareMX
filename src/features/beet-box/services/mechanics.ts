@@ -1,8 +1,10 @@
 import { supabase } from "@/lib/supabase"
 import type { Mechanic, MechanicCert } from "../types"
 
-// All users with Beet Box module access, with their primary cert
-export async function getTechnicians(): Promise<Mechanic[]> {
+// All users with Beet Box module access, with their primary cert.
+// Pass laborOnly=true (default) to only return labor-eligible members.
+// Pass laborOnly=false to get everyone (used by the Team settings tab).
+export async function getTechnicians(laborOnly = true): Promise<Mechanic[]> {
   const { data: perms, error: pErr } = await supabase
     .from("user_permissions")
     .select("user_id")
@@ -13,13 +15,19 @@ export async function getTechnicians(): Promise<Mechanic[]> {
   const profileIds = (perms ?? []).map(p => p.user_id)
   if (!profileIds.length) return []
 
+  let profileQuery = supabase
+    .from("profiles")
+    .select("id, full_name, display_name, email, bb_labor_eligible")
+    .in("id", profileIds)
+    .order("full_name")
+
+  if (laborOnly) {
+    profileQuery = profileQuery.eq("bb_labor_eligible", true)
+  }
+
   const [{ data: profiles, error: prErr }, { data: certs, error: cErr }] =
     await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id, full_name, display_name, email")
-        .in("id", profileIds)
-        .order("full_name"),
+      profileQuery,
       supabase
         .from("bb_mechanic_certs")
         .select("profile_id, cert_type, cert_number, is_primary")
@@ -41,8 +49,17 @@ export async function getTechnicians(): Promise<Mechanic[]> {
       email: p.email,
       certType: (cert?.cert_type as Mechanic["certType"]) ?? null,
       certNumber: cert?.cert_number ?? null,
+      laborEligible: p.bb_labor_eligible ?? true,
     }
   })
+}
+
+export async function setBbLaborEligible(profileId: string, eligible: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_bb_labor_eligible", {
+    target_profile_id: profileId,
+    eligible,
+  })
+  if (error) throw error
 }
 
 export async function getTechnicianById(id: string): Promise<Mechanic | null> {
