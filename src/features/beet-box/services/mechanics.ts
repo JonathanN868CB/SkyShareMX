@@ -1,15 +1,24 @@
 import { supabase } from "@/lib/supabase"
 import type { Mechanic, MechanicCert } from "../types"
 
-// All active Technicians (role = 'Technician') with their primary cert
+// All users with Beet Box module access, with their primary cert
 export async function getTechnicians(): Promise<Mechanic[]> {
-  const [{ data: profiles, error: pErr }, { data: certs, error: cErr }] =
+  const { data: perms, error: pErr } = await supabase
+    .from("user_permissions")
+    .select("user_id")
+    .eq("section", "Beet Box")
+
+  if (pErr) throw pErr
+
+  const profileIds = (perms ?? []).map(p => p.user_id)
+  if (!profileIds.length) return []
+
+  const [{ data: profiles, error: prErr }, { data: certs, error: cErr }] =
     await Promise.all([
       supabase
         .from("profiles")
         .select("id, full_name, display_name, email")
-        .eq("role", "Technician")
-        .eq("status", "Active")
+        .in("id", profileIds)
         .order("full_name"),
       supabase
         .from("bb_mechanic_certs")
@@ -17,7 +26,7 @@ export async function getTechnicians(): Promise<Mechanic[]> {
         .eq("is_primary", true),
     ])
 
-  if (pErr) throw pErr
+  if (prErr) throw prErr
   if (cErr) throw cErr
 
   const certMap = new Map(
@@ -97,8 +106,21 @@ export async function upsertMechanicCert(
     notes: cert.notes,
   }
 
-  const { data, error } = cert.id
-    ? await supabase.from("bb_mechanic_certs").update(payload).eq("id", cert.id).select().single()
+  let targetId = cert.id
+
+  if (!targetId) {
+    // No ID supplied — find any existing primary cert for this profile to avoid creating duplicates
+    const { data: existing } = await supabase
+      .from("bb_mechanic_certs")
+      .select("id")
+      .eq("profile_id", cert.profileId)
+      .eq("is_primary", true)
+      .maybeSingle()
+    targetId = existing?.id
+  }
+
+  const { data, error } = targetId
+    ? await supabase.from("bb_mechanic_certs").update(payload).eq("id", targetId).select().single()
     : await supabase.from("bb_mechanic_certs").insert(payload).select().single()
 
   if (error) throw error
