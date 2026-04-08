@@ -87,7 +87,7 @@ const sidebarSections: SidebarSection[] = [
       { name: "Records Vault",            path: "/app/records-vault",            icon: BookOpen,     section: "Records Vault"             },
       { name: "Beet Box",               path: "/app/beet-box",                 icon: BeetIcon,      section: "Beet Box"                  },
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
-      { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
+      { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "My Training"                },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
       { name: "14-Day Check",           path: "/app/14-day-check",             icon: CalendarClock, section: "14-Day Check"              },
       { name: "Projects",               path: "/app/projects",                 icon: Kanban,        section: "Projects"                  },
