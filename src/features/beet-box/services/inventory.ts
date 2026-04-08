@@ -1,6 +1,24 @@
 import { supabase } from "@/lib/supabase"
 import type { InventoryPart, PartTransaction, TransactionType } from "../types"
 
+// Lightweight search for the inventory picker inside work orders.
+// Returns up to 50 results — uses live Supabase query instead of in-memory filter.
+export async function searchPartsLimited(search?: string): Promise<InventoryPart[]> {
+  let query = supabase
+    .from("bb_inventory_parts")
+    .select("*")
+    .order("part_number")
+    .limit(50)
+
+  if (search && search.length >= 2) {
+    query = query.or(`part_number.ilike.%${search}%,description.ilike.%${search}%`)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map((row) => mapPartRow(row, []))
+}
+
 export async function getParts(filters?: {
   lowStock?: boolean
   search?: string

@@ -149,6 +149,7 @@ export async function updateLogbookEntry(
       ...(payload.isRia !== undefined && { is_ria: payload.isRia }),
       ...(payload.inspectorName !== undefined && { inspector_name: payload.inspectorName }),
       ...(payload.inspectorCert !== undefined && { inspector_cert: payload.inspectorCert }),
+      ...((payload as any).guestSerial !== undefined && { guest_serial: (payload as any).guestSerial }),
     })
     .eq("id", id)
 
@@ -214,48 +215,93 @@ type TimesSnapshot = {
   landings?: number | null
   eng1Tsn?: number | null
   eng1Csn?: number | null
+  eng1Serial?: string | null
   eng2Tsn?: number | null
   eng2Csn?: number | null
+  eng2Serial?: string | null
   propTsn?: number | null
   propCsn?: number | null
+  propSerial?: string | null
   apuHrs?: number | null
   apuStarts?: number | null
+  apuSerial?: string | null
   hobbs?: number | null
-  [key: string]: number | null | undefined
+  [key: string]: number | string | null | undefined
 }
 
 function timesForSection(snapshot: TimesSnapshot | null | undefined, section: LogbookSection): {
   totalAircraftTime?: number
+  totalAircraftTimeNew?: number  // pre-filled from snapshot; mechanic adjusts to actual closing time
   landings?: number
+  landingsNew?: number
   hobbs?: number
+  hobbsNew?: number
+  guestSerial?: string   // repurposed as component serial for engine/prop/APU entries
 } {
   if (!snapshot) return {}
   switch (section) {
     case "Airframe":
       return {
-        ...(snapshot.airframeHrs != null && { totalAircraftTime: snapshot.airframeHrs }),
-        ...(snapshot.landings    != null && { landings: snapshot.landings }),
-        ...(snapshot.hobbs       != null && { hobbs: snapshot.hobbs }),
+        ...(snapshot.airframeHrs != null && {
+          totalAircraftTime:    snapshot.airframeHrs,
+          totalAircraftTimeNew: snapshot.airframeHrs,
+        }),
+        ...(snapshot.landings != null && {
+          landings:    snapshot.landings,
+          landingsNew: snapshot.landings,
+        }),
+        ...(snapshot.hobbs != null && {
+          hobbs:    snapshot.hobbs,
+          hobbsNew: snapshot.hobbs,
+        }),
       }
     case "Engine 1":
       return {
-        ...(snapshot.eng1Tsn != null && { totalAircraftTime: snapshot.eng1Tsn }),
-        ...(snapshot.eng1Csn != null && { landings: snapshot.eng1Csn }),
+        ...(snapshot.eng1Tsn != null && {
+          totalAircraftTime:    snapshot.eng1Tsn,
+          totalAircraftTimeNew: snapshot.eng1Tsn,
+        }),
+        ...(snapshot.eng1Csn != null && {
+          landings:    snapshot.eng1Csn,
+          landingsNew: snapshot.eng1Csn,
+        }),
+        ...(snapshot.eng1Serial && { guestSerial: snapshot.eng1Serial }),
       }
     case "Engine 2":
       return {
-        ...(snapshot.eng2Tsn != null && { totalAircraftTime: snapshot.eng2Tsn }),
-        ...(snapshot.eng2Csn != null && { landings: snapshot.eng2Csn }),
+        ...(snapshot.eng2Tsn != null && {
+          totalAircraftTime:    snapshot.eng2Tsn,
+          totalAircraftTimeNew: snapshot.eng2Tsn,
+        }),
+        ...(snapshot.eng2Csn != null && {
+          landings:    snapshot.eng2Csn,
+          landingsNew: snapshot.eng2Csn,
+        }),
+        ...(snapshot.eng2Serial && { guestSerial: snapshot.eng2Serial }),
       }
     case "Propeller":
       return {
-        ...(snapshot.propTsn != null && { totalAircraftTime: snapshot.propTsn }),
-        ...(snapshot.propCsn != null && { landings: snapshot.propCsn }),
+        ...(snapshot.propTsn != null && {
+          totalAircraftTime:    snapshot.propTsn,
+          totalAircraftTimeNew: snapshot.propTsn,
+        }),
+        ...(snapshot.propCsn != null && {
+          landings:    snapshot.propCsn,
+          landingsNew: snapshot.propCsn,
+        }),
+        ...(snapshot.propSerial && { guestSerial: snapshot.propSerial }),
       }
     case "APU":
       return {
-        ...(snapshot.apuHrs    != null && { totalAircraftTime: snapshot.apuHrs }),
-        ...(snapshot.apuStarts != null && { landings: snapshot.apuStarts }),
+        ...(snapshot.apuHrs != null && {
+          totalAircraftTime:    snapshot.apuHrs,
+          totalAircraftTimeNew: snapshot.apuHrs,
+        }),
+        ...(snapshot.apuStarts != null && {
+          landings:    snapshot.apuStarts,
+          landingsNew: snapshot.apuStarts,
+        }),
+        ...(snapshot.apuSerial && { guestSerial: snapshot.apuSerial }),
       }
     default:
       return {}
@@ -298,7 +344,9 @@ export async function getOrCreateDraftLogbookEntry(
     woNumber: wo.woNumber,
     aircraftId: wo.aircraftId ?? undefined,
     guestRegistration: wo.guestRegistration ?? (wo.aircraftId ? undefined : wo.woNumber),
-    guestSerial: wo.guestSerial ?? undefined,
+    // For component sections, sectionTimes.guestSerial carries the engine/prop/APU serial.
+    // For Airframe or when no component serial is known, fall back to the WO's guestSerial.
+    guestSerial: sectionTimes.guestSerial ?? wo.guestSerial ?? undefined,
     logbookSection: section,
     sectionTitle: `${section} Entries`,
     mechanicName: "",

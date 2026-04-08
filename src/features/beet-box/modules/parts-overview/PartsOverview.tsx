@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   DollarSign, AlertTriangle, ShoppingCart, PackageCheck,
-  ArrowRight, TrendingUp, BarChart3, Zap, Loader2,
+  ArrowRight, TrendingUp, BarChart3, Zap, Loader2, Package, Clock,
 } from "lucide-react"
 import {
   getPartsOverviewStats,
@@ -17,6 +17,25 @@ import type {
   RecentReceiving,
 } from "../../services/partsOverview"
 import { useAuth } from "@/features/auth"
+import { supabase } from "@/lib/supabase"
+
+interface AwaitingPORequest {
+  id: string
+  requested_by: string
+  aircraft_tail: string | null
+  work_order: string | null
+  job_description: string
+  date_needed: string
+  aog: boolean
+  order_type: string
+  line_count: number
+  lines: Array<{
+    id: string
+    part_number: string
+    description: string | null
+    quantity: number
+  }>
+}
 
 const CONDITION_LABELS: Record<string, string> = {
   new: "New",
@@ -35,6 +54,7 @@ export default function PartsOverview() {
   const [loading, setLoading] = useState(true)
   const [generatingPOs, setGeneratingPOs] = useState(false)
   const [poResults, setPOResults] = useState<Array<{ poNumber: string; vendorName: string; lineCount: number }> | null>(null)
+  const [awaitingPO, setAwaitingPO] = useState<AwaitingPORequest[]>([])
 
   useEffect(() => {
     async function load() {
@@ -57,6 +77,38 @@ export default function PartsOverview() {
       }
     }
     load()
+  }, [])
+
+  useEffect(() => {
+    async function loadAwaitingPO() {
+      const { data } = await supabase
+        .from("parts_requests")
+        .select("id, requested_by, aircraft_tail, work_order, job_description, date_needed, aog, order_type, parts_request_lines(id, part_number, description, quantity)")
+        .in("status", ["approved", "sourcing"])
+        .order("aog", { ascending: false })
+        .order("date_needed", { ascending: true })
+
+      if (!data) return
+
+      setAwaitingPO(data.map((r: any) => ({
+        id: r.id,
+        requested_by: r.requested_by,
+        aircraft_tail: r.aircraft_tail,
+        work_order: r.work_order,
+        job_description: r.job_description,
+        date_needed: r.date_needed,
+        aog: r.aog,
+        order_type: r.order_type,
+        line_count: (r.parts_request_lines ?? []).length,
+        lines: (r.parts_request_lines ?? []).map((l: any) => ({
+          id: l.id,
+          part_number: l.part_number,
+          description: l.description,
+          quantity: l.quantity,
+        })),
+      })))
+    }
+    loadAwaitingPO()
   }, [])
 
   const totalTxns = Object.values(txnSummary).reduce((s, n) => s + n, 0)
@@ -88,6 +140,108 @@ export default function PartsOverview() {
           <div className="py-20 text-center text-white/30 text-sm">Loading parts overview...</div>
         ) : (
           <>
+            {/* ── Awaiting PO Action Queue ─────────────────────────────── */}
+            {awaitingPO.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Package className="w-3.5 h-3.5" style={{ color: "rgba(212,160,23,0.8)" }} />
+                  <span
+                    className="text-xs font-bold uppercase tracking-widest"
+                    style={{ color: "rgba(212,160,23,0.8)", fontFamily: "var(--font-heading)" }}
+                  >
+                    Awaiting Purchase Order
+                  </span>
+                  <span
+                    className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold"
+                    style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.8)" }}
+                  >
+                    {awaitingPO.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {awaitingPO.map(req => {
+                    const label = req.order_type === "stock"
+                      ? `Stock — ${req.job_description}`
+                      : `${req.aircraft_tail} — ${req.job_description}`
+                    const dateNeeded = new Date(req.date_needed + "T00:00:00")
+                    const today = new Date()
+                    const daysUntil = Math.ceil((dateNeeded.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                    const isUrgent = daysUntil <= 3
+
+                    return (
+                      <div
+                        key={req.id}
+                        className="flex items-center gap-4 px-4 py-3 rounded-lg"
+                        style={{
+                          background: req.aog ? "rgba(255,60,60,0.05)" : "rgba(255,255,255,0.03)",
+                          border: req.aog ? "1px solid rgba(255,60,60,0.2)" : "1px solid rgba(255,255,255,0.07)",
+                        }}
+                      >
+                        {req.aog && (
+                          <span
+                            className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide"
+                            style={{ background: "rgba(255,60,60,0.2)", color: "rgba(255,100,100,0.9)" }}
+                          >
+                            AOG
+                          </span>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: "rgba(255,255,255,0.85)" }}>
+                            {label}
+                          </p>
+                          <div className="flex items-center gap-3 mt-0.5">
+                            {req.work_order && (
+                              <span className="text-xs font-mono" style={{ color: "rgba(255,255,255,0.35)" }}>WO# {req.work_order}</span>
+                            )}
+                            <span className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+                              {req.line_count} part{req.line_count !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0" style={{ color: isUrgent ? "rgba(255,150,50,0.8)" : "rgba(255,255,255,0.35)" }}>
+                          <Clock className="w-3 h-3" />
+                          <span className="text-xs">
+                            {daysUntil < 0 ? `${Math.abs(daysUntil)}d overdue` : daysUntil === 0 ? "Today" : `${daysUntil}d`}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => navigate("/app/beet-box/purchase-orders/new", {
+                            state: {
+                              fromRequest: {
+                                requestId: req.id,
+                                requestedBy: req.requested_by,
+                                woRef: req.work_order ?? "",
+                                dateNeeded: req.date_needed,
+                                jobDescription: req.job_description,
+                                lines: req.lines.map(l => ({
+                                  requestLineId: l.id,
+                                  partNumber: l.part_number,
+                                  description: l.description ?? "",
+                                  qty: l.quantity,
+                                  catalogId: null,
+                                }))
+                              }
+                            }
+                          })}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold flex-shrink-0 transition-colors"
+                          style={{
+                            background: "rgba(212,160,23,0.12)",
+                            border: "1px solid rgba(212,160,23,0.3)",
+                            color: "rgba(212,160,23,0.9)",
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "rgba(212,160,23,0.2)" }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "rgba(212,160,23,0.12)" }}
+                        >
+                          <Package className="w-3.5 h-3.5" />
+                          Create PO
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* ── Stat Cards ──────────────────────────────────────────────── */}
             <div className="grid grid-cols-4 gap-4">
               {[

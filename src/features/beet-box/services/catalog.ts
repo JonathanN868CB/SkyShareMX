@@ -67,7 +67,7 @@ export async function getCatalogEntryById(id: string): Promise<CatalogEntry | nu
     supabase.from("parts_catalog").select("*").eq("id", id).maybeSingle(),
     supabase
       .from("parts_catalog_vendors")
-      .select("*, vendors!inner(name)")
+      .select("*, bb_parts_suppliers!inner(name)")
       .eq("catalog_id", id)
       .order("is_preferred", { ascending: false }),
     supabase
@@ -98,7 +98,7 @@ export async function getCatalogEntryById(id: string): Promise<CatalogEntry | nu
     id: v.id as string,
     catalogId: v.catalog_id as string,
     vendorId: v.vendor_id as string,
-    vendorName: (v.vendors as { name: string })?.name ?? "Unknown",
+    vendorName: (v.bb_parts_suppliers as { name: string })?.name ?? "Unknown",
     leadTimeDays: v.lead_time_days as number | null,
     lastUnitCost: v.last_unit_cost as number | null,
     isPreferred: v.is_preferred as boolean,
@@ -182,6 +182,53 @@ export async function searchCatalog(query: string): Promise<CatalogSearchResult[
   })
 
   return data.map((r: { id: string; part_number: string; description: string | null }) => ({
+    id: r.id,
+    partNumber: r.part_number,
+    description: r.description,
+    inventoryOnHand: invMap[r.id]?.qty ?? 0,
+    locationBin: invMap[r.id]?.bin ?? null,
+  }))
+}
+
+// Search by part-number family (prefix match on the base number, excluding already-shown IDs).
+// e.g. query "AN960-416" → base "AN960" → finds AN960-416, AN960-416L, AN960-516, etc.
+export async function searchCatalogFamily(query: string, excludeIds: string[]): Promise<CatalogSearchResult[]> {
+  // Derive the base: strip trailing dash-segment (AN960-416 → AN960, MS21042-3 → MS21042)
+  const dashIdx = query.lastIndexOf("-")
+  const base = dashIdx > 1 ? query.slice(0, dashIdx) : query
+  if (base.length < 2) return []
+
+  const { data } = await supabase
+    .from("parts_catalog")
+    .select("id, part_number, description")
+    .ilike("part_number", `${base}%`)
+    .order("part_number")
+    .limit(15)
+
+  if (!data || data.length === 0) return []
+
+  // Exclude IDs already shown in the primary results
+  const filtered = excludeIds.length > 0
+    ? data.filter((r: { id: string }) => !excludeIds.includes(r.id))
+    : data
+
+  if (filtered.length === 0) return []
+
+  // Fetch inventory
+  const catalogIds = filtered.map((r: { id: string }) => r.id)
+  const { data: invData } = await supabase
+    .from("bb_inventory_parts")
+    .select("catalog_id, qty_on_hand, location_bin")
+    .in("catalog_id", catalogIds)
+
+  const invMap: Record<string, { qty: number; bin: string | null }> = {}
+  invData?.forEach((r: { catalog_id: string; qty_on_hand: number; location_bin: string | null }) => {
+    if (!invMap[r.catalog_id]) invMap[r.catalog_id] = { qty: 0, bin: null }
+    invMap[r.catalog_id].qty += r.qty_on_hand
+    if (r.location_bin && !invMap[r.catalog_id].bin) invMap[r.catalog_id].bin = r.location_bin
+  })
+
+  return filtered.slice(0, 8).map((r: { id: string; part_number: string; description: string | null }) => ({
     id: r.id,
     partNumber: r.part_number,
     description: r.description,
@@ -282,7 +329,7 @@ export async function addCatalogVendor(
       is_preferred: data?.isPreferred ?? false,
       notes: data?.notes ?? null,
     })
-    .select("*, vendors!inner(name)")
+    .select("*, bb_parts_suppliers!inner(name)")
     .single()
 
   if (error) throw error
@@ -290,7 +337,7 @@ export async function addCatalogVendor(
     id: row.id,
     catalogId: row.catalog_id,
     vendorId: row.vendor_id,
-    vendorName: (row.vendors as { name: string })?.name ?? "Unknown",
+    vendorName: (row.bb_parts_suppliers as { name: string })?.name ?? "Unknown",
     leadTimeDays: row.lead_time_days,
     lastUnitCost: row.last_unit_cost,
     isPreferred: row.is_preferred,

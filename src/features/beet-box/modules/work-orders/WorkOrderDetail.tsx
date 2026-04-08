@@ -17,7 +17,7 @@ import {
   getWorkOrderById, updateWorkOrderStatus, updateWorkOrder,
   upsertWOItem, updateItemStatus, updateWOItemFields, signOffItem, clearSignOff,
   addItemPart, removeItemPart, issuePartFromInventory, clockLabor, deleteLabor,
-  getParts, getTechnicians, getMyProfileId, getMyProfile,
+  getParts, getTechnicians, getMyProfileId, getMyProfile, searchPartsLimited,
   getLogbookEntries, getOrCreateDraftLogbookEntry, createComponentInstallEntry, upsertEntrySignatory, addSignatoryLine, removeItemLogbookLines, updateLogbookEntry,
   addAuditEntry, deleteWorkOrder,
   upsertFlatRate, upsertCorrectiveAction,
@@ -31,6 +31,8 @@ import type {
   AircraftTimesSnapshot,
 } from "../../types"
 import { TimesEditModal } from "./TimesEditModal"
+import { PartsRequestForm } from "@/features/parts/components/PartsRequestForm"
+import { STATUS_CONFIG, LINE_STATUS_CONFIG } from "@/features/parts/constants"
 import { supabase } from "@/lib/supabase"
 import { WOStatusBadge } from "../../shared/StatusBadge"
 import { useAuth } from "@/features/auth"
@@ -481,6 +483,10 @@ interface ItemDetailPanelProps {
   mechanics: Mechanic[]
   inventoryParts: InventoryPart[]
   onNavigatePO: () => void
+  pullPartNumber?: string
+  onPullHandled?: () => void
+  partsOnOrder: { id: string; status: string; createdAt: string; lines: { id: string; partNumber: string; description: string | null; quantity: number; lineStatus: string }[] }[]
+  onPullToWO: (partNumber: string) => void
   addingPartToItem: string | null
   setAddingPartToItem: (id: string | null) => void
   newPart: { partNumber: string; description: string; qty: string; unitPrice: string }
@@ -497,14 +503,20 @@ interface ItemDetailPanelProps {
 function ItemDetailPanel({
   item, isLocked, sectionColor, aircraftModel, mechanicName, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
   mechanics, inventoryParts, onNavigatePO,
+  pullPartNumber, onPullHandled,
+  partsOnOrder, onPullToWO,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart, onAddFromInventory,
   addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
 }: ItemDetailPanelProps) {
+  const navigate = useNavigate()
   const discRef = useRef<HTMLTextAreaElement>(null)
   const corrRef = useRef<HTMLTextAreaElement>(null)
   const savedOnFocus = useRef<Partial<WOItem>>({})
   const [showInventoryPicker, setShowInventoryPicker] = useState(false)
   const [invSearch, setInvSearch] = useState("")
+  const [invResults, setInvResults] = useState<InventoryPart[]>([])
+  const [invLoading, setInvLoading] = useState(false)
+  const invDebounceRef = useRef<ReturnType<typeof setTimeout>>()
   const [noLogbook, setNoLogbook] = useState(false)
   const [digitalSig, setDigitalSig] = useState(false)
   const [signingOff, setSigningOff] = useState(false)
@@ -526,20 +538,34 @@ function ItemDetailPanel({
     )
   }, [item.correctiveAction, item.parts, inventoryParts])
 
-  // ── Filtered inventory for picker ─────────────────────────────────────────────
-  const filteredInventory = useMemo(() => {
-    const q = invSearch.toLowerCase().trim()
-    if (!q) return inventoryParts
-    return inventoryParts.filter(p =>
-      p.partNumber.toLowerCase().includes(q) ||
-      p.description.toLowerCase().includes(q)
-    )
-  }, [invSearch, inventoryParts])
+  // ── Pull to WO: when a received part is being pulled, open picker pre-seeded ─
+  useEffect(() => {
+    if (!pullPartNumber) return
+    setInvSearch(pullPartNumber)
+    setShowInventoryPicker(true)
+    onPullHandled?.()
+  }, [pullPartNumber]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Live inventory search for picker ─────────────────────────────────────────
+  useEffect(() => {
+    if (!showInventoryPicker) return
+    if (invDebounceRef.current) clearTimeout(invDebounceRef.current)
+    const delay = invSearch.trim().length >= 2 ? 250 : 0
+    invDebounceRef.current = setTimeout(() => {
+      setInvLoading(true)
+      searchPartsLimited(invSearch.trim() || undefined)
+        .then(setInvResults)
+        .catch(() => {})
+        .finally(() => setInvLoading(false))
+    }, delay)
+    return () => { if (invDebounceRef.current) clearTimeout(invDebounceRef.current) }
+  }, [invSearch, showInventoryPicker])
 
   function addFromInventory(inv: InventoryPart) {
     onAddFromInventory(inv)
     setShowInventoryPicker(false)
     setInvSearch("")
+    setInvResults([])
   }
 
   const itemStatus    = item.itemStatus ?? "pending"
@@ -1044,9 +1070,10 @@ function ItemDetailPanel({
         </div>{/* end labor outer wrapper */}
 
         {/* Parts */}
-        <div className="px-5 pt-3 pb-1" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
+        <div className="px-5 pt-3 pb-1 flex items-start gap-3" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
+        {/* Left: issued parts */}
         <div
-          className="rounded-xl overflow-hidden"
+          className="flex-1 min-w-0 rounded-xl overflow-hidden"
           style={{ border: "1px solid rgba(212,160,23,0.18)", borderLeft: "3px solid rgba(212,160,23,0.5)" }}
         >
           {/* Parts header */}
@@ -1189,7 +1216,7 @@ function ItemDetailPanel({
                   Pull from Inventory
                 </span>
                 <div className="flex-1" />
-                <button onClick={() => { setShowInventoryPicker(false); setInvSearch("") }} className="text-white/30 hover:text-white/70 transition-colors">
+                <button onClick={() => { setShowInventoryPicker(false); setInvSearch(""); setInvResults([]) }} className="text-white/30 hover:text-white/70 transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -1206,10 +1233,12 @@ function ItemDetailPanel({
               </div>
               {/* Results */}
               <div className="max-h-56 overflow-y-auto">
-                {filteredInventory.length === 0 ? (
+                {invLoading ? (
+                  <p className="px-5 py-4 text-white/30 text-sm italic">Searching...</p>
+                ) : invResults.length === 0 ? (
                   <p className="px-5 py-4 text-white/30 text-sm italic">No matching parts</p>
                 ) : (
-                  filteredInventory.map(inv => {
+                  invResults.map(inv => {
                     const alreadyAdded = item.parts.some(p => p.partNumber.toLowerCase() === inv.partNumber.toLowerCase())
                     return (
                       <div
@@ -1251,7 +1280,7 @@ function ItemDetailPanel({
                 className="px-4 py-2.5 flex items-center justify-between"
                 style={{ borderTop: "1px solid hsl(0,0%,17%)", background: "hsl(0,0%,10%)" }}
               >
-                <span className="text-white/25 text-xs">{filteredInventory.length} part{filteredInventory.length !== 1 ? "s" : ""} in inventory</span>
+                <span className="text-white/25 text-xs">{invResults.length} part{invResults.length !== 1 ? "s" : ""} shown</span>
                 <button
                   onClick={() => { setShowInventoryPicker(false); setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
                   className="text-white/40 hover:text-white/70 text-xs transition-colors"
@@ -1326,6 +1355,79 @@ function ItemDetailPanel({
           )}
           </div>{/* end parts body */}
         </div>{/* end parts card */}
+
+        {/* Right: Parts on Order for this WO */}
+        <div
+          className="flex-shrink-0 rounded-xl overflow-hidden flex flex-col"
+          style={{ width: 268, border: "1px solid rgba(212,160,23,0.13)", minHeight: 120, maxHeight: 456 }}
+        >
+          <div
+            className="px-3 py-2 flex items-center gap-1.5 flex-shrink-0"
+            style={{ background: "rgba(212,160,23,0.06)", borderBottom: "1px solid rgba(212,160,23,0.1)" }}
+          >
+            <ShoppingCart className="w-3 h-3" style={{ color: "rgba(212,160,23,0.7)" }} />
+            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "rgba(212,160,23,0.7)", fontFamily: "var(--font-heading)" }}>
+              Parts on Order
+            </span>
+            {partsOnOrder.length > 0 && (
+              <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.8)" }}>
+                {partsOnOrder.reduce((s, r) => s + r.lines.length, 0)}
+              </span>
+            )}
+          </div>
+          <div className="overflow-y-auto flex-1" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(212,160,23,0.3) transparent" }}>
+            {partsOnOrder.length === 0 ? (
+              <div className="px-3 py-4 text-center">
+                <p className="text-white/20 text-xs italic">No pending requests</p>
+              </div>
+            ) : (
+              partsOnOrder.map(req => {
+                const sc = STATUS_CONFIG[req.status as keyof typeof STATUS_CONFIG]
+                return (
+                  <div key={req.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                    <button
+                      className="w-full px-3 py-1.5 flex items-center justify-between transition-colors hover:bg-white/[0.04] text-left"
+                      style={{ background: "rgba(255,255,255,0.02)" }}
+                      onClick={() => navigate(`/app/beet-box/parts/${req.id}`)}
+                    >
+                      <span className="text-white/40 text-[10px] underline underline-offset-2 decoration-white/20">
+                        {new Date(req.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                      {sc && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ background: sc.bg, color: sc.color }}>
+                          {sc.label}
+                        </span>
+                      )}
+                    </button>
+                    {req.lines.map(line => {
+                      const lsc = LINE_STATUS_CONFIG[line.lineStatus as keyof typeof LINE_STATUS_CONFIG]
+                      return (
+                        <div key={line.id} className="px-3 py-1.5 flex items-center gap-2">
+                          <span className="font-mono text-white/75 text-[10px] flex-1 truncate">{line.partNumber}</span>
+                          {lsc && (
+                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded flex-shrink-0" style={{ background: lsc.bg, color: lsc.color }}>
+                              {lsc.label}
+                            </span>
+                          )}
+                          {line.lineStatus === "received" && (
+                            <button
+                              onClick={() => onPullToWO(line.partNumber)}
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
+                              style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.9)", border: "1px solid rgba(212,160,23,0.3)" }}
+                            >
+                              Pull
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+
         </div>{/* end parts outer wrapper */}
 
 
@@ -1531,8 +1633,9 @@ export default function WorkOrderDetail() {
   const [myProfile, setMyProfile] = useState<{ id: string; name: string } | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [visibleSections, setVisibleSections] = useState<LogbookSection[]>(
-    importedSections ?? ["Airframe", "Engine 1", "Propeller"]
+    importedSections ?? ["Airframe", "Engine 1"]
   )
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [draftLogbookEntries, setDraftLogbookEntries] = useState<LogbookEntry[]>([])
   const [logbookDraftError, setLogbookDraftError] = useState<string | null>(null)
   const [logbookCreating,   setLogbookCreating]   = useState(false)
@@ -1548,6 +1651,15 @@ export default function WorkOrderDetail() {
   const slideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [transitionColor, setTransitionColor] = useState<string>("rgba(255,255,255,0.3)")
+  const [orderPartsOpen, setOrderPartsOpen] = useState(false)
+  const [partsRequests, setPartsRequests] = useState<{
+    id: string
+    status: string
+    createdAt: string
+    lines: { id: string; partNumber: string; description: string | null; quantity: number; lineStatus: string }[]
+  }[]>([])
+  const [partsRequestsKey, setPartsRequestsKey] = useState(0)
+  const [pullPartNumber, setPullPartNumber] = useState<string | null>(null)
 
   async function handlePreviewPdf(type: "logbook" | "invoice", woNumber: string) {
     if (type === "logbook" && !logbookPrintRef.current) return
@@ -1602,6 +1714,15 @@ export default function WorkOrderDetail() {
       setWO(data)
       setNotes(data?.notes ?? "")
       setSelectedItemId(s => s ?? data?.items[0]?.id ?? null)
+      // Ensure every section that has items is visible, in canonical order
+      if (data?.items?.length) {
+        const sectionsInData = new Set(data.items.map(i => i.logbookSection))
+        setVisibleSections(prev => {
+          const merged = new Set(prev)
+          sectionsInData.forEach(s => merged.add(s))
+          return ALL_SECTIONS.filter(s => merged.has(s))
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -1666,6 +1787,32 @@ export default function WorkOrderDetail() {
       .catch(() => {})
     getMyProfile().then(p => { if (p) setMyProfile({ id: p.id, name: p.name }) }).catch(() => {})
   }, [loadWO, loadDraftLogbookEntries])
+
+  // Fetch parts requests linked to this WO by WO number
+  useEffect(() => {
+    if (!wo?.woNumber || wo.woNumber === "WO-IMPORT") return
+    supabase
+      .from("parts_requests")
+      .select("id, status, created_at, parts_request_lines(id, part_number, description, quantity, line_status)")
+      .eq("work_order", wo.woNumber)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        if (!data) return
+        setPartsRequests(data.map(r => ({
+          id: r.id,
+          status: r.status,
+          createdAt: r.created_at,
+          lines: ((r as any).parts_request_lines ?? []).map((l: any) => ({
+            id: l.id,
+            partNumber: l.part_number,
+            description: l.description,
+            quantity: l.quantity,
+            lineStatus: l.line_status,
+          })),
+        })))
+      })
+      .catch(() => {})
+  }, [wo?.woNumber, partsRequestsKey])
 
   // Fetch Hobbs differential for the WO's aircraft (for times edit modal)
   useEffect(() => {
@@ -2288,7 +2435,11 @@ export default function WorkOrderDetail() {
   }
 
   function showSection(s: LogbookSection) {
-    if (!visibleSections.includes(s)) setVisibleSections(v => [...v, s])
+    if (!visibleSections.includes(s)) setVisibleSections(v => ALL_SECTIONS.filter(x => [...v, s].includes(x)))
+  }
+
+  function hideSection(s: LogbookSection) {
+    setVisibleSections(v => v.filter(x => x !== s))
   }
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -2633,22 +2784,31 @@ export default function WorkOrderDetail() {
                 const isInstallSection = entry.kind === "install"
                 const installSerial   = isInstallSection ? (entry as any).serial as string : null
                 const color = isInstallSection ? "#10b981" : SECTION_COLORS[section]
-                // S/N for this section from snapshot or aircraft record
+                // S/N for this section from snapshot, logbook entry, or aircraft record
                 const snap = wo.timesSnapshot as any
+                const lbEntryForSection = draftLogbookEntries.find(e => e.logbookSection === section)
                 const sectionSerial: string | null = isInstallSection ? installSerial :
                   section === "Airframe"  ? (wo.aircraft?.serialNumber ?? null) :
-                  section === "Engine 1"  ? (snap?.eng1Serial ?? null) :
-                  section === "Engine 2"  ? (snap?.eng2Serial ?? null) :
-                  section === "Propeller" ? (snap?.propSerial ?? null) :
-                  section === "APU"       ? (snap?.apuSerial  ?? null) : null
+                  section === "Engine 1"  ? (snap?.eng1Serial ?? lbEntryForSection?.guestSerial ?? null) :
+                  section === "Engine 2"  ? (snap?.eng2Serial ?? lbEntryForSection?.guestSerial ?? null) :
+                  section === "Propeller" ? (snap?.propSerial ?? lbEntryForSection?.guestSerial ?? null) :
+                  section === "APU"       ? (snap?.apuSerial  ?? lbEntryForSection?.guestSerial ?? null) : null
                 const canExchange = !isLocked && !isInstallSection && ["Engine 1", "Engine 2", "Propeller", "APU"].includes(section)
                 const isExchanging = !isInstallSection && exchangeSection === section
                 const entryKey = isInstallSection ? `${section}__install__${installSerial}` : section
 
+                const isCollapsed = collapsedSections.has(entryKey)
+                const toggleCollapse = () => setCollapsedSections(prev => {
+                  const next = new Set(prev)
+                  next.has(entryKey) ? next.delete(entryKey) : next.add(entryKey)
+                  return next
+                })
+
                 return (
                   <div key={entryKey} className={entryIdx > 0 ? "mt-2" : ""}>
                     <div
-                      className="px-4 py-2 flex items-center gap-2 sticky top-0 z-10"
+                      className="px-3 py-2 flex items-center gap-2 sticky top-0 z-10 cursor-pointer select-none"
+                      onClick={toggleCollapse}
                       style={{
                         background: isInstallSection
                           ? `linear-gradient(to right, rgba(16,185,129,0.14), hsl(0,0%,11%))`
@@ -2657,6 +2817,12 @@ export default function WorkOrderDetail() {
                         borderLeft: `3px solid ${color}`,
                       }}
                     >
+                      {/* Collapse chevron */}
+                      {isCollapsed
+                        ? <ChevronRight className="w-4 h-4 flex-shrink-0 text-white/40" />
+                        : <ChevronDown  className="w-4 h-4 flex-shrink-0 text-white/40" />
+                      }
+
                       {isInstallSection ? (
                         <>
                           <ArrowLeftRight className="w-3 h-3 flex-shrink-0" style={{ color: "#10b981" }} />
@@ -2684,7 +2850,7 @@ export default function WorkOrderDetail() {
                               S/N {sectionSerial}
                             </span>
                           )}
-                          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
                             {canExchange && (
                               <button
                                 onClick={() => {
@@ -2698,10 +2864,22 @@ export default function WorkOrderDetail() {
                               </button>
                             )}
                             <span className="text-white/40 text-xs font-mono">{sectionItems.length}</span>
+                            {!isLocked && sectionItems.length === 0 && (
+                              <button
+                                onClick={() => hideSection(section)}
+                                title={`Remove ${section} section`}
+                                className="text-white/15 hover:text-red-400/70 transition-colors rounded p-0.5 ml-0.5"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
                         </>
                       )}
                     </div>
+
+                    {/* ── Collapsible body ── */}
+                    {!isCollapsed && <>
 
                     {/* ── Component Exchange panel ── */}
                     {isExchanging && (
@@ -2847,6 +3025,8 @@ export default function WorkOrderDetail() {
                         </>
                       )
                     })()}
+
+                    </>}{/* end !isCollapsed */}
                   </div>
                 )
               })
@@ -2887,7 +3067,11 @@ export default function WorkOrderDetail() {
                   onDeletePart={id => removePartEntry(selectedItem.id, id)}
                   mechanics={mechanics}
                   inventoryParts={inventoryParts}
-                  onNavigatePO={() => navigate("/app/beet-box/purchase-orders")}
+                  onNavigatePO={() => setOrderPartsOpen(true)}
+                  pullPartNumber={pullPartNumber ?? undefined}
+                  onPullHandled={() => setPullPartNumber(null)}
+                  partsOnOrder={partsRequests}
+                  onPullToWO={pn => { setPullPartNumber(pn) }}
                   addingPartToItem={addingPartToItem}
                   setAddingPartToItem={setAddingPartToItem}
                   newPart={newPart}
@@ -2987,13 +3171,13 @@ export default function WorkOrderDetail() {
                   </div>
                 </div>
               ) : (
-                /* ── Empty state ── */
-                <div className="h-full flex flex-col items-center justify-center gap-3 text-white/20 select-none">
-                  <FileText className="w-14 h-14" />
-                  <p className="text-lg">Select a work item from the list</p>
-                  <p className="text-sm">or click "Add item" under any section</p>
+                /* ── Default view: hint ── */
+                <div className="flex items-center gap-3 px-6 py-4 text-white/20 select-none">
+                  <FileText className="w-5 h-5 flex-shrink-0" />
+                  <p className="text-sm">Select a work item · or click "Add item" under any section</p>
                 </div>
               )}
+
             </div>
           </>
         )}
@@ -3128,15 +3312,15 @@ export default function WorkOrderDetail() {
                   const leftFields: { label: string; value: string }[] = isEngine ? [
                     { label: "ENG MFR:",   value: wo.aircraft?.engineManufacturer || "—" },
                     { label: "ENG MDL:",   value: wo.aircraft?.engineModel        || "—" },
-                    { label: "ENG S/N:",   value: "—" },
+                    { label: "ENG S/N:",   value: entry.guestSerial               || "—" },
                   ] : isProp ? [
                     { label: "PROP MFR:",  value: "—" },
                     { label: "PROP MDL:",  value: "—" },
-                    { label: "PROP S/N:",  value: "—" },
+                    { label: "PROP S/N:",  value: entry.guestSerial               || "—" },
                   ] : isAPU ? [
                     { label: "APU MFR:",   value: "—" },
                     { label: "APU MDL:",   value: "—" },
-                    { label: "APU S/N:",   value: "—" },
+                    { label: "APU S/N:",   value: entry.guestSerial               || "—" },
                   ] : [
                     { label: "MAKE:",      value: wo.aircraft?.make        || "—" },
                     { label: "MODEL:",     value: wo.aircraft?.modelFull   || "—" },
@@ -3202,17 +3386,29 @@ export default function WorkOrderDetail() {
                             <span>{entry.entryDate}</span>
                           </div>
                           {([
-                            { label: "A/C TT:",   field: "aircraftTime" as const, dbField: "totalAircraftTime" as const, step: "0.1", prev: entry.totalAircraftTime },
-                            { label: "Landings:", field: "landings"     as const, dbField: "landings"          as const, step: "1",   prev: entry.landings },
-                            { label: "Hobbs:",    field: "hobbs"        as const, dbField: "hobbs"             as const, step: "0.1", prev: entry.hobbs },
+                            {
+                              label: isEngine ? "ENG TT:" : isProp ? "PROP TT:" : isAPU ? "APU HRS:" : "A/C TT:",
+                              field: "aircraftTime" as const,
+                              dbField: "totalAircraftTime" as const,
+                              inputMode: "decimal" as const,
+                            },
+                            {
+                              label: isEngine || isProp ? "Cycles:" : isAPU ? "Starts:" : "Landings:",
+                              field: "landings" as const,
+                              dbField: "landings" as const,
+                              inputMode: "numeric" as const,
+                            },
+                            {
+                              label: "Hobbs:",
+                              field: "hobbs" as const,
+                              dbField: "hobbs" as const,
+                              inputMode: "decimal" as const,
+                            },
                           ]).map(f => (
                             <div key={f.field} className="flex items-center justify-end gap-1.5 leading-[1.6]">
                               <span className="font-semibold">{f.label}</span>
-                              {f.prev != null && String(f.prev) !== edits[f.field] && (
-                                <span className="text-gray-400 line-through text-[11px]">{f.prev}</span>
-                              )}
                               <input
-                                type="number" step={f.step} placeholder="—"
+                                type="text" inputMode={f.inputMode} placeholder="—"
                                 value={edits[f.field]}
                                 onChange={e => setLbField(entry.id, f.field, e.target.value)}
                                 onBlur={e => {
@@ -3586,27 +3782,47 @@ export default function WorkOrderDetail() {
             for (const entry of draftLogbookEntries) {
               const s = entry.logbookSection
               const patch: Parameters<typeof updateLogbookEntry>[1] = {}
+              // Update the "New" (post-work) fields so corrected times appear in
+            // the editable position, not in a strikethrough reference position.
               if (s === "Airframe") {
-                if (newTimes.airframeHrs != null) patch.totalAircraftTime = newTimes.airframeHrs
-                if (newTimes.landings    != null) patch.landings           = newTimes.landings
-                if (newTimes.hobbs       != null) patch.hobbs              = newTimes.hobbs
+                if (newTimes.airframeHrs != null) patch.totalAircraftTimeNew = newTimes.airframeHrs
+                if (newTimes.landings    != null) patch.landingsNew           = newTimes.landings
+                if (newTimes.hobbs       != null) patch.hobbsNew              = newTimes.hobbs
               } else if (s === "Engine 1") {
-                if (newTimes.eng1Tsn != null) patch.totalAircraftTime = newTimes.eng1Tsn
-                if (newTimes.eng1Csn != null) patch.landings           = newTimes.eng1Csn
+                if (newTimes.eng1Tsn    != null) patch.totalAircraftTimeNew = newTimes.eng1Tsn
+                if (newTimes.eng1Csn    != null) patch.landingsNew           = newTimes.eng1Csn
+                if (newTimes.eng1Serial)         (patch as any).guestSerial  = newTimes.eng1Serial
               } else if (s === "Engine 2") {
-                if (newTimes.eng2Tsn != null) patch.totalAircraftTime = newTimes.eng2Tsn
-                if (newTimes.eng2Csn != null) patch.landings           = newTimes.eng2Csn
+                if (newTimes.eng2Tsn    != null) patch.totalAircraftTimeNew = newTimes.eng2Tsn
+                if (newTimes.eng2Csn    != null) patch.landingsNew           = newTimes.eng2Csn
+                if (newTimes.eng2Serial)         (patch as any).guestSerial  = newTimes.eng2Serial
               } else if (s === "Propeller") {
-                if (newTimes.propTsn != null) patch.totalAircraftTime = newTimes.propTsn
-                if (newTimes.propCsn != null) patch.landings           = newTimes.propCsn
+                if (newTimes.propTsn    != null) patch.totalAircraftTimeNew = newTimes.propTsn
+                if (newTimes.propCsn    != null) patch.landingsNew           = newTimes.propCsn
+                if (newTimes.propSerial)         (patch as any).guestSerial  = newTimes.propSerial
               } else if (s === "APU") {
-                if (newTimes.apuHrs    != null) patch.totalAircraftTime = newTimes.apuHrs
-                if (newTimes.apuStarts != null) patch.landings           = newTimes.apuStarts
+                if (newTimes.apuHrs    != null) patch.totalAircraftTimeNew = newTimes.apuHrs
+                if (newTimes.apuStarts != null) patch.landingsNew           = newTimes.apuStarts
+                if (newTimes.apuSerial)         (patch as any).guestSerial  = newTimes.apuSerial
               }
               if (Object.keys(patch).length > 0) {
                 await updateLogbookEntry(entry.id, patch)
               }
             }
+            auditLog({
+              entryType: "times_change",
+              summary: "Aircraft times updated",
+              detail: [
+                newTimes.airframeHrs != null  ? `A/F TT: ${newTimes.airframeHrs}` : null,
+                newTimes.landings    != null  ? `Ldg: ${newTimes.landings}`        : null,
+                newTimes.eng1Tsn     != null  ? `ENG1 TSN: ${newTimes.eng1Tsn}`   : null,
+                newTimes.eng1Csn     != null  ? `ENG1 ENC: ${newTimes.eng1Csn}`   : null,
+                newTimes.eng2Tsn     != null  ? `ENG2 TSN: ${newTimes.eng2Tsn}`   : null,
+                newTimes.eng2Csn     != null  ? `ENG2 ENC: ${newTimes.eng2Csn}`   : null,
+                newTimes.propTsn     != null  ? `PROP TSN: ${newTimes.propTsn}`   : null,
+                newTimes.apuHrs      != null  ? `APU HRS: ${newTimes.apuHrs}`     : null,
+              ].filter(Boolean).join(" · ") || null,
+            })
             await Promise.all([loadWO(), loadDraftLogbookEntries()])
             setTimesEditOpen(false)
           }}
@@ -3788,6 +4004,69 @@ export default function WorkOrderDetail() {
             />
           </div>
         </div>
+      )}
+
+      {/* ── Order Parts Slide-Over ────────────────────────────────────────── */}
+      {orderPartsOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0"
+            style={{ background: "rgba(0,0,0,0.55)" }}
+            onClick={() => setOrderPartsOpen(false)}
+          />
+          {/* Panel */}
+          <div
+            className="relative flex flex-col h-full overflow-hidden"
+            style={{
+              width: "min(680px, 95vw)",
+              background: "hsl(0 0% 9%)",
+              borderLeft: "1px solid hsl(0 0% 18%)",
+              boxShadow: "-8px 0 32px rgba(0,0,0,0.5)",
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-6 py-4 flex-shrink-0"
+              style={{ borderBottom: "1px solid hsl(0 0% 16%)" }}
+            >
+              <div>
+                <h2
+                  className="text-white font-semibold"
+                  style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+                >
+                  New Parts Request
+                </h2>
+                {wo && (
+                  <p className="text-xs mt-0.5" style={{ color: "rgba(212,160,23,0.7)" }}>
+                    WO# {wo.woNumber}{wo.aircraft?.registration ? ` · ${wo.aircraft.registration}` : wo.guestRegistration ? ` · ${wo.guestRegistration}` : ""}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setOrderPartsOpen(false)}
+                className="text-white/30 hover:text-white/70 transition-colors p-1.5 rounded hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {/* Scrollable form body */}
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {wo && (
+                <PartsRequestForm
+                  prefill={{
+                    aircraftId:     wo.aircraftId ?? undefined,
+                    aircraftTail:   wo.aircraft?.registration ?? wo.guestRegistration ?? undefined,
+                    woNumber:       wo.woNumber,
+                    jobDescription: wo.description ?? undefined,
+                  }}
+                  onClose={() => { setOrderPartsOpen(false); setPartsRequestsKey(k => k + 1) }}
+                />
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
     </div>

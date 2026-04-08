@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react"
-import { AlertTriangle, Award, Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { AlertTriangle, Award, Bell, Camera, Check, LogOut, MessageSquare, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
 import { getMechanicCerts, upsertMechanicCert } from "@/features/beet-box/services/mechanics"
 import type { MechanicCert } from "@/features/beet-box/types"
 import { SuggestionWidget } from "@/features/site-suggestions"
@@ -76,6 +76,13 @@ function NotifIcon({ type }: { type: string }) {
       </div>
     )
   }
+  if (type === "suggestion_replied") {
+    return (
+      <div style={{ ...style, background: "rgba(129,140,248,0.15)", color: "#818cf8" }}>
+        <MessageSquare size={13} />
+      </div>
+    )
+  }
   return (
     <div style={{ ...style, background: "rgba(255,255,255,0.06)", color: "hsl(var(--muted-foreground))" }}>
       <Bell size={13} />
@@ -86,43 +93,71 @@ function NotifIcon({ type }: { type: string }) {
 function NotificationRow({
   notif,
   onRead,
+  onDelete,
+  onClose,
 }: {
   notif: AppNotification
   onRead: (id: string) => void
+  onDelete: (id: string) => void
+  onClose: () => void
 }) {
+  const navigate = useNavigate()
+  const link = (notif.metadata?.link as string | undefined) ??
+    (notif.type === "new_user" ? "/app/admin/users" : null)
+
+  function handleClick() {
+    if (!notif.read) onRead(notif.id)
+    if (link) { onClose(); navigate(link) }
+  }
+
   return (
-    <button
-      onClick={() => { if (!notif.read) onRead(notif.id) }}
-      className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
-      style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", cursor: notif.read ? "default" : "pointer" }}
+    <div
+      className="flex items-start group transition-colors hover:bg-white/5"
+      style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
     >
-      <NotifIcon type={notif.type} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span
-            className="text-xs font-semibold truncate"
-            style={{ color: notif.read ? "hsl(var(--muted-foreground))" : "hsl(var(--foreground))" }}
-          >
-            {notif.title}
-          </span>
-          {!notif.read && (
+      <button
+        onClick={handleClick}
+        className="flex-1 flex items-start gap-3 px-4 py-3 text-left min-w-0"
+        style={{ cursor: (link || !notif.read) ? "pointer" : "default" }}
+      >
+        <NotifIcon type={notif.type} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
             <span
-              className="shrink-0 w-1.5 h-1.5 rounded-full"
-              style={{ background: "var(--skyshare-gold)" }}
-            />
-          )}
+              className="text-xs font-semibold truncate"
+              style={{ color: notif.read ? "hsl(var(--muted-foreground))" : "hsl(var(--foreground))" }}
+            >
+              {notif.title}
+            </span>
+            {!notif.read && (
+              <span
+                className="shrink-0 w-1.5 h-1.5 rounded-full"
+                style={{ background: "var(--skyshare-gold)" }}
+              />
+            )}
+          </div>
+          <p
+            className="text-xs mt-0.5 leading-snug"
+            style={{ color: "hsl(var(--muted-foreground))", opacity: notif.read ? 0.55 : 0.85 }}
+          >
+            {notif.message}
+          </p>
+          <span className="text-[10px] mt-1 block" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>
+            {timeAgo(notif.created_at)}
+          </span>
         </div>
-        <p
-          className="text-xs mt-0.5 leading-snug"
-          style={{ color: "hsl(var(--muted-foreground))", opacity: notif.read ? 0.55 : 0.85 }}
-        >
-          {notif.message}
-        </p>
-        <span className="text-[10px] mt-1 block" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>
-          {timeAgo(notif.created_at)}
-        </span>
-      </div>
-    </button>
+      </button>
+      <button
+        onClick={e => { e.stopPropagation(); onDelete(notif.id) }}
+        className="shrink-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity px-3 self-stretch"
+        style={{ color: "hsl(var(--muted-foreground))" }}
+        title="Dismiss"
+        onMouseEnter={e => (e.currentTarget.style.color = "hsl(var(--foreground))")}
+        onMouseLeave={e => (e.currentTarget.style.color = "hsl(var(--muted-foreground))")}
+      >
+        ×
+      </button>
+    </div>
   )
 }
 
@@ -605,8 +640,9 @@ function ProfileSettingsDialog({
 export function Topbar() {
   const { profile, user, signOut } = useAuth()
   const { theme, setTheme } = useTheme()
-  const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
+  const { notifications, unreadCount, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [notifOpen, setNotifOpen] = useState(false)
   const [aogCount, setAogCount] = useState(0)
   const navigate = useNavigate()
 
@@ -649,7 +685,7 @@ export function Topbar() {
             variant="ghost"
             size="sm"
             className="h-8 px-2 gap-1.5 hover:bg-accent"
-            onClick={() => navigate("/app/parts")}
+            onClick={() => navigate("/app/beet-box/parts")}
             title={`${aogCount} active AOG request${aogCount > 1 ? "s" : ""}`}
           >
             <AlertTriangle className="h-3.5 w-3.5" style={{ color: "rgba(255,80,80,0.9)" }} />
@@ -663,7 +699,7 @@ export function Topbar() {
         )}
 
         {/* Notifications bell */}
-        <Popover>
+        <Popover open={notifOpen} onOpenChange={setNotifOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -690,7 +726,7 @@ export function Topbar() {
           <PopoverContent
             align="end"
             sideOffset={8}
-            className="p-0 w-80 border-white/10"
+            className="p-0 w-96 border-white/10"
             style={{ background: "hsl(0 0% 11%)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
           >
             {/* Header */}
@@ -714,16 +750,29 @@ export function Topbar() {
                   </span>
                 )}
               </div>
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllRead}
-                  className="text-[10px] transition-colors"
-                  style={{ color: "var(--skyshare-gold)", letterSpacing: "0.04em" }}
-                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
-                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-                >
-                  Mark all read
-                </button>
+              {notifications.length > 0 && (
+                <div className="flex items-center gap-3">
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={markAllRead}
+                      className="text-[10px] transition-opacity"
+                      style={{ color: "var(--skyshare-gold)", letterSpacing: "0.04em" }}
+                      onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
+                      onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                  <button
+                    onClick={clearAll}
+                    className="text-[10px] transition-opacity"
+                    style={{ color: "hsl(var(--muted-foreground))", letterSpacing: "0.04em" }}
+                    onMouseEnter={e => (e.currentTarget.style.opacity = "0.6")}
+                    onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                  >
+                    Clear all
+                  </button>
+                </div>
               )}
             </div>
 
@@ -738,7 +787,7 @@ export function Topbar() {
                 </div>
               ) : (
                 notifications.map(n => (
-                  <NotificationRow key={n.id} notif={n} onRead={markRead} />
+                  <NotificationRow key={n.id} notif={n} onRead={markRead} onDelete={deleteOne} onClose={() => setNotifOpen(false)} />
                 ))
               )}
             </div>

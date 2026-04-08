@@ -18,7 +18,21 @@ interface ShipToOption {
   address: string
 }
 
-export function PartsRequestForm() {
+export interface PartsRequestPrefill {
+  aircraftId?: string
+  aircraftTail?: string
+  woNumber?: string
+  jobDescription?: string
+  partNumber?: string
+  partDescription?: string
+}
+
+interface PartsRequestFormProps {
+  prefill?: PartsRequestPrefill
+  onClose?: () => void
+}
+
+export function PartsRequestForm({ prefill, onClose }: PartsRequestFormProps = {}) {
   const navigate = useNavigate()
   const { profile } = useAuth()
   const [submitting, setSubmitting] = useState(false)
@@ -31,10 +45,10 @@ export function PartsRequestForm() {
 
   // Form state — header
   const [orderType, setOrderType] = useState<OrderType>("aircraft")
-  const [aircraftId, setAircraftId] = useState("")
-  const [aircraftTail, setAircraftTail] = useState("")
-  const [jobDescription, setJobDescription] = useState("")
-  const [workOrder, setWorkOrder] = useState("")
+  const [aircraftId, setAircraftId] = useState(prefill?.aircraftId ?? "")
+  const [aircraftTail, setAircraftTail] = useState(prefill?.aircraftTail ?? "")
+  const [jobDescription, setJobDescription] = useState(prefill?.jobDescription ?? "")
+  const [workOrder, setWorkOrder] = useState(prefill?.woNumber ?? "")
   const [itemNumber, setItemNumber] = useState("")
   const [stockPurpose, setStockPurpose] = useState("")
 
@@ -54,8 +68,13 @@ export function PartsRequestForm() {
   // Notes
   const [notes, setNotes] = useState("")
 
-  // Parts lines
-  const [lines, setLines] = useState<LineItemData[]>([{ ...EMPTY_LINE }])
+  // Parts lines — prefill first line if a part number was passed in
+  const [lines, setLines] = useState<LineItemData[]>(() => {
+    if (prefill?.partNumber) {
+      return [{ ...EMPTY_LINE, part_number: prefill.partNumber, description: prefill.partDescription ?? "" }]
+    }
+    return [{ ...EMPTY_LINE }]
+  })
 
   // Validation
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -227,7 +246,7 @@ export function PartsRequestForm() {
       })
 
       // 6. Notifications
-      const notifMeta = { request_id: request.id, path: `/app/beet-box/parts/${request.id}` }
+      const notifMeta = { request_id: request.id, link: `/app/beet-box/parts/${request.id}` }
       const aogPrefix = aog ? "🔴 AOG: " : ""
 
       if (needsApproval) {
@@ -253,7 +272,11 @@ export function PartsRequestForm() {
       }
 
       toast.success(needsApproval ? "Parts request submitted — awaiting approval" : "Parts request submitted")
-      navigate("/app/beet-box/parts")
+      if (onClose) {
+        onClose()
+      } else {
+        navigate("/app/beet-box/parts")
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error"
       toast.error(`Failed to submit: ${msg}`)
@@ -659,7 +682,7 @@ export function PartsRequestForm() {
       <div className="flex items-center justify-end gap-4 pt-2">
         <button
           type="button"
-          onClick={() => navigate("/app/beet-box/parts")}
+          onClick={() => onClose ? onClose() : navigate("/app/beet-box/parts")}
           className="px-4 py-2 rounded-md text-sm transition-colors"
           style={{ color: "rgba(255,255,255,0.5)" }}
         >

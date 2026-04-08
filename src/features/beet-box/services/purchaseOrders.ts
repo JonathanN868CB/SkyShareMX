@@ -4,6 +4,7 @@ import type {
   PartCondition, CertificateType, InspectionStatus, ReceivingRecord,
 } from "../types"
 import { recordTransaction } from "./inventory"
+import { notifyProfileIds } from "@/features/parts/helpers"
 
 export async function getPurchaseOrders(filters?: {
   status?: POStatus | POStatus[]
@@ -42,15 +43,9 @@ export async function getPurchaseOrderById(id: string): Promise<PurchaseOrder | 
 // ─── Vendor lookup for PO creation ─────────────────────────────────────────
 
 export async function getVendorsForPO(): Promise<{ id: string; name: string }[]> {
-  const { data, error } = await supabase
-    .from("vendors")
-    .select("id, name")
-    .eq("active", true)
-    .order("preferred", { ascending: false })
-    .order("name")
-
-  if (error) throw error
-  return (data ?? []).map(v => ({ id: v.id, name: v.name }))
+  // Pull from bb_parts_suppliers (approved parts suppliers, NOT maintenance vendors)
+  const { getApprovedSuppliers } = await import("./suppliers")
+  return getApprovedSuppliers()
 }
 
 // ─── Create ────────────────────────────────────────────────────────────────
@@ -69,6 +64,7 @@ export async function createPurchaseOrder(payload: {
     unitCost: number
     woRef?: string
     catalogId?: string
+    partsRequestLineId?: string | null
   }>
 }): Promise<PurchaseOrder> {
   const year = new Date().getFullYear()
@@ -83,7 +79,7 @@ export async function createPurchaseOrder(payload: {
     .from("bb_purchase_orders")
     .insert({
       po_number: poNumber,
-      vendor_id: payload.vendorId ?? null,
+      vendor_id: null,
       vendor_name: payload.vendorName,
       vendor_contact: payload.vendorContact ?? null,
       expected_delivery: payload.expectedDelivery ?? null,
@@ -110,6 +106,7 @@ export async function createPurchaseOrder(payload: {
           unit_cost: l.unitCost,
           wo_ref: l.woRef ?? null,
           catalog_id: l.catalogId ?? null,
+          parts_request_line_id: l.partsRequestLineId ?? null,
         }))
       )
 
@@ -186,7 +183,7 @@ export async function receiveItems(
     // 2. Update PO line qty_received
     const { data: line } = await supabase
       .from("bb_purchase_order_lines")
-      .select("qty_received")
+      .select("qty_received, parts_request_line_id")
       .eq("id", item.lineId)
       .single()
 
@@ -195,6 +192,14 @@ export async function receiveItems(
       .from("bb_purchase_order_lines")
       .update({ qty_received: newTotal })
       .eq("id", item.lineId)
+
+    // 2b. If this PO line links to a parts request line, mark it received
+    if (line?.parts_request_line_id) {
+      await supabase
+        .from("parts_request_lines")
+        .update({ line_status: "received", po_number: poNumber })
+        .eq("id", line.parts_request_line_id)
+    }
 
     // 3. Find or create inventory part, then record transaction
     const { data: inv } = await supabase
@@ -250,6 +255,72 @@ export async function receiveItems(
     const anyReceived = updated.lines.some(l => l.qtyReceived > 0)
     if (allDone) await updatePOStatus(poId, "received")
     else if (anyReceived && updated.status === "sent") await updatePOStatus(poId, "partial")
+  }
+
+  // 5. Check if any parts requests are now fully received via this PO
+  // Collect distinct request IDs linked through PO lines
+  const { data: linkedLines } = await supabase
+    .from("bb_purchase_order_lines")
+    .select("parts_request_line_id")
+    .eq("purchase_order_id", poId)
+    .not("parts_request_line_id", "is", null)
+
+  if (linkedLines && linkedLines.length > 0) {
+    const requestLineIds = linkedLines.map((l: any) => l.parts_request_line_id)
+
+    // Find which requests these lines belong to
+    const { data: reqLines } = await supabase
+      .from("parts_request_lines")
+      .select("request_id")
+      .in("id", requestLineIds)
+
+    const requestIds = [...new Set((reqLines ?? []).map((l: any) => l.request_id))]
+
+    for (const requestId of requestIds) {
+      // Check if all lines on this request are received
+      const { data: allReqLines } = await supabase
+        .from("parts_request_lines")
+        .select("line_status")
+        .eq("request_id", requestId)
+
+      const allReceived = allReqLines?.every(l => l.line_status === "received") ?? false
+      if (!allReceived) continue
+
+      // Update request header
+      const { data: reqHeader } = await supabase
+        .from("parts_requests")
+        .select("status, requested_by, work_order, job_description, aircraft_tail, order_type")
+        .eq("id", requestId)
+        .single()
+
+      if (!reqHeader || reqHeader.status === "received" || reqHeader.status === "closed") continue
+
+      await supabase
+        .from("parts_requests")
+        .update({ status: "received" })
+        .eq("id", requestId)
+
+      await supabase.from("parts_status_history").insert({
+        request_id: requestId,
+        old_status: reqHeader.status,
+        new_status: "received",
+        changed_by: receivedBy.id,
+        note: `Received via PO ${poNumber}`,
+      })
+
+      // Notify the mechanic
+      const jobLabel = reqHeader.order_type === "stock"
+        ? `Stock — ${reqHeader.job_description}`
+        : `${reqHeader.aircraft_tail} — ${reqHeader.job_description}`
+
+      await notifyProfileIds(
+        [reqHeader.requested_by],
+        "parts_received",
+        "Parts have arrived",
+        `Your parts for ${jobLabel} have been received${reqHeader.work_order ? ` — WO# ${reqHeader.work_order}` : ""}`,
+        { link: `/app/beet-box/parts/${requestId}` }
+      )
+    }
   }
 }
 
@@ -310,6 +381,7 @@ function mapPORow(row: any): PurchaseOrder {
       unitCost: l.unit_cost,
       woRef: l.wo_ref,
       catalogId: l.catalog_id ?? null,
+      partsRequestLineId: l.parts_request_line_id ?? null,
       createdAt: l.created_at,
       updatedAt: l.updated_at,
     }))
