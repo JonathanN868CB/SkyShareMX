@@ -22,6 +22,7 @@ import {
   addAuditEntry, deleteWorkOrder,
   upsertFlatRate, upsertCorrectiveAction,
 } from "../../services"
+import { autoGenerateInvoice } from "../../services/automation"
 import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS } from "../../constants"
 import type {
   WorkOrder, WOStatus, WOItem, WOItemPart,
@@ -2196,6 +2197,19 @@ export default function WorkOrderDetail() {
       const profileId = await getMyProfileId()
       await updateWorkOrderStatus(wo.id, next, profileId ?? "", `Advanced to ${WO_STATUS_LABELS[next]}`)
       auditLog({ entryType: "status_change", summary: `Status: ${WO_STATUS_LABELS[fromStatus]} → ${WO_STATUS_LABELS[next]}`, oldValue: fromStatus, newValue: next })
+
+      // Auto-generate draft invoice when entering "billing"
+      if (next === "billing") {
+        try {
+          const fullWO = await getWorkOrderById(wo.id)
+          if (fullWO) {
+            const result = await autoGenerateInvoice(fullWO, profileId ?? "")
+            auditLog({ entryType: "wo_created", summary: `Auto-generated invoice ${result.invoiceNumber} ($${result.grandTotal.toFixed(2)}, ${result.lineCount} lines)` })
+          }
+        } catch (invErr) {
+          console.error("Auto-invoice generation failed:", invErr)
+        }
+      }
     } finally {
       setIsTransitioning(false)
     }
