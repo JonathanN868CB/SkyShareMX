@@ -31,6 +31,9 @@ const CannedActionsManager = lazy(() => import("@/features/beet-box/modules/mana
 const BeetBoxParts       = lazy(() => import("@/pages/Parts"))
 const BeetBoxPartsNew    = lazy(() => import("@/pages/PartsNew"))
 const BeetBoxPartsDetail = lazy(() => import("@/pages/PartsDetail"))
+const CatalogBrowser     = lazy(() => import("@/features/beet-box/modules/catalog/CatalogBrowser"))
+const CatalogDetail      = lazy(() => import("@/features/beet-box/modules/catalog/CatalogDetail"))
+const PartsOverview      = lazy(() => import("@/features/beet-box/modules/parts-overview/PartsOverview"))
 
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
@@ -210,6 +213,9 @@ const routes: RouteObject[] = [
       { path: "parts",                            element: wrap(<BeetBoxParts />) },
       { path: "parts/new",                        element: wrap(<BeetBoxPartsNew />) },
       { path: "parts/:id",                        element: wrap(<BeetBoxPartsDetail />) },
+      { path: "catalog",                          element: wrap(<CatalogBrowser />) },
+      { path: "catalog/:id",                      element: wrap(<CatalogDetail />) },
+      { path: "parts-overview",                   element: wrap(<PartsOverview />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────

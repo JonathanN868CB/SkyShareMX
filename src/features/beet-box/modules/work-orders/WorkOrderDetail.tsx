@@ -16,7 +16,7 @@ import { cn } from "@/shared/lib/utils"
 import {
   getWorkOrderById, updateWorkOrderStatus, updateWorkOrder,
   upsertWOItem, updateItemStatus, updateWOItemFields, signOffItem, clearSignOff,
-  addItemPart, removeItemPart, clockLabor, deleteLabor,
+  addItemPart, removeItemPart, issuePartFromInventory, clockLabor, deleteLabor,
   getParts, getTechnicians, getMyProfileId, getMyProfile,
   getLogbookEntries, getOrCreateDraftLogbookEntry, createComponentInstallEntry, upsertEntrySignatory, addSignatoryLine, removeItemLogbookLines, updateLogbookEntry,
   addAuditEntry, deleteWorkOrder,
@@ -485,6 +485,7 @@ interface ItemDetailPanelProps {
   newPart: { partNumber: string; description: string; qty: string; unitPrice: string }
   setNewPart: React.Dispatch<React.SetStateAction<{ partNumber: string; description: string; qty: string; unitPrice: string }>>
   onAddPart: () => void
+  onAddFromInventory: (inv: InventoryPart) => void
   addingLaborToItem: string | null
   setAddingLaborToItem: (id: string | null) => void
   newLabor: { mechName: string; hours: string; date: string }
@@ -495,7 +496,7 @@ interface ItemDetailPanelProps {
 function ItemDetailPanel({
   item, isLocked, sectionColor, aircraftModel, mechanicName, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
   mechanics, inventoryParts, onNavigatePO,
-  addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart,
+  addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart, onAddFromInventory,
   addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
 }: ItemDetailPanelProps) {
   const discRef = useRef<HTMLTextAreaElement>(null)
@@ -535,14 +536,7 @@ function ItemDetailPanel({
   }, [invSearch, inventoryParts])
 
   function addFromInventory(inv: InventoryPart) {
-    const part: WOItemPart = {
-      id: `p-inv-${Date.now()}`,
-      partNumber: inv.partNumber,
-      description: inv.description,
-      qty: 1,
-      unitPrice: inv.unitCost,
-    }
-    onPatch({ parts: [...item.parts, part] })
+    onAddFromInventory(inv)
     setShowInventoryPicker(false)
     setInvSearch("")
   }
@@ -2130,6 +2124,29 @@ export default function WorkOrderDetail() {
     })
   }
 
+  async function addPartFromInventory(itemId: string, inv: InventoryPart) {
+    if (!wo) return
+    try {
+      const saved = await issuePartFromInventory(
+        itemId,
+        { id: inv.id, partNumber: inv.partNumber, description: inv.description, unitCost: inv.unitCost, catalogId: inv.catalogId, condition: inv.condition },
+        1,
+        wo.woNumber,
+        { id: myProfile?.id ?? "", name: myProfile?.name ?? "Unknown" }
+      )
+      const item = wo.items.find(i => i.id === itemId)
+      patchItem(itemId, { parts: [...(item?.parts ?? []), saved] })
+      auditLog({
+        entryType: "part_added",
+        summary: `Part ${saved.partNumber} issued from inventory to Item #${item?.itemNumber ?? "?"}`,
+        detail: `${saved.qty}× ${saved.description || saved.partNumber} @ $${saved.unitPrice.toFixed(2)}`,
+        itemId, itemNumber: item?.itemNumber ?? null,
+      })
+    } catch (err) {
+      console.error("Failed to issue part from inventory:", err)
+    }
+  }
+
   async function addLaborEntry(itemId: string) {
     if (!newLabor.mechName || !newLabor.hours || !wo) return
     const profileId = await getMyProfileId()
@@ -2862,6 +2879,7 @@ export default function WorkOrderDetail() {
                   newPart={newPart}
                   setNewPart={setNewPart}
                   onAddPart={() => addPart(selectedItem.id)}
+                  onAddFromInventory={(inv) => addPartFromInventory(selectedItem.id, inv)}
                   addingLaborToItem={addingLaborToItem}
                   setAddingLaborToItem={setAddingLaborToItem}
                   newLabor={newLabor}
