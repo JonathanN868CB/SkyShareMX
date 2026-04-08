@@ -39,11 +39,13 @@ export async function getVendorPerformance(): Promise<VendorMetric[]> {
   const { data: pos } = await supabase
     .from("bb_purchase_orders")
     .select("id, vendor_id, vendor_name, status, created_at, received_at, bb_purchase_order_lines(qty_ordered, qty_received, unit_cost)")
+    .range(0, 9999)
 
   // 3. Load catalog vendor links
   const { data: catLinks } = await supabase
     .from("parts_catalog_vendors")
     .select("vendor_id")
+    .range(0, 9999)
 
   // Build catalog link counts
   const catLinkCounts = new Map<string, number>()

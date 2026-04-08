@@ -18,6 +18,7 @@ export async function getCatalogEntries(filters?: {
     .from("parts_catalog")
     .select("*")
     .order("part_number")
+    .range(0, 9999)
 
   if (filters?.search) {
     query = query.or(
@@ -43,6 +44,7 @@ export async function getCatalogEntries(filters?: {
       .from("bb_inventory_parts")
       .select("catalog_id, qty_on_hand")
       .in("catalog_id", catalogIds)
+      .range(0, 9999)
 
     invData?.forEach((r: { catalog_id: string; qty_on_hand: number }) => {
       invMap[r.catalog_id] = (invMap[r.catalog_id] ?? 0) + r.qty_on_hand

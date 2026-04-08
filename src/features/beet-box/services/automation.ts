@@ -118,6 +118,7 @@ export async function autoGenerateReorderPOs(
     .select("id, part_number, description, qty_on_hand, reorder_point, catalog_id, unit_cost")
     .gt("reorder_point", 0)
     .filter("qty_on_hand", "lte", "reorder_point")
+    .range(0, 9999)
 
   if (alertErr) throw alertErr
   if (!alerts || alerts.length === 0) return []
@@ -132,6 +133,7 @@ export async function autoGenerateReorderPOs(
       .select("catalog_id, vendor_id, vendor_name, is_preferred")
       .in("catalog_id", catalogIds)
       .order("is_preferred", { ascending: false })
+      .range(0, 9999)
 
     for (const vl of vendorLinks ?? []) {
       if (!vendorMap.has(vl.catalog_id)) {

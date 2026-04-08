@@ -13,6 +13,7 @@ export async function getPurchaseOrders(filters?: {
     .from("bb_purchase_orders")
     .select("*, bb_purchase_order_lines(*)")
     .order("created_at", { ascending: false })
+    .range(0, 9999)
 
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
