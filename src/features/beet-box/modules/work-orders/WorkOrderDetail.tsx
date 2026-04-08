@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
   ArrowLeft, AlertTriangle, StickyNote, Check, ChevronRight, ChevronLeft,
-  Plus, X, Clock, UserX, Package, Loader2,
+  Plus, X, Clock, Package, Loader2,
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
   BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
   ShieldCheck, Wrench, ChevronDown, Pencil, ArrowLeftRight,
@@ -32,6 +32,7 @@ import type {
 import { TimesEditModal } from "./TimesEditModal"
 import { supabase } from "@/lib/supabase"
 import { WOStatusBadge } from "../../shared/StatusBadge"
+import { useAuth } from "@/features/auth"
 
 // ─── Status pipeline ──────────────────────────────────────────────────────────
 const NEXT_STATUS: Partial<Record<WOStatus, WOStatus>> = {
@@ -42,7 +43,7 @@ const NEXT_STATUS_LABEL: Partial<Record<WOStatus, string>> = {
   waiting_on_parts: "Parts Received — Resume", in_review: "Approve → Billing", billing: "Complete Work Order",
 }
 const PREV_STATUS: Partial<Record<WOStatus, WOStatus>> = {
-  open: "draft", in_review: "open", billing: "in_review",
+  open: "draft", in_review: "open", billing: "in_review", completed: "billing",
 }
 const STATUS_GLOW_COLOR: Record<WOStatus, string> = {
   draft:            "rgba(161,161,170,0.55)",
@@ -552,8 +553,6 @@ function ItemDetailPanel({
   const noPartsRequired = item.noPartsRequired ?? false
 
   const clockedNames  = new Set(laborEntries.map(e => e.mechanicName))
-  const allMechanics  = mechanics
-  const notClocked    = allMechanics.filter(m => !clockedNames.has(m.name))
 
   return (
     <div className="flex flex-col h-full">
@@ -997,28 +996,8 @@ function ItemDetailPanel({
             </div>
           )}
 
-          {/* Not clocked in */}
-          {notClocked.length > 0 && (
-            <div className="mb-4">
-              <p className="text-white/30 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <UserX className="w-3.5 h-3.5" /> Not clocked in
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {notClocked.map(m => (
-                  <span
-                    key={m.id}
-                    className="text-white/40 text-sm px-3 py-1.5 rounded"
-                    style={{ background: "hsl(0,0%,13%)" }}
-                  >
-                    {m.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {allMechanics.length === 0 && laborEntries.length === 0 && (
-            <p className="text-white/25 text-sm italic mb-2">No mechanics assigned to this work order.</p>
+          {laborEntries.length === 0 && (
+            <p className="text-white/25 text-sm italic mb-2">No time logged yet.</p>
           )}
 
           {/* Log time form */}
@@ -1490,6 +1469,8 @@ export default function WorkOrderDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { profile } = useAuth()
+  const isSuperAdmin = profile?.role === "Super Admin"
 
   // Handle Traxxall import: build a synthetic WO from navigate state
   const importState = location.state as {
@@ -2206,6 +2187,7 @@ export default function WorkOrderDetail() {
 
   async function regressStatus() {
     if (!wo || isTransitioning) return
+    if (wo.status === "completed" && !isSuperAdmin) return
     const prev = PREV_STATUS[wo.status]
     if (!prev) return
     triggerSlide("left")
@@ -2326,7 +2308,7 @@ export default function WorkOrderDetail() {
                 void:             { text: "#fca5a5", bg: "rgba(252,165,165,0.13)", border: "rgba(252,165,165,0.55)", glow: "rgba(252,165,165,0.2)"  },
               }
               const c       = SC[wo.status]
-              const hasPrev = !!PREV_STATUS[wo.status] && !isLocked
+              const hasPrev = !!PREV_STATUS[wo.status] && (!isLocked || isSuperAdmin)
               const hasNext = !!NEXT_STATUS[wo.status]
               const cp      = hasPrev ? SC[PREV_STATUS[wo.status]!] : null
               const cn2     = hasNext ? SC[NEXT_STATUS[wo.status]!] : null

@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from "react"
+import { Camera, Star } from "lucide-react"
+import Cropper from "react-easy-crop"
+import type { Area } from "react-easy-crop"
 import { useAuth } from "@/features/auth"
 import type { AircraftBase, AircraftDetailData, AvionicsService, CMMDocument, DataField, GroupCMM } from "./fleetData"
 import { FLEET_FAMILY_NAMES, getAircraftFamily } from "./fleetData"
-import { useAircraftDetail, useUpsertAircraftDetail, useUpdateCMMs, useGroupCMMs, useUpsertGroupCMM, useDeleteGroupCMM } from "./useAircraftDetail"
+import { useAircraftDetail, useUpsertAircraftDetail, useUpdateCMMs, useGroupCMMs, useUpsertGroupCMM, useDeleteGroupCMM, useAircraftPhoto, useUpsertAircraftPhoto, useAircraftPhotoRatings, useUpsertAircraftPhotoRating } from "./useAircraftDetail"
 import AvionicsEditorOverlay from "./AvionicsEditorOverlay"
 import ProgramsEditorOverlay from "./ProgramsEditorOverlay"
 import IdentityEditorOverlay from "./IdentityEditorOverlay"
@@ -424,12 +427,12 @@ function ProgramBlock({ field }: { field: DataField }) {
                   </div>
                 ))
               }
-              {field.note && (
-                <div className="col-span-full text-xs italic"
-                  style={{ color: "hsl(var(--muted-foreground))", opacity: 0.55 }}>
-                  {field.note}
-                </div>
-              )}
+            </div>
+          )}
+          {s !== "none" && field.note && (
+            <div className="mt-1.5 text-xs italic"
+              style={{ color: "hsl(var(--muted-foreground))", opacity: 0.55, paddingLeft: 0 }}>
+              {field.note}
             </div>
           )}
         </div>
@@ -1602,6 +1605,446 @@ function CMMsOverlay({
   )
 }
 
+// ─── Photo crop helpers ───────────────────────────────────────────────────────
+type CropMode = "fill" | "fit" | "border" | "stretch"
+
+function createImageEl(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = document.createElement("img")
+    img.addEventListener("load", () => resolve(img))
+    img.addEventListener("error", reject)
+    img.setAttribute("crossOrigin", "anonymous")
+    img.src = url
+  })
+}
+
+async function buildCroppedBlob(src: string, pixelCrop: Area, mode: CropMode): Promise<Blob> {
+  const image = await createImageEl(src)
+  const canvas = document.createElement("canvas")
+  const ctx = canvas.getContext("2d")!
+  const W = 1600, H = 900
+  canvas.width = W
+  canvas.height = H
+
+  if (mode === "stretch") {
+    // Draw entire image deformed to fill frame
+    ctx.drawImage(image, 0, 0, W, H)
+  } else if (mode === "fit") {
+    // Draw full image centered, natural aspect, dark letterbox
+    ctx.fillStyle = "#0a0a0a"
+    ctx.fillRect(0, 0, W, H)
+    const scale = Math.min(W / image.naturalWidth, H / image.naturalHeight)
+    const sw = image.naturalWidth * scale
+    const sh = image.naturalHeight * scale
+    ctx.drawImage(image, (W - sw) / 2, (H - sh) / 2, sw, sh)
+  } else if (mode === "border") {
+    // Draw the user-selected crop region centered, natural aspect, black bars around it
+    ctx.fillStyle = "#0a0a0a"
+    ctx.fillRect(0, 0, W, H)
+    const scale = Math.min(W / pixelCrop.width, H / pixelCrop.height)
+    const dw = pixelCrop.width * scale
+    const dh = pixelCrop.height * scale
+    ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, (W - dw) / 2, (H - dh) / 2, dw, dh)
+  } else {
+    // Fill: crop to the area the user positioned
+    ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, W, H)
+  }
+
+  return new Promise(resolve => canvas.toBlob(blob => resolve(blob!), "image/jpeg", 0.92))
+}
+
+// ─── Aircraft Photo Card ──────────────────────────────────────────────────────
+function AircraftPhotoCard({ tailNumber }: { tailNumber: string }) {
+  const { profile } = useAuth()
+  const { data: photo, isLoading: photoLoading } = useAircraftPhoto(tailNumber)
+  const { data: ratingData, isLoading: ratingsLoading } = useAircraftPhotoRatings(tailNumber)
+  const upsertPhoto = useUpsertAircraftPhoto()
+  const upsertRating = useUpsertAircraftPhotoRating()
+
+  // Crop modal state
+  const [pendingSrc, setPendingSrc] = useState<string | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [cropMode, setCropMode] = useState<CropMode>("border")
+  const [crop, setCrop] = useState({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
+
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState("")
+  const [confirmReplace, setConfirmReplace] = useState(false)
+  const [optimisticRating, setOptimisticRating] = useState<number | null>(null)
+  const [hoverStar, setHoverStar] = useState<number | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const myRating = optimisticRating ?? ratingData?.myRating ?? null
+  const avgRating = ratingData?.avg ?? 0
+  const ratingCount = ratingData?.count ?? 0
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.currentTarget.files?.[0]
+    if (!file || !profile) return
+    const url = URL.createObjectURL(file)
+    setPendingFile(file)
+    setPendingSrc(url)
+    setCropMode("border")
+    setCrop({ x: 0, y: 0 })
+    setZoom(1)
+    e.currentTarget.value = ""
+  }
+
+  function handleCropCancel() {
+    if (pendingSrc) URL.revokeObjectURL(pendingSrc)
+    setPendingSrc(null)
+    setPendingFile(null)
+  }
+
+  async function handleCropConfirm() {
+    if (!pendingSrc || !pendingFile || !profile) return
+    setUploading(true)
+    setUploadError("")
+    try {
+      const area = croppedAreaPixels ?? { x: 0, y: 0, width: 100, height: 100 }
+      const blob = await buildCroppedBlob(pendingSrc, area, cropMode)
+      const ext = pendingFile.name.split(".").pop() ?? "jpg"
+      const croppedFile = new File([blob], `${tailNumber}-photo.${ext}`, { type: "image/jpeg" })
+      await upsertPhoto.mutateAsync({
+        tailNumber,
+        file: croppedFile,
+        photographerName: profile.display_name ?? profile.full_name ?? profile.email,
+        profileId: profile.id,
+      })
+      URL.revokeObjectURL(pendingSrc)
+      setPendingSrc(null)
+      setPendingFile(null)
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed")
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function handleRate(star: number) {
+    if (!profile) return
+    setOptimisticRating(star)
+    try {
+      await upsertRating.mutateAsync({ tailNumber, profileId: profile.id, rating: star })
+    } catch {
+      setOptimisticRating(null)
+    }
+  }
+
+  const displayStar = hoverStar ?? myRating ?? 0
+
+  const starWidget = (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3 }}>
+      <span style={{ fontSize: "0.58rem", color: "rgba(255,255,255,0.5)", fontFamily: "var(--font-heading)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+        Avg. Rating
+      </span>
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0.5">
+          {[1, 2, 3, 4, 5].map(star => (
+            <button
+              key={star}
+              onClick={() => handleRate(star)}
+              onMouseEnter={() => setHoverStar(star)}
+              onMouseLeave={() => setHoverStar(null)}
+              style={{ background: "none", border: "none", padding: "2px 2px", cursor: "pointer", lineHeight: 1 }}
+            >
+              <Star
+                size={18}
+                style={{
+                  fill: star <= displayStar ? "var(--skyshare-gold)" : "transparent",
+                  color: star <= displayStar ? "var(--skyshare-gold)" : "rgba(255,255,255,0.2)",
+                  filter: star <= displayStar ? "drop-shadow(0 0 4px rgba(212,160,23,0.6))" : "none",
+                  transition: "all 0.12s ease",
+                }}
+              />
+            </button>
+          ))}
+        </div>
+        {!ratingsLoading && ratingCount > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+            <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}>
+              {avgRating.toFixed(1)}
+            </span>
+            <span style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.5)", fontFamily: "var(--font-body)", fontWeight: 500 }}>
+              {ratingCount} {ratingCount === 1 ? "rating" : "ratings"}
+            </span>
+          </div>
+        )}
+        {!ratingsLoading && ratingCount === 0 && (
+          <span style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.3)", fontFamily: "var(--font-body)", fontStyle: "italic" }}>
+            Be the first to rate
+          </span>
+        )}
+      </div>
+    </div>
+  )
+
+  // ── Crop modal ──────────────────────────────────────────────────────────────
+  const cropModal = pendingSrc ? (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 70,
+      background: "rgba(0,0,0,0.92)",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    }}>
+      {/* Crop viewport */}
+      <div style={{ position: "relative", width: "min(720px, 90vw)", aspectRatio: "16/9", borderRadius: 8, overflow: "hidden" }}>
+        {cropMode !== "stretch" ? (
+          <Cropper
+            image={pendingSrc}
+            crop={crop}
+            zoom={zoom}
+            aspect={16 / 9}
+            onCropChange={setCrop}
+            onZoomChange={setZoom}
+            onCropComplete={(_, pixels) => setCroppedAreaPixels(pixels)}
+            objectFit={cropMode === "fit" ? "contain" : cropMode === "border" ? "contain" : "cover"}
+            style={{
+              containerStyle: { background: "#0a0a0a" },
+              cropAreaStyle: { border: "1.5px solid rgba(212,160,23,0.6)", boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)" },
+            }}
+          />
+        ) : (
+          /* Stretch preview — full image deformed to 16:9 */
+          <img
+            src={pendingSrc}
+            alt="Stretch preview"
+            style={{ width: "100%", height: "100%", objectFit: "fill", display: "block" }}
+          />
+        )}
+      </div>
+
+      {/* Controls */}
+      <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 14, width: "min(720px, 90vw)" }}>
+
+        {/* Mode buttons */}
+        <div className="flex items-center gap-2 flex-wrap justify-center">
+          {([
+            { mode: "fill",    label: "Fill"    },
+            { mode: "border",  label: "Black Bars" },
+            { mode: "fit",     label: "Fit"     },
+            { mode: "stretch", label: "Stretch" },
+          ] as { mode: CropMode; label: string }[]).map(({ mode: m, label }) => (
+            <button
+              key={m}
+              onClick={() => { setCropMode(m); setCrop({ x: 0, y: 0 }); setZoom(1) }}
+              style={{
+                padding: "5px 14px", borderRadius: 5, fontSize: "0.72rem",
+                fontFamily: "var(--font-heading)", letterSpacing: "0.08em", cursor: "pointer",
+                background: cropMode === m ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
+                color: cropMode === m ? "hsl(0 0% 8%)" : "rgba(255,255,255,0.55)",
+                border: cropMode === m ? "none" : "0.5px solid rgba(255,255,255,0.12)",
+                fontWeight: cropMode === m ? 700 : 400,
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Zoom slider — hidden in stretch mode */}
+        {cropMode !== "stretch" && (
+          <div className="flex items-center gap-3" style={{ width: "100%" }}>
+            <span style={{ fontSize: "0.65rem", color: "rgba(255,255,255,0.35)", fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}>ZOOM</span>
+            <input
+              type="range"
+              min={cropMode === "fit" ? 0.5 : 1}
+              max={3}
+              step={0.01}
+              value={zoom}
+              onChange={e => setZoom(Number(e.target.value))}
+              style={{ flex: 1, accentColor: "var(--skyshare-gold)", height: 2 }}
+            />
+            <span style={{ fontSize: "0.65rem", color: "rgba(255,255,255,0.35)", fontFamily: "var(--font-body)", minWidth: 32, textAlign: "right" }}>
+              {zoom.toFixed(1)}×
+            </span>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleCropCancel}
+            style={{
+              padding: "7px 20px", borderRadius: 6, fontSize: "0.75rem",
+              fontFamily: "var(--font-heading)", letterSpacing: "0.07em", cursor: "pointer",
+              background: "transparent", color: "rgba(255,255,255,0.45)",
+              border: "0.5px solid rgba(255,255,255,0.15)",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleCropConfirm}
+            disabled={uploading}
+            style={{
+              padding: "7px 28px", borderRadius: 6, fontSize: "0.75rem",
+              fontFamily: "var(--font-heading)", letterSpacing: "0.07em", cursor: uploading ? "not-allowed" : "pointer",
+              background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)",
+              border: "none", fontWeight: 700,
+              opacity: uploading ? 0.6 : 1,
+            }}
+          >
+            {uploading ? "Uploading…" : "Use Photo"}
+          </button>
+        </div>
+
+        {uploadError && (
+          <div style={{ fontSize: "0.7rem", color: "#ef4444", fontFamily: "var(--font-body)" }}>{uploadError}</div>
+        )}
+      </div>
+    </div>
+  ) : null
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+  if (photoLoading) {
+    return (
+      <>
+        {cropModal}
+        <div className="card-elevated rounded-lg" style={{ aspectRatio: "16/9", background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(212,160,23,0.15)" }} />
+      </>
+    )
+  }
+
+  if (!photo) {
+    return (
+      <>
+        {cropModal}
+        <div className="card-elevated rounded-lg flex flex-col items-center justify-center gap-3"
+          style={{
+            minHeight: 300,
+            border: "1.5px dashed rgba(212,160,23,0.25)",
+            background: "rgba(212,160,23,0.02)",
+            cursor: profile ? "pointer" : "default",
+          }}
+          onClick={() => profile && fileInputRef.current?.click()}
+        >
+          <Camera size={36} style={{ color: "rgba(212,160,23,0.35)" }} />
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.4)", fontFamily: "var(--font-heading)", letterSpacing: "0.06em", marginBottom: 4 }}>
+              No photo yet
+            </div>
+            {profile && (
+              <div style={{ fontSize: "0.7rem", color: "rgba(212,160,23,0.55)", fontFamily: "var(--font-body)" }}>
+                Click to add the first photo
+              </div>
+            )}
+          </div>
+          {profile && (
+            <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: "none" }} onChange={handleFileChange} />
+          )}
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      {cropModal}
+      {profile && (
+        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: "none" }} onChange={handleFileChange} />
+      )}
+
+      {/* Card — aspect ratio drives the height so 4:3 images never get cropped */}
+      <div className="card-elevated rounded-lg overflow-hidden"
+        style={{ position: "relative", aspectRatio: "16/9", border: "0.5px solid rgba(212,160,23,0.18)" }}>
+
+        {/* Photo — full card */}
+        <img
+          src={photo.photo_url}
+          alt={`${tailNumber} aircraft`}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+
+        {/* Confirm dialog — floats inside card */}
+        {confirmReplace && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 20,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)",
+          }}>
+            <div style={{
+              background: "hsl(0 0% 12%)", border: "1px solid rgba(212,160,23,0.35)",
+              borderRadius: 10, padding: "18px 20px", width: 240,
+              boxShadow: "0 8px 32px rgba(0,0,0,0.7)",
+            }}>
+              <p style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.85)", fontFamily: "var(--font-body)", marginBottom: 14, lineHeight: 1.5 }}>
+                Are you sure you want to replace this picture? No hard feelings if you do! 📸
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setConfirmReplace(false)}
+                  style={{ fontSize: "0.72rem", padding: "5px 12px", borderRadius: 5, border: "0.5px solid rgba(255,255,255,0.15)", background: "transparent", color: "rgba(255,255,255,0.55)", cursor: "pointer", fontFamily: "var(--font-heading)" }}
+                >
+                  Nevermind
+                </button>
+                <button
+                  onClick={() => { setConfirmReplace(false); fileInputRef.current?.click() }}
+                  style={{ fontSize: "0.72rem", padding: "5px 12px", borderRadius: 5, border: "none", background: "var(--skyshare-gold)", color: "hsl(0 0% 8%)", cursor: "pointer", fontFamily: "var(--font-heading)", fontWeight: 700 }}
+                >
+                  Yes, replace it
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Replace button — top-right */}
+        {profile && (
+          <button
+            onClick={() => setConfirmReplace(true)}
+            style={{
+              position: "absolute", top: 5, right: 5, zIndex: 5,
+              fontSize: "0.62rem", fontFamily: "var(--font-heading)", letterSpacing: "0.08em",
+              padding: "4px 10px", borderRadius: 4, cursor: "pointer",
+              background: "rgba(0,0,0,0.45)", border: "0.5px solid rgba(255,255,255,0.25)",
+              color: "rgba(255,255,255,0.7)", backdropFilter: "blur(6px)",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(212,160,23,0.6)"; e.currentTarget.style.color = "var(--skyshare-gold)" }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.25)"; e.currentTarget.style.color = "rgba(255,255,255,0.7)" }}
+          >
+            Replace
+          </button>
+        )}
+
+        {/* Bottom gradient overlay */}
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          background: "linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.55) 55%, transparent 100%)",
+          padding: "36px 14px 12px",
+          display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10,
+        }}>
+
+          {/* Photographer — left */}
+          <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+            <Camera size={13} style={{ color: "rgba(212,160,23,0.7)", flexShrink: 0 }} />
+            <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.25, minWidth: 0 }}>
+              <span style={{ fontSize: "0.58rem", color: "rgba(255,255,255,0.5)", fontFamily: "var(--font-heading)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                Photographer
+              </span>
+              <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "#fff", fontFamily: "var(--font-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}>
+                {photo.photographer_name}
+              </span>
+            </div>
+          </div>
+
+
+          {/* Rating — right */}
+          {starWidget}
+
+        </div>
+
+        {uploadError && (
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "6px 14px", background: "rgba(239,68,68,0.85)", fontSize: "0.7rem", color: "#fff" }}>
+            {uploadError}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 // ─── Documentation Card ───────────────────────────────────────────────────────
 function DocumentationCard({
   fields,
@@ -1611,6 +2054,7 @@ function DocumentationCard({
   canDelete,
   canEdit,
   onEdit,
+  mmAuditAircraftId,
 }: {
   fields: DataField[]
   tailNumber: string
@@ -1619,6 +2063,7 @@ function DocumentationCard({
   canDelete: boolean
   canEdit: boolean
   onEdit: () => void
+  mmAuditAircraftId?: string
 }) {
   const [showCMMs, setShowCMMs] = useState(false)
 
@@ -1720,6 +2165,13 @@ function DocumentationCard({
             )
           })}
         </div>
+
+        {mmAuditAircraftId && (
+          <>
+            <div style={{ height: "0.5px", background: "rgba(167,139,250,0.15)", margin: "0 20px" }} />
+            <MmAuditWidget aircraftId={mmAuditAircraftId} />
+          </>
+        )}
 
       </div>   {/* card-elevated */}
     </>
@@ -2054,7 +2506,7 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
             )}
           </div>
 
-          {/* Hero + Documentation — side by side */}
+          {/* Hero + Photo — side by side */}
           <div className="px-6 pt-6 pb-5"
             style={{ borderBottom: "1px solid hsl(var(--border))" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2.5rem", alignItems: "start" }}>
@@ -2094,20 +2546,31 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
                 />
               </div>
 
-              {/* Right: Documentation & Manuals */}
-              <div className="flex flex-col gap-4">
-                <DocumentationCard
-                  fields={baseDetail.documentation}
-                  tailNumber={aircraft.tailNumber}
-                  cmms={baseDetail.cmms ?? []}
-                  familyGroup={familyGroup}
-                  canDelete={canDelete}
-                  canEdit={canEditSection}
-                  onEdit={() => setShowDocumentationEditor(true)}
-                />
-                <MmAuditWidget aircraftId={aircraft.id} />
-              </div>
+              {/* Right: Aircraft Photo */}
+              <AircraftPhotoCard tailNumber={aircraft.tailNumber} />
 
+            </div>
+          </div>
+
+          {/* Programs + Documentation — side by side */}
+          <div className="px-6 pt-5 pb-5"
+            style={{ borderBottom: "1px solid hsl(var(--border))" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2.5rem", alignItems: "start" }}>
+              <ProgramsCard
+                programs={baseDetail.programs}
+                canEdit={canEditSection}
+                onEdit={() => setShowProgramsEditor(true)}
+              />
+              <DocumentationCard
+                fields={baseDetail.documentation}
+                tailNumber={aircraft.tailNumber}
+                cmms={baseDetail.cmms ?? []}
+                familyGroup={familyGroup}
+                canDelete={canDelete}
+                canEdit={canEditSection}
+                onEdit={() => setShowDocumentationEditor(true)}
+                mmAuditAircraftId={aircraft.id}
+              />
             </div>
           </div>
 
@@ -2117,11 +2580,6 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
               avionics={baseDetail.avionics}
               canEdit={canEditSection}
               onEdit={() => setShowAvionicsEditor(true)}
-            />
-            <ProgramsCard
-              programs={baseDetail.programs}
-              canEdit={canEditSection}
-              onEdit={() => setShowProgramsEditor(true)}
             />
             <IdentityCard
               identity={baseDetail.identity}

@@ -89,6 +89,7 @@ export interface Mechanic {
   // From bb_mechanic_certs (primary cert)
   certType: CertType | null
   certNumber: string | null
+  laborEligible: boolean
 }
 
 // ─── Work Orders ─────────────────────────────────────────────────────────────
