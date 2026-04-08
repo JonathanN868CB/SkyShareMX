@@ -4,7 +4,7 @@ import {
   ClipboardList, Package, ShoppingCart, Wrench,
   FileText, BookMarked, GraduationCap,
   PanelLeftOpen, PanelLeftClose, Settings, Boxes,
-  Zap, BookText, BookOpen, BarChart3, PieChart,
+  Zap, BookText, BookOpen, BarChart3, PieChart, ShieldCheck,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { BeetIcon } from "./shared/BeetIcon"
@@ -25,6 +25,7 @@ const MANAGERS_ITEMS = [
   { label: "Flat Rates",             path: "/app/beet-box/flat-rates",     icon: Zap      },
   { label: "Canned Actions",         path: "/app/beet-box/canned-actions", icon: BookText },
   { label: "Reports",               path: "/app/beet-box/reports",        icon: PieChart },
+  { label: "Compliance",            path: "/app/beet-box/compliance",     icon: ShieldCheck },
 ]
 
 const KNOWLEDGE_ITEMS = [
