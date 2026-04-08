@@ -1,6 +1,7 @@
-import { Trash2 } from "lucide-react"
+import { Trash2, Package } from "lucide-react"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/shared/ui/select"
 import { CONDITIONS } from "../constants"
+import { PartNumberCombobox } from "./PartNumberCombobox"
 
 export interface LineItemData {
   part_number: string
@@ -8,6 +9,8 @@ export interface LineItemData {
   description: string
   quantity: number
   condition: string
+  catalog_id?: string | null
+  _inventory_hint?: { qty: number; bin: string | null } | null
 }
 
 export const EMPTY_LINE: LineItemData = {
@@ -16,6 +19,8 @@ export const EMPTY_LINE: LineItemData = {
   description: "",
   quantity: 1,
   condition: "new_overhaul",
+  catalog_id: null,
+  _inventory_hint: null,
 }
 
 interface Props {
@@ -70,20 +75,33 @@ export function PartsLineItem({ index, data, onChange, onRemove, canRemove, erro
           <label className="block text-xs mb-1" style={{ color: "rgba(255,255,255,0.5)" }}>
             Part Number <span style={{ color: "rgba(255,100,100,0.7)" }}>*</span>
           </label>
-          <input
-            type="text"
+          <PartNumberCombobox
             value={data.part_number}
-            onChange={e => update("part_number", e.target.value)}
-            placeholder=""
-            className="w-full rounded-md px-3 py-2 text-sm"
-            style={{
-              background: "rgba(255,255,255,0.05)",
-              border: errors?.part_number ? "1px solid rgba(255,100,100,0.5)" : "1px solid rgba(255,255,255,0.1)",
-              color: "rgba(255,255,255,0.9)",
+            hasError={!!errors?.part_number}
+            onChange={(pn, catalogId, desc) => {
+              onChange(index, {
+                ...data,
+                part_number: pn,
+                catalog_id: catalogId,
+                description: desc && !data.description ? desc : data.description,
+                _inventory_hint: null,  // reset until search populates
+              })
             }}
           />
           {errors?.part_number && (
             <p className="text-xs mt-0.5" style={{ color: "rgba(255,100,100,0.8)" }}>{errors.part_number}</p>
+          )}
+          {data.catalog_id && data._inventory_hint && data._inventory_hint.qty > 0 && (
+            <div
+              className="flex items-center gap-1.5 mt-1.5 px-2 py-1 rounded text-[11px]"
+              style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)" }}
+            >
+              <Package className="w-3 h-3 text-emerald-400" />
+              <span className="text-emerald-400">
+                {data._inventory_hint.qty} on hand
+                {data._inventory_hint.bin && ` at ${data._inventory_hint.bin}`}
+              </span>
+            </div>
           )}
         </div>
 

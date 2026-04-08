@@ -63,6 +63,7 @@ export async function createPart(
       vendor_name: payload.vendorName ?? null,
       is_consumable: payload.isConsumable,
       notes: payload.notes ?? null,
+      catalog_id: payload.catalogId ?? null,
     })
     .select()
     .single()
@@ -90,6 +91,7 @@ export async function updatePart(
       ...(payload.vendorName !== undefined && { vendor_name: payload.vendorName }),
       ...(payload.isConsumable !== undefined && { is_consumable: payload.isConsumable }),
       ...(payload.notes !== undefined && { notes: payload.notes }),
+      ...(payload.catalogId !== undefined && { catalog_id: payload.catalogId }),
     })
     .eq("id", id)
 
@@ -183,6 +185,7 @@ function mapPartRow(row: any, txns: any[]): InventoryPart {
     vendorName: row.vendor_name,
     isConsumable: row.is_consumable,
     notes: row.notes,
+    catalogId: row.catalog_id ?? null,
     transactions: txns.map((t) => ({
       id: t.id,
       partId: t.part_id,

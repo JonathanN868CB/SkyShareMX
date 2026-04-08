@@ -382,12 +382,55 @@ export async function addItemPart(
       description: part.description,
       qty: part.qty,
       unit_price: part.unitPrice,
+      catalog_id: part.catalogId ?? null,
+      inventory_part_id: part.inventoryPartId ?? null,
+      serial_number: part.serialNumber ?? null,
+      condition: part.condition ?? null,
     })
     .select()
     .single()
 
   if (error) throw error
-  return { id: data.id, itemId: data.item_id, partNumber: data.part_number, description: data.description, qty: data.qty, unitPrice: data.unit_price }
+  return {
+    id: data.id, itemId: data.item_id, partNumber: data.part_number,
+    description: data.description, qty: data.qty, unitPrice: data.unit_price,
+    catalogId: data.catalog_id ?? null, inventoryPartId: data.inventory_part_id ?? null,
+    serialNumber: data.serial_number ?? null, condition: data.condition ?? null,
+  }
+}
+
+export async function issuePartFromInventory(
+  itemId: string,
+  inv: { id: string; partNumber: string; description: string; unitCost: number; catalogId: string | null; condition: string },
+  qty: number,
+  woNumber: string,
+  performedBy: { id: string; name: string }
+): Promise<WOItemPart> {
+  // 1. Add part to WO item
+  const saved = await addItemPart(itemId, {
+    partNumber: inv.partNumber,
+    description: inv.description,
+    qty,
+    unitPrice: inv.unitCost,
+    catalogId: inv.catalogId,
+    inventoryPartId: inv.id,
+    serialNumber: null,
+    condition: inv.condition,
+  })
+
+  // 2. Create "issue" transaction (negative qty = removing from stock)
+  const { recordTransaction } = await import("./inventory")
+  await recordTransaction(inv.id, {
+    type: "issue",
+    qty: -qty,
+    unitCost: inv.unitCost,
+    performedBy: performedBy.id,
+    performedName: performedBy.name,
+    woRef: woNumber,
+    notes: `Issued to WO ${woNumber}`,
+  })
+
+  return saved
 }
 
 export async function removeItemPart(partId: string): Promise<void> {
@@ -558,6 +601,10 @@ function mapItemRow(row: any): WOItem {
       description: p.description,
       qty: p.qty,
       unitPrice: p.unit_price,
+      catalogId: p.catalog_id ?? null,
+      inventoryPartId: p.inventory_part_id ?? null,
+      serialNumber: p.serial_number ?? null,
+      condition: p.condition ?? null,
     })),
     labor: (row.bb_work_order_item_labor ?? []).map(mapLaborRow),
     createdAt: row.created_at,

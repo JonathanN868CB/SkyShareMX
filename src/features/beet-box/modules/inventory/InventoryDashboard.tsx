@@ -1,10 +1,11 @@
-import { useState } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import { Search, Package, AlertTriangle } from "lucide-react"
-import { INVENTORY_PARTS } from "../../data/mockData"
+import { getParts } from "../../services/inventory"
+import type { InventoryPart } from "../../types"
 import { cn } from "@/shared/lib/utils"
 
-const CONDITION_COLORS = {
+const CONDITION_COLORS: Record<string, string> = {
   new:          "bg-emerald-900/30 text-emerald-400 border border-emerald-800/40",
   overhauled:   "bg-blue-900/30 text-blue-400 border border-blue-800/40",
   serviceable:  "bg-amber-900/30 text-amber-400 border border-amber-800/40",
@@ -13,17 +14,38 @@ const CONDITION_COLORS = {
 
 export default function InventoryDashboard() {
   const navigate = useNavigate()
+  const [parts, setParts] = useState<InventoryPart[]>([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
 
-  const filtered = INVENTORY_PARTS.filter(p =>
-    p.partNumber.toLowerCase().includes(search.toLowerCase()) ||
-    p.description.toLowerCase().includes(search.toLowerCase()) ||
-    p.manufacturer.toLowerCase().includes(search.toLowerCase())
-  )
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      try {
+        const data = await getParts()
+        setParts(data)
+      } catch (err) {
+        console.error("Failed to load inventory:", err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [])
 
-  const lowStock = INVENTORY_PARTS.filter(p => p.qtyOnHand <= p.reorderPoint).length
-  const outOfStock = INVENTORY_PARTS.filter(p => p.qtyOnHand === 0).length
-  const totalValue = INVENTORY_PARTS.reduce((s, p) => s + p.qtyOnHand * p.unitCost, 0)
+  const filtered = useMemo(() => {
+    if (!search.trim()) return parts
+    const q = search.toLowerCase()
+    return parts.filter(p =>
+      p.partNumber.toLowerCase().includes(q) ||
+      p.description.toLowerCase().includes(q) ||
+      (p.manufacturer ?? "").toLowerCase().includes(q)
+    )
+  }, [parts, search])
+
+  const lowStock = parts.filter(p => p.qtyOnHand <= p.reorderPoint).length
+  const outOfStock = parts.filter(p => p.qtyOnHand === 0).length
+  const totalValue = parts.reduce((s, p) => s + p.qtyOnHand * p.unitCost, 0)
 
   return (
     <div className="min-h-screen">
@@ -33,7 +55,9 @@ export default function InventoryDashboard() {
             <h1 className="text-white mb-1" style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}>
               Inventory
             </h1>
-            <p className="text-white/45 text-sm">{INVENTORY_PARTS.length} part numbers tracked</p>
+            <p className="text-white/45 text-sm">
+              {loading ? "Loading..." : `${parts.length} part numbers tracked`}
+            </p>
           </div>
         </div>
       </div>
@@ -74,63 +98,72 @@ export default function InventoryDashboard() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search by part number, description, or manufacturer…"
+            placeholder="Search by part number, description, or manufacturer..."
             className="w-full pl-9 pr-4 py-2.5 bg-white/[0.05] border border-white/10 rounded-lg text-white/85 text-sm placeholder:text-white/25 focus:outline-none focus:border-white/25 transition-colors"
           />
         </div>
 
         {/* Parts table */}
         <div className="card-elevated rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ borderBottom: "1px solid hsl(0 0% 20%)" }}>
-                {["Part Number", "Description", "Manufacturer", "Condition", "On Hand", "Reserved", "Reorder Pt.", "Unit Cost", "Location"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-white/35 text-xs uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((part, idx) => {
-                const isLow = part.qtyOnHand <= part.reorderPoint
-                const isOut = part.qtyOnHand === 0
-                return (
-                  <tr
-                    key={part.id}
-                    onClick={() => navigate(`/app/beet-box/inventory/${part.id}`)}
-                    className="cursor-pointer transition-colors hover:bg-white/[0.04]"
-                    style={{ borderBottom: idx < filtered.length - 1 ? "1px solid hsl(0 0% 16%)" : "none" }}
-                  >
-                    <td className="px-4 py-3 font-mono text-white/80 text-xs font-semibold">{part.partNumber}</td>
-                    <td className="px-4 py-3 text-white/75 text-sm max-w-[200px]">
-                      <span className="line-clamp-1">{part.description}</span>
-                    </td>
-                    <td className="px-4 py-3 text-white/50 text-xs">{part.manufacturer}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide", CONDITION_COLORS[part.condition])}>
-                        {part.condition.replace("_", " ")}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={cn("font-bold font-mono text-sm", isOut ? "text-red-400" : isLow ? "text-amber-400" : "text-white/80")}>
-                        {part.qtyOnHand}
-                      </span>
-                      {isLow && !isOut && <span className="ml-1.5 text-amber-400/60 text-[10px]">↓</span>}
-                      {isOut && <span className="ml-1.5 text-red-400/60 text-[10px]">OOS</span>}
-                    </td>
-                    <td className="px-4 py-3 text-white/40 font-mono text-sm">{part.qtyReserved}</td>
-                    <td className="px-4 py-3 text-white/40 font-mono text-sm">{part.reorderPoint}</td>
-                    <td className="px-4 py-3 text-white/65 text-sm">${part.unitCost.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-white/40 text-xs font-mono">{part.locationBin}</td>
-                  </tr>
-                )
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-white/25 text-sm">No parts match your search.</td>
+          {loading ? (
+            <div className="px-4 py-16 text-center text-white/30 text-sm">Loading inventory...</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ borderBottom: "1px solid hsl(0 0% 20%)" }}>
+                  {["Part Number", "Description", "Manufacturer", "Condition", "On Hand", "Reserved", "Reorder Pt.", "Unit Cost", "Location"].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-white/35 text-xs uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>{h}</th>
+                  ))}
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((part, idx) => {
+                  const isLow = part.qtyOnHand <= part.reorderPoint
+                  const isOut = part.qtyOnHand === 0
+                  return (
+                    <tr
+                      key={part.id}
+                      onClick={() => navigate(`/app/beet-box/inventory/${part.id}`)}
+                      className="cursor-pointer transition-colors hover:bg-white/[0.04]"
+                      style={{ borderBottom: idx < filtered.length - 1 ? "1px solid hsl(0 0% 16%)" : "none" }}
+                    >
+                      <td className="px-4 py-3 font-mono text-white/80 text-xs font-semibold">{part.partNumber}</td>
+                      <td className="px-4 py-3 text-white/75 text-sm max-w-[200px]">
+                        <span className="line-clamp-1">{part.description}</span>
+                      </td>
+                      <td className="px-4 py-3 text-white/50 text-xs">{part.manufacturer ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide", CONDITION_COLORS[part.condition] ?? "bg-white/5 text-white/40 border border-white/10")}>
+                          {part.condition.replace("_", " ")}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={cn("font-bold font-mono text-sm", isOut ? "text-red-400" : isLow ? "text-amber-400" : "text-white/80")}>
+                          {part.qtyOnHand}
+                        </span>
+                        {isLow && !isOut && <span className="ml-1.5 text-amber-400/60 text-[10px]">↓</span>}
+                        {isOut && <span className="ml-1.5 text-red-400/60 text-[10px]">OOS</span>}
+                      </td>
+                      <td className="px-4 py-3 text-white/40 font-mono text-sm">{part.qtyReserved}</td>
+                      <td className="px-4 py-3 text-white/40 font-mono text-sm">{part.reorderPoint}</td>
+                      <td className="px-4 py-3 text-white/65 text-sm">${part.unitCost.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-white/40 text-xs font-mono">{part.locationBin ?? "—"}</td>
+                    </tr>
+                  )
+                })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-16 text-center">
+                      <Package className="w-10 h-10 text-white/10 mx-auto mb-3" />
+                      <p className="text-white/25 text-sm">
+                        {parts.length === 0 ? "No inventory parts yet." : "No parts match your search."}
+                      </p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>

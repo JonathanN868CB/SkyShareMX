@@ -4,7 +4,7 @@ import {
   ClipboardList, Package, ShoppingCart, Wrench,
   FileText, BookMarked, GraduationCap,
   PanelLeftOpen, PanelLeftClose, Settings, Boxes,
-  Zap, BookText,
+  Zap, BookText, BookOpen, BarChart3,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { BeetIcon } from "./shared/BeetIcon"
@@ -16,6 +16,7 @@ const OPS_ITEMS = [
   { label: "Inventory",        path: "/app/beet-box/inventory",        icon: Package       },
   { label: "Parts",            path: "/app/beet-box/parts",            icon: Boxes         },
   { label: "Purchase Orders",  path: "/app/beet-box/purchase-orders",  icon: ShoppingCart  },
+  { label: "Parts Overview",  path: "/app/beet-box/parts-overview",   icon: BarChart3     },
   { label: "Tool Calibration", path: "/app/beet-box/tool-calibration", icon: Wrench        },
   { label: "Settings",         path: "/app/beet-box/settings",         icon: Settings      },
 ]
@@ -26,8 +27,9 @@ const MANAGERS_ITEMS = [
 ]
 
 const KNOWLEDGE_ITEMS = [
-  { label: "SOP Library", path: "/app/beet-box/sop-library", icon: BookMarked    },
-  { label: "Training",    path: "/app/beet-box/training",    icon: GraduationCap },
+  { label: "Parts Catalog", path: "/app/beet-box/catalog",     icon: BookOpen      },
+  { label: "SOP Library",   path: "/app/beet-box/sop-library", icon: BookMarked    },
+  { label: "Training",      path: "/app/beet-box/training",    icon: GraduationCap },
 ]
 
 // Shared style for both toggle buttons (sidebar + WO rail) — exported so WorkOrderDetail can match

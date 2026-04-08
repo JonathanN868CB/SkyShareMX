@@ -1,48 +1,88 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowLeft, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
-
-const VENDORS = ["Aircraft Spruce", "Aviall", "Jetsco", "Wencor", "Hartzell Service Center", "Garmin Service", "Other"]
+import { useAuth } from "@/features/auth"
+import { createPurchaseOrder, getVendorsForPO } from "../../services/purchaseOrders"
+import { PartNumberCombobox } from "@/features/parts/components/PartNumberCombobox"
 
 interface DraftLine {
   id: string
   partNumber: string
   description: string
+  catalogId: string | null
   qty: string
   unitCost: string
+  woRef: string
+}
+
+function emptyLine(): DraftLine {
+  return { id: String(Date.now()), partNumber: "", description: "", catalogId: null, qty: "1", unitCost: "", woRef: "" }
 }
 
 export default function POCreate() {
   const navigate = useNavigate()
-  const [vendor, setVendor] = useState("")
+  const { profile } = useAuth()
+  const [vendors, setVendors] = useState<{ id: string; name: string }[]>([])
+  const [vendorId, setVendorId] = useState("")
+  const [vendorName, setVendorName] = useState("")
   const [expectedDelivery, setExpectedDelivery] = useState("")
   const [notes, setNotes] = useState("")
-  const [lines, setLines] = useState<DraftLine[]>([
-    { id: "1", partNumber: "", description: "", qty: "1", unitCost: "" }
-  ])
+  const [lines, setLines] = useState<DraftLine[]>([emptyLine()])
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    getVendorsForPO().then(setVendors).catch(console.error)
+  }, [])
 
   function addLine() {
-    setLines(l => [...l, { id: String(Date.now()), partNumber: "", description: "", qty: "1", unitCost: "" }])
+    setLines(l => [...l, emptyLine()])
   }
 
   function removeLine(id: string) {
     setLines(l => l.filter(ln => ln.id !== id))
   }
 
-  function updateLine(id: string, field: keyof DraftLine, value: string) {
+  function updateLine(id: string, field: keyof DraftLine, value: string | null) {
     setLines(l => l.map(ln => ln.id === id ? { ...ln, [field]: value } : ln))
   }
 
   const total = lines.reduce((s, l) => s + (parseFloat(l.qty) || 0) * (parseFloat(l.unitCost) || 0), 0)
-  const isValid = vendor && lines.some(l => l.partNumber && l.description)
+  const isValid = vendorName && lines.some(l => l.partNumber.trim())
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!isValid || submitting) return
+
     setSubmitting(true)
-    setTimeout(() => navigate("/app/beet-box/purchase-orders/po-004"), 800)
+    setError("")
+
+    try {
+      const po = await createPurchaseOrder({
+        vendorId: vendorId || undefined,
+        vendorName,
+        expectedDelivery: expectedDelivery || undefined,
+        notes: notes || undefined,
+        createdBy: profile?.id ?? "",
+        lines: lines
+          .filter(l => l.partNumber.trim())
+          .map(l => ({
+            partNumber: l.partNumber.trim(),
+            description: l.description.trim(),
+            qtyOrdered: Math.max(1, parseInt(l.qty) || 1),
+            unitCost: parseFloat(l.unitCost) || 0,
+            woRef: l.woRef.trim() || undefined,
+            catalogId: l.catalogId || undefined,
+          })),
+      })
+      navigate(`/app/beet-box/purchase-orders/${po.id}`)
+    } catch (err) {
+      console.error("Failed to create PO:", err)
+      setError("Failed to create purchase order. Please try again.")
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -61,7 +101,7 @@ export default function POCreate() {
 
       <div className="stripe-divider" />
 
-      <div className="px-8 py-6 max-w-3xl">
+      <div className="px-8 py-6 max-w-4xl">
         <form onSubmit={handleSubmit} className="space-y-6">
 
           {/* Vendor + delivery */}
@@ -69,14 +109,18 @@ export default function POCreate() {
             <div className="space-y-1.5">
               <label className="text-white/60 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Vendor *</label>
               <select
-                value={vendor}
-                onChange={e => setVendor(e.target.value)}
+                value={vendorId}
+                onChange={e => {
+                  const v = vendors.find(v => v.id === e.target.value)
+                  setVendorId(e.target.value)
+                  setVendorName(v?.name ?? "")
+                }}
                 className="w-full px-3 py-2 rounded text-sm border border-white/10 text-white focus:outline-none focus:border-white/30"
                 style={{ background: "hsl(0,0%,14%)", colorScheme: "dark" }}
                 required
               >
                 <option value="">Select vendor…</option>
-                {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
+                {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
@@ -102,7 +146,7 @@ export default function POCreate() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ borderBottom: "1px solid hsl(0 0% 20%)" }}>
-                    {["Part Number", "Description", "Qty", "Unit Cost", "Extended", ""].map(h => (
+                    {["Part Number", "Description", "WO Ref", "Qty", "Unit Cost", "Extended", ""].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left text-white/35 text-xs uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>{h}</th>
                     ))}
                   </tr>
@@ -112,20 +156,33 @@ export default function POCreate() {
                     const ext = (parseFloat(line.qty) || 0) * (parseFloat(line.unitCost) || 0)
                     return (
                       <tr key={line.id} style={{ borderBottom: idx < lines.length - 1 ? "1px solid hsl(0 0% 16%)" : "none" }}>
-                        <td className="px-3 py-2">
-                          <input
-                            className="w-28 px-2 py-1.5 rounded text-xs bg-white/[0.06] border border-white/10 text-white font-mono placeholder:text-white/20"
-                            placeholder="P/N…"
+                        <td className="px-3 py-2" style={{ minWidth: 180 }}>
+                          <PartNumberCombobox
                             value={line.partNumber}
-                            onChange={e => updateLine(line.id, "partNumber", e.target.value)}
+                            onChange={(pn, catalogId, desc) => {
+                              setLines(l => l.map(ln => ln.id === line.id ? {
+                                ...ln,
+                                partNumber: pn,
+                                catalogId,
+                                description: desc && !ln.description ? desc : ln.description,
+                              } : ln))
+                            }}
                           />
                         </td>
                         <td className="px-3 py-2">
                           <input
-                            className="w-full min-w-[160px] px-2 py-1.5 rounded text-xs bg-white/[0.06] border border-white/10 text-white placeholder:text-white/20"
+                            className="w-full min-w-[140px] px-2 py-1.5 rounded text-xs bg-white/[0.06] border border-white/10 text-white placeholder:text-white/20"
                             placeholder="Description…"
                             value={line.description}
                             onChange={e => updateLine(line.id, "description", e.target.value)}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            className="w-20 px-2 py-1.5 rounded text-xs bg-white/[0.06] border border-white/10 text-white font-mono placeholder:text-white/20"
+                            placeholder="WO #"
+                            value={line.woRef}
+                            onChange={e => updateLine(line.id, "woRef", e.target.value)}
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -161,7 +218,7 @@ export default function POCreate() {
                     )
                   })}
                   <tr style={{ borderTop: "1px solid hsl(0 0% 20%)" }}>
-                    <td colSpan={4} className="px-3 py-2.5 text-right text-white/35 text-xs uppercase tracking-wider" style={{ fontFamily: "var(--font-heading)" }}>
+                    <td colSpan={5} className="px-3 py-2.5 text-right text-white/35 text-xs uppercase tracking-wider" style={{ fontFamily: "var(--font-heading)" }}>
                       PO Total
                     </td>
                     <td className="px-3 py-2.5 text-white font-bold text-sm">${total.toFixed(2)}</td>
@@ -183,6 +240,10 @@ export default function POCreate() {
               className="w-full bg-white/[0.06] border border-white/10 rounded px-3 py-2 text-white/80 text-sm resize-none focus:outline-none focus:border-white/25 placeholder:text-white/20"
             />
           </div>
+
+          {error && (
+            <p className="text-red-400 text-sm">{error}</p>
+          )}
 
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={!isValid || submitting} style={{ background: "var(--skyshare-gold)", color: "#000" }} className="font-semibold px-6">

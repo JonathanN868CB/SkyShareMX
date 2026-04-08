@@ -208,6 +208,7 @@ export function PartsRequestForm() {
         quantity: line.quantity,
         condition: line.condition,
         line_status: "requested",
+        catalog_id: line.catalog_id || null,
       }))
 
       const { error: lineErr } = await supabase
