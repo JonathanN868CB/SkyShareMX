@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   DollarSign, AlertTriangle, ShoppingCart, PackageCheck,
-  ArrowRight, TrendingUp, BarChart3,
+  ArrowRight, TrendingUp, BarChart3, Zap, Loader2,
 } from "lucide-react"
 import {
   getPartsOverviewStats,
@@ -10,11 +10,13 @@ import {
   getRecentReceivingActivity,
   getTransactionSummary,
 } from "../../services/partsOverview"
+import { autoGenerateReorderPOs } from "../../services/automation"
 import type {
   PartsOverviewStats,
   ReorderAlert,
   RecentReceiving,
 } from "../../services/partsOverview"
+import { useAuth } from "@/features/auth"
 
 const CONDITION_LABELS: Record<string, string> = {
   new: "New",
@@ -25,11 +27,14 @@ const CONDITION_LABELS: Record<string, string> = {
 
 export default function PartsOverview() {
   const navigate = useNavigate()
+  const { profile } = useAuth()
   const [stats, setStats] = useState<PartsOverviewStats | null>(null)
   const [alerts, setAlerts] = useState<ReorderAlert[]>([])
   const [receiving, setReceiving] = useState<RecentReceiving[]>([])
   const [txnSummary, setTxnSummary] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
+  const [generatingPOs, setGeneratingPOs] = useState(false)
+  const [poResults, setPOResults] = useState<Array<{ poNumber: string; vendorName: string; lineCount: number }> | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -149,12 +154,56 @@ export default function PartsOverview() {
                   >
                     Reorder Alerts
                   </h2>
-                  {alerts.length > 0 && (
-                    <span className="text-amber-400/70 text-xs font-medium">
-                      {alerts.length} part{alerts.length !== 1 ? "s" : ""}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {alerts.length > 0 && (
+                      <span className="text-amber-400/70 text-xs font-medium">
+                        {alerts.length} part{alerts.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                    {alerts.length > 0 && (
+                      <button
+                        onClick={async () => {
+                          if (generatingPOs || !profile) return
+                          setGeneratingPOs(true)
+                          setPOResults(null)
+                          try {
+                            const results = await autoGenerateReorderPOs(profile.id)
+                            setPOResults(results.map(r => ({ poNumber: r.poNumber, vendorName: r.vendorName, lineCount: r.lineCount })))
+                          } catch (err) {
+                            console.error("Auto-PO generation failed:", err)
+                          } finally {
+                            setGeneratingPOs(false)
+                          }
+                        }}
+                        disabled={generatingPOs}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-semibold uppercase tracking-wider transition-all"
+                        style={{
+                          background: "rgba(212,160,23,0.15)",
+                          border: "1px solid rgba(212,160,23,0.3)",
+                          color: "var(--skyshare-gold)",
+                          opacity: generatingPOs ? 0.5 : 1,
+                        }}
+                      >
+                        {generatingPOs ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                        Generate PO Drafts
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {poResults && poResults.length > 0 && (
+                  <div className="px-4 py-3" style={{ background: "rgba(16,185,129,0.08)", borderBottom: "1px solid rgba(16,185,129,0.2)" }}>
+                    <p className="text-emerald-400 text-xs font-semibold mb-1">Draft POs Generated</p>
+                    {poResults.map(r => (
+                      <p key={r.poNumber} className="text-emerald-300/70 text-xs">
+                        {r.poNumber} — {r.vendorName} ({r.lineCount} line{r.lineCount !== 1 ? "s" : ""})
+                      </p>
+                    ))}
+                    <button onClick={() => navigate("/app/beet-box/purchase-orders")} className="text-emerald-400/80 text-xs mt-1 hover:text-emerald-300 transition-colors">
+                      View Purchase Orders →
+                    </button>
+                  </div>
+                )}
 
                 {alerts.length === 0 ? (
                   <div className="px-4 py-12 text-center">
