@@ -1255,19 +1255,30 @@ export default function UsersPage() {
         <TabsContent value="requests">
           <Card className="card-elevated border-0">
             {/* Search */}
-            {!loadingProfiles && pendingInvites.length > 0 && (
-              <div className="px-4 pt-4 pb-2">
-                <div className="relative max-w-xs">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }} />
-                  <input
-                    value={pendingSearch}
-                    onChange={e => setPendingSearch(e.target.value)}
-                    placeholder="Search invites…"
-                    className="w-full h-8 pl-8 pr-3 rounded-md text-sm bg-white/5 border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/25 transition-colors"
-                  />
-                </div>
+            <div className="px-5 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.07)" }}>
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+                <input
+                  value={pendingSearch}
+                  onChange={e => setPendingSearch(e.target.value)}
+                  placeholder="Search by name or email…"
+                  className="w-full h-10 pl-10 pr-4 rounded-lg text-sm text-white focus:outline-none transition-all"
+                  style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: pendingSearch ? "1px solid var(--skyshare-gold)" : "1px solid rgba(255,255,255,0.15)",
+                    boxShadow: pendingSearch ? "0 0 0 2px rgba(212,160,23,0.1)" : "none",
+                  }}
+                />
+                {pendingSearch && (
+                  <button
+                    onClick={() => setPendingSearch("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 transition-colors"
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </button>
+                )}
               </div>
-            )}
+            </div>
             {loadingProfiles ? (
               <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
             ) : pendingInvites.length === 0 ? (
