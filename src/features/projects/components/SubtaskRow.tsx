@@ -29,7 +29,7 @@ export function SubtaskRow({ task, statuses, boardId, onOpenDetail }: SubtaskRow
   const dateStr = task.due_date
     ? new Date(task.due_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
     : null
-  const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status?.label !== "Done"
+  const isOverdue = task.due_date && new Date(task.due_date + "T00:00:00") < new Date() && task.status?.label !== "Done"
 
   return (
     <div

@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus, LayoutGrid, List, AlertTriangle, Loader2 } from "lucide-react"
+import { Plus, LayoutGrid, List, AlertTriangle, Loader2, Pencil, Check, X } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { cn } from "@/shared/lib/utils"
-import { getWorkOrders } from "../../services"
+import { getWorkOrders, updateWorkOrder } from "../../services"
 import { WO_STATUS_LABELS } from "../../constants"
 import type { WorkOrder, WOStatus } from "../../types"
 import { WOStatusBadge } from "../../shared/StatusBadge"
@@ -36,6 +36,27 @@ export default function WorkOrderDashboard() {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingDesc, setEditingDesc] = useState("")
+
+  function startEdit(wo: WorkOrder, e: React.MouseEvent) {
+    e.stopPropagation()
+    setEditingId(wo.id)
+    setEditingDesc(wo.description ?? "")
+  }
+
+  async function saveDesc(woId: string) {
+    try {
+      await updateWorkOrder(woId, { description: editingDesc })
+      setWorkOrders(prev => prev.map(w => w.id === woId ? { ...w, description: editingDesc || null } : w))
+    } catch { /* ignore */ }
+    setEditingId(null)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditingDesc("")
+  }
 
   useEffect(() => {
     getWorkOrders()
@@ -52,61 +73,65 @@ export default function WorkOrderDashboard() {
 
   return (
     <div className="min-h-screen">
-      {/* Hero */}
-      <div className="hero-area px-8 py-7">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1
-              className="text-white mb-1"
-              style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}
+      {/* Hero — height locked to match sidebar header so stripe-dividers align */}
+      <div
+        className="hero-area flex items-center justify-between px-10"
+        style={{ minHeight: "104px", margin: 0 }}
+      >
+        <div>
+          <h1
+            className="text-white mb-1.5"
+            style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}
+          >
+            Work Orders
+          </h1>
+          <p
+            className="text-white/45 text-sm"
+            style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+          >
+            {loading ? "Loading…" : `${workOrders.length} total · ${open + waiting + review + billing} active`}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* View toggle */}
+          <div
+            className="flex rounded overflow-hidden"
+            style={{ border: "1px solid hsl(0 0% 22%)" }}
+          >
+            <button
+              onClick={() => setView("list")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors",
+                view === "list" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/70"
+              )}
             >
-              Work Orders
-            </h1>
-            <p className="text-white/45 text-sm">
-              {loading ? "Loading…" : `${workOrders.length} total · ${open + waiting + review + billing} active`}
-            </p>
+              <List className="w-3.5 h-3.5" /> List
+            </button>
+            <button
+              onClick={() => setView("kanban")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors",
+                view === "kanban" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/70"
+              )}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" /> Kanban
+            </button>
           </div>
-          <div className="flex items-center gap-3">
-            {/* View toggle */}
-            <div
-              className="flex rounded overflow-hidden"
-              style={{ border: "1px solid hsl(0 0% 22%)" }}
-            >
-              <button
-                onClick={() => setView("list")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors",
-                  view === "list" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/70"
-                )}
-              >
-                <List className="w-3.5 h-3.5" /> List
-              </button>
-              <button
-                onClick={() => setView("kanban")}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors",
-                  view === "kanban" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/70"
-                )}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" /> Kanban
-              </button>
-            </div>
-            <Button
-              size="sm"
-              onClick={() => navigate("/app/beet-box/work-orders/new")}
-              style={{ background: "var(--skyshare-gold)", color: "#000" }}
-              className="font-semibold text-xs gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              New Work Order
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => navigate("/app/beet-box/work-orders/new")}
+            style={{ background: "var(--skyshare-gold)", color: "#000" }}
+            className="font-semibold text-xs gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New Work Order
+          </Button>
         </div>
       </div>
 
       <div className="stripe-divider" />
 
-      <div className="px-8 py-6 space-y-6">
+      <div className="px-10 py-6 space-y-6">
 
         {/* Error */}
         {error && (
@@ -168,7 +193,31 @@ export default function WorkOrderDashboard() {
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-white/70 text-xs font-mono">{wo.woNumber}</span>
                         </div>
-                        <p className="text-white/85 text-xs leading-snug line-clamp-2">{wo.description ?? "—"}</p>
+                        {editingId === wo.id ? (
+                          <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                            <input
+                              autoFocus
+                              className="flex-1 bg-white/[0.07] text-white text-xs rounded px-2 py-1.5 border border-white/15 outline-none focus:border-[var(--skyshare-gold)]/50"
+                              placeholder="Description…"
+                              value={editingDesc}
+                              onChange={e => setEditingDesc(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") saveDesc(wo.id); if (e.key === "Escape") cancelEdit() }}
+                            />
+                            <button onClick={() => saveDesc(wo.id)} className="p-1 rounded hover:bg-emerald-500/20"><Check className="w-3 h-3 text-emerald-400" /></button>
+                            <button onClick={cancelEdit} className="p-1 rounded hover:bg-red-500/20"><X className="w-3 h-3 text-white/40" /></button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-white/85 text-xs leading-snug line-clamp-2 flex-1">{wo.description ?? <span className="text-white/25 italic">No description</span>}</p>
+                            <button
+                              onClick={e => startEdit(wo, e)}
+                              className="flex-shrink-0 p-1 rounded hover:bg-white/10 text-white/30 hover:text-white/60 transition-colors"
+                              title="Edit description"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
                         <p className="text-white/35 text-xs">{wo.aircraft?.registration ?? wo.guestRegistration ?? "—"}</p>
                       </button>
                     ))}
@@ -231,8 +280,47 @@ export default function WorkOrderDashboard() {
                           {wo.aircraft?.registration ?? wo.guestRegistration ?? "—"}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-white/80 text-sm max-w-[220px]">
-                        <span className="line-clamp-1">{wo.description ?? "—"}</span>
+                      <td className="px-4 py-3 text-white/80 text-sm" style={{ maxWidth: 360 }}>
+                        {editingId === wo.id ? (
+                          <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                            <input
+                              autoFocus
+                              className="flex-1 bg-white/[0.07] text-white text-sm rounded-md px-3 py-2 border border-white/15 outline-none focus:border-[var(--skyshare-gold)]/50 transition-colors"
+                              placeholder="e.g. Scheduled maintenance, 14-day check…"
+                              value={editingDesc}
+                              onChange={e => setEditingDesc(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") saveDesc(wo.id); if (e.key === "Escape") cancelEdit() }}
+                            />
+                            <button
+                              onClick={() => saveDesc(wo.id)}
+                              className="p-2 rounded-md transition-colors hover:bg-emerald-500/20"
+                              title="Save"
+                            >
+                              <Check className="w-4 h-4 text-emerald-400" />
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="p-2 rounded-md transition-colors hover:bg-red-500/20"
+                              title="Cancel"
+                            >
+                              <X className="w-4 h-4 text-white/40" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <span className="line-clamp-1 flex-1">{wo.description ?? <span className="text-white/25 italic">No description</span>}</span>
+                            <button
+                              onClick={e => startEdit(wo, e)}
+                              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all
+                                         bg-white/[0.06] hover:bg-white/[0.12] text-white/50 hover:text-white/80
+                                         border border-white/10 hover:border-white/20"
+                              title="Edit description"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3"><WOStatusBadge status={wo.status} /></td>
                       <td className="px-4 py-3 text-white/40 text-xs">

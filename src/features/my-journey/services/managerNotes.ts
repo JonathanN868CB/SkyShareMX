@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase"
+import { localToday } from "@/shared/lib/dates"
 
 async function getMyProfileId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser()
@@ -112,7 +113,7 @@ export async function addManagerNote(payload: ManagerNoteInsert): Promise<void> 
     .insert({
       subject_profile_id: payload.subject_profile_id,
       note_text: payload.note_text.trim(),
-      note_date: payload.note_date ?? new Date().toISOString().split("T")[0],
+      note_date: payload.note_date ?? localToday(),
     })
   if (error) throw error
 }

@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, Check, Plus, X, Pencil, FileDown, AlertTriangle, Bo
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { Button } from "@/shared/ui/button"
+import { localToday } from "@/shared/lib/dates"
 import {
   getLogbookEntryById, getOrCreateDraftLogbookEntry, createLogbookEntry,
   updateLogbookEntry, signLogbookEntry, upsertEntryLine, deleteEntryLine,
@@ -126,7 +127,7 @@ function NewEntryCreator({
   onCreated: (id: string) => void
   onBack: () => void
 }) {
-  const today = new Date().toISOString().split("T")[0]
+  const today = localToday()
   const [fleet,         setFleet]         = useState<FleetAircraft[]>([])
   const [selectedAcId,  setSelectedAcId]  = useState("")
   const [isGuest,       setIsGuest]       = useState(false)
@@ -343,7 +344,7 @@ function EntryDocument({ entryId, fromWO }: { entryId: string; fromWO: string | 
 
   // Editable header fields (auto-saved on blur)
   const [fields, setFields] = useState<EditFields>({
-    entryDate: new Date().toISOString().split("T")[0],
+    entryDate: localToday(),
     totalAircraftTime: null, totalAircraftTimeNew: null,
     landings: null, landingsNew: null,
     hobbs: null, hobbsNew: null,

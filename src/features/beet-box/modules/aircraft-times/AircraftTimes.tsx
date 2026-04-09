@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, AlertTriangle, Pencil, Check, X, Clock, RefreshCw } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
+import { localToday } from "@/shared/lib/dates"
 import { getFleetAircraft } from "../../services"
 import type { FleetAircraft } from "../../types"
 
@@ -48,7 +49,7 @@ function loadRecord(aircraft: FleetAircraft): AircraftTimeRecord {
   if (raw) {
     try { return JSON.parse(raw) } catch { /* fall through */ }
   }
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localToday()
   return {
     aircraftId: aircraft.id,
     airframe:  { totalTime: 0, cycles: 0, tso: null, cso: null, asOf: today },

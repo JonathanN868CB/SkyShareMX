@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react"
+import { localToday } from "@/shared/lib/dates"
 import { useRevisionAlerts, useCreateAuditRecordBatch, type RevisionAlert } from "./useMmAuditData"
 
 const C = "#a78bfa"
@@ -11,7 +12,7 @@ export default function MmRevisionAlerts({ campaignId, onOpenWorkspace }: { camp
   if (isLoading || !alerts?.length) return null
 
   const handleDismiss = (alert: RevisionAlert) => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localToday()
     batchMut.mutate(
       {
         records: alert.affected_aircraft.map(a => ({

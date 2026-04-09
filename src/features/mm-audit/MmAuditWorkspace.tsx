@@ -310,7 +310,27 @@ function DocGroupCard({
 
   const handleConfirmRevChange = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!campaignId) return
+    if (!campaignId) {
+      // Ad-hoc mode (no active campaign) — update the source document directly
+      upsertMut.mutate(
+        {
+          id: group.source_document_id,
+          document_number: group.document_number,
+          document_name: group.document_name,
+          document_url: group.document_url,
+          current_revision: newRev.trim(),
+          current_rev_date: group.current_rev_date,
+        },
+        {
+          onSuccess: () => {
+            setEditingRev(false)
+            setShowRevConfirm(false)
+            onRevisionUpdated()
+          },
+        }
+      )
+      return
+    }
     stageMut.mutate(
       {
         campaign_id: campaignId,
@@ -607,22 +627,25 @@ function DocGroupCard({
                 <span className="font-bold" style={{ color: C }}>Rev {newRev.trim()}</span>
               </div>
               <div className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
-                This will <strong style={{ color: "rgba(255,255,255,0.8)" }}>stage</strong> a revision change for <strong style={{ color: "rgba(255,255,255,0.8)" }}>{group.document_name}</strong>.
-                The change will only apply to the permanent database when the campaign is finalized.
+                {campaignId ? (
+                  <>This will <strong style={{ color: "rgba(255,255,255,0.8)" }}>stage</strong> a revision change for <strong style={{ color: "rgba(255,255,255,0.8)" }}>{group.document_name}</strong>. The change will only apply to the permanent database when the campaign is finalized.</>
+                ) : (
+                  <>This will <strong style={{ color: "rgba(255,255,255,0.8)" }}>immediately update</strong> the current revision for <strong style={{ color: "rgba(255,255,255,0.8)" }}>{group.document_name}</strong> in the permanent database.</>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleConfirmRevChange}
-                  disabled={stageMut.isPending}
+                  disabled={stageMut.isPending || upsertMut.isPending}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90 disabled:opacity-40"
                   style={{ background: "#f59e0b", color: "#fff", fontFamily: "var(--font-heading)" }}
                 >
-                  {stageMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  Stage Rev {oldRev} → {newRev.trim()}
+                  {(stageMut.isPending || upsertMut.isPending) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  {campaignId ? `Stage Rev ${oldRev} → ${newRev.trim()}` : `Update Rev ${oldRev} → ${newRev.trim()}`}
                 </button>
                 <button
                   onClick={handleCancelEdit}
-                  disabled={stageMut.isPending}
+                  disabled={stageMut.isPending || upsertMut.isPending}
                   className="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-opacity hover:opacity-80"
                   style={{ color: "rgba(255,255,255,0.4)", fontFamily: "var(--font-heading)" }}
                 >

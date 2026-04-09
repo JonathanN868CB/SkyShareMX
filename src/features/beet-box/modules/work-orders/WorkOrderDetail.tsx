@@ -13,6 +13,7 @@ import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { Button } from "@/shared/ui/button"
 import { cn } from "@/shared/lib/utils"
+import { localToday } from "@/shared/lib/dates"
 import {
   getWorkOrderById, updateWorkOrderStatus, updateWorkOrder,
   upsertWOItem, updateItemStatus, updateWOItemFields, signOffItem, clearSignOff,
@@ -981,7 +982,7 @@ function ItemDetailPanel({
                 size="sm" variant="ghost"
                 onClick={() => {
                   setAddingLaborToItem(item.id)
-                  setNewLabor({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
+                  setNewLabor({ mechName: "", hours: "", date: localToday() })
                 }}
                 className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
               >
@@ -1359,7 +1360,7 @@ function ItemDetailPanel({
         {/* Right: Parts on Order for this WO */}
         <div
           className="flex-shrink-0 rounded-xl overflow-hidden flex flex-col"
-          style={{ width: 268, border: "1px solid rgba(212,160,23,0.13)", minHeight: 120, maxHeight: 456 }}
+          style={{ width: 340, border: "1px solid rgba(212,160,23,0.13)", minHeight: 120, maxHeight: 456 }}
         >
           <div
             className="px-3 py-2 flex items-center gap-1.5 flex-shrink-0"
@@ -1383,45 +1384,35 @@ function ItemDetailPanel({
             ) : (
               partsOnOrder.map(req => {
                 const sc = STATUS_CONFIG[req.status as keyof typeof STATUS_CONFIG]
+                const hasReceived = req.lines.some(l => l.lineStatus === "received")
                 return (
-                  <div key={req.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                    <button
-                      className="w-full px-3 py-1.5 flex items-center justify-between transition-colors hover:bg-white/[0.04] text-left"
-                      style={{ background: "rgba(255,255,255,0.02)" }}
-                      onClick={() => navigate(`/app/beet-box/parts/${req.id}`)}
-                    >
-                      <span className="text-white/40 text-[10px] underline underline-offset-2 decoration-white/20">
-                        {new Date(req.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  <button
+                    key={req.id}
+                    className="w-full px-3 py-2.5 flex items-center gap-3 transition-colors hover:bg-white/[0.04] text-left"
+                    style={{ background: "rgba(255,255,255,0.02)", borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+                    onClick={() => navigate(`/app/beet-box/parts/${req.id}`)}
+                  >
+                    <span className="text-white/40 text-[10px] flex-shrink-0 underline underline-offset-2 decoration-white/20">
+                      {new Date(req.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                    <span className="font-mono text-white/75 text-[11px] flex-1 truncate">
+                      {req.lines.map(l => l.partNumber).join(", ")}
+                    </span>
+                    {sc && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0" style={{ background: sc.bg, color: sc.color }}>
+                        {sc.label}
                       </span>
-                      {sc && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ background: sc.bg, color: sc.color }}>
-                          {sc.label}
-                        </span>
-                      )}
-                    </button>
-                    {req.lines.map(line => {
-                      const lsc = LINE_STATUS_CONFIG[line.lineStatus as keyof typeof LINE_STATUS_CONFIG]
-                      return (
-                        <div key={line.id} className="px-3 py-1.5 flex items-center gap-2">
-                          <span className="font-mono text-white/75 text-[10px] flex-1 truncate">{line.partNumber}</span>
-                          {lsc && (
-                            <span className="text-[9px] font-semibold px-1 py-0.5 rounded flex-shrink-0" style={{ background: lsc.bg, color: lsc.color }}>
-                              {lsc.label}
-                            </span>
-                          )}
-                          {line.lineStatus === "received" && (
-                            <button
-                              onClick={() => onPullToWO(line.partNumber)}
-                              className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
-                              style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.9)", border: "1px solid rgba(212,160,23,0.3)" }}
-                            >
-                              Pull
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
+                    )}
+                    {hasReceived && (
+                      <span
+                        onClick={e => { e.stopPropagation(); onPullToWO(req.lines.find(l => l.lineStatus === "received")!.partNumber) }}
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 cursor-pointer transition-colors"
+                        style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.9)", border: "1px solid rgba(212,160,23,0.3)" }}
+                      >
+                        Pull
+                      </span>
+                    )}
+                  </button>
                 )
               })
             )}
@@ -1629,6 +1620,8 @@ export default function WorkOrderDetail() {
   const [timesEditOpen, setTimesEditOpen]               = useState(false)
   const [hobbsDiff, setHobbsDiff]                       = useState<number | null>(null)
   const [notes, setNotes] = useState("")
+  const [woDesc, setWoDesc] = useState("")
+  const [editingDesc, setEditingDesc] = useState(false)
   const [activeTab, setActiveTab] = useState<"items" | "notes" | "logbook" | "invoice" | "audit_trail">("items")
   const [myProfile, setMyProfile] = useState<{ id: string; name: string } | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
@@ -1713,6 +1706,7 @@ export default function WorkOrderDetail() {
       const data = await getWorkOrderById(id)
       setWO(data)
       setNotes(data?.notes ?? "")
+      setWoDesc(data?.description ?? "")
       setSelectedItemId(s => s ?? data?.items[0]?.id ?? null)
       // Ensure every section that has items is visible, in canonical order
       if (data?.items?.length) {
@@ -1845,7 +1839,7 @@ export default function WorkOrderDetail() {
   const [addingPartToItem, setAddingPartToItem] = useState<string | null>(null)
   const [newPart, setNewPart] = useState({ partNumber: "", description: "", qty: "1", unitPrice: "" })
   const [addingLaborToItem, setAddingLaborToItem] = useState<string | null>(null)
-  const [newLabor, setNewLabor] = useState({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
+  const [newLabor, setNewLabor] = useState({ mechName: "", hours: "", date: localToday() })
 
   if (loading) {
     const GOLD     = "#d4a017"
@@ -2313,7 +2307,7 @@ export default function WorkOrderDetail() {
       const newTotal = (item.labor ?? []).reduce((s, e) => s + e.hours, 0) + saved.hours
       patchItem(itemId, { labor: [...(item.labor ?? []), saved], estimatedHours: newTotal })
     }
-    setNewLabor({ mechName: "", hours: "", date: new Date().toISOString().slice(0, 10) })
+    setNewLabor({ mechName: "", hours: "", date: localToday() })
     setAddingLaborToItem(null)
     auditLog({
       entryType: "labor_added",
@@ -2465,13 +2459,37 @@ export default function WorkOrderDetail() {
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
-            <div className="flex flex-col items-center gap-0.5">
+            <div className="flex flex-col items-center gap-1">
               <span
                 className="text-white text-xl font-bold tracking-wide leading-none"
                 style={{ fontFamily: "var(--font-display)" }}
               >
                 <span className="text-white/40 font-normal text-base mr-1.5">WO#</span>{wo.woNumber}
               </span>
+              {editingDesc ? (
+                <input
+                  autoFocus
+                  className="bg-transparent text-white/60 text-xs text-center border-b border-white/20 outline-none px-1 py-0.5 w-64"
+                  placeholder="e.g. Scheduled maintenance, 14-day check…"
+                  value={woDesc}
+                  onChange={e => setWoDesc(e.target.value)}
+                  onBlur={() => {
+                    setEditingDesc(false)
+                    if (woDesc !== (wo.description ?? "")) {
+                      updateWorkOrder(wo.id, { description: woDesc }).then(loadWO).catch(console.error)
+                    }
+                  }}
+                  onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setWoDesc(wo.description ?? ""); setEditingDesc(false) } }}
+                />
+              ) : (
+                <button
+                  onClick={() => setEditingDesc(true)}
+                  className="text-white/40 text-xs hover:text-white/60 transition-colors flex items-center gap-1 max-w-[280px]"
+                >
+                  <span className="truncate">{woDesc || "Add description…"}</span>
+                  <Pencil className="w-2.5 h-2.5 flex-shrink-0 opacity-0 group-hover:opacity-100" />
+                </button>
+              )}
             </div>
           </div>
 

@@ -94,7 +94,7 @@ export function TaskRow({
 
   const hasSubtasks = task.subtasks.length > 0
   const dateStr = formatDate(task.due_date)
-  const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status?.label !== "Done"
+  const isOverdue = task.due_date && new Date(task.due_date + "T00:00:00") < new Date() && task.status?.label !== "Done"
 
   return (
     <div>

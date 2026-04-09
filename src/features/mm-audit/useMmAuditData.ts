@@ -959,6 +959,103 @@ export function useToggleApplicability() {
   })
 }
 
+export function useDeleteSourceDocument() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await db.from("mm_source_documents").delete().eq("id", id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mm_source_documents"] })
+      qc.invalidateQueries({ queryKey: ["mm_fleet_overview"] })
+      qc.invalidateQueries({ queryKey: ["mm_workspace"] })
+    },
+  })
+}
+
+export function useUpsertAircraftDocument() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: {
+      id?: string
+      aircraft_id: string
+      source_document_id: string
+      assembly_type: string
+      requirement_type: string
+      section: string | null
+      assembly_detail: string | null
+      is_applicable: boolean
+    }) => {
+      if (input.id) {
+        const { error } = await db
+          .from("mm_aircraft_documents")
+          .update({
+            assembly_type: input.assembly_type,
+            requirement_type: input.requirement_type,
+            section: input.section,
+            assembly_detail: input.assembly_detail,
+            is_applicable: input.is_applicable,
+          })
+          .eq("id", input.id)
+        if (error) throw error
+      } else {
+        const { error } = await db.from("mm_aircraft_documents").insert({
+          aircraft_id: input.aircraft_id,
+          source_document_id: input.source_document_id,
+          assembly_type: input.assembly_type,
+          requirement_type: input.requirement_type,
+          section: input.section,
+          assembly_detail: input.assembly_detail,
+          is_applicable: input.is_applicable,
+        })
+        if (error) throw error
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mm_aircraft_doc_links"] })
+      qc.invalidateQueries({ queryKey: ["mm_fleet_overview"] })
+      qc.invalidateQueries({ queryKey: ["mm_workspace"] })
+    },
+  })
+}
+
+export function useDeleteAircraftDocument() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await db.from("mm_aircraft_documents").delete().eq("id", id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mm_aircraft_doc_links"] })
+      qc.invalidateQueries({ queryKey: ["mm_fleet_overview"] })
+      qc.invalidateQueries({ queryKey: ["mm_workspace"] })
+    },
+  })
+}
+
+/** All current-registration aircraft for use in pickers */
+export function useAllAircraft() {
+  return useQuery<{ aircraft_id: string; registration: string; model_full: string }[]>({
+    queryKey: ["mm_all_aircraft"],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from("aircraft_registrations")
+        .select("aircraft_id, registration, aircraft:aircraft!inner(model_full)")
+        .eq("is_current", true)
+        .order("registration")
+      if (error) throw error
+      return (data ?? []).map((r: any) => ({
+        aircraft_id: r.aircraft_id,
+        registration: r.registration,
+        model_full: r.aircraft?.model_full ?? "",
+      }))
+    },
+    staleTime: 60_000,
+  })
+}
+
 // ─── MEL / Policy Letter Tracking ───────────────────────────────────────────
 
 export function useMelTracking() {

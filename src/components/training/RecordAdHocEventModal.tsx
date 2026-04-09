@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { toast } from "sonner"
+import { localToday } from "@/shared/lib/dates"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/shared/ui/dialog"
 import { Label } from "@/shared/ui/label"
 import { Button } from "@/shared/ui/button"
@@ -113,7 +114,7 @@ export function RecordAdHocEventModal({ open, onClose, onSuccess, techs, profile
   const [techId,      setTechId]      = useState<string>("")
   const [eventType,   setEventType]   = useState<AdHocEventType>("general")
   const [title,       setTitle]       = useState("")
-  const [date,        setDate]        = useState(new Date().toISOString().slice(0, 10))
+  const [date,        setDate]        = useState(localToday())
   const [duration,    setDuration]    = useState("")
   const [description, setDescription] = useState("")
   const [corrective,  setCorrective]  = useState("")
@@ -125,7 +126,7 @@ export function RecordAdHocEventModal({ open, onClose, onSuccess, techs, profile
 
   function reset() {
     setTechId(""); setEventType("general"); setTitle("")
-    setDate(new Date().toISOString().slice(0, 10))
+    setDate(localToday())
     setDuration(""); setDescription(""); setCorrective("")
     setSeverity(""); setRequiresAck(true); setWitnessId("none")
     setNotes(""); setSubmitting(false)

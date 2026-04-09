@@ -15,6 +15,7 @@ import { Textarea } from "@/shared/ui/textarea"
 import { useAuth } from "@/features/auth"
 import { mxlms } from "@/lib/supabase-mxlms"
 import { supabase } from "@/lib/supabase"
+import { localToday } from "@/shared/lib/dates"
 import {
   getMyDirectReports,
   amIAPeopleManager,
@@ -557,7 +558,7 @@ function ActionItemsPanel({ items, loading }: { items: MxlmsActionItem[]; loadin
   const closed = items.filter(i => i.status !== "open")
 
   function ActionRow({ item }: { item: MxlmsActionItem }) {
-    const isOverdue = item.status === "open" && item.due_date && new Date(item.due_date) < new Date()
+    const isOverdue = item.status === "open" && item.due_date && new Date(item.due_date + "T00:00:00") < new Date()
     return (
       <div className="flex items-start gap-3 px-5 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
         {item.status === "open" ? (
@@ -722,7 +723,7 @@ function JournalPanel({
       const payload: MxlmsJournalInsert = {
         technician_id: techId,
         author_user_id: userId,
-        entry_date: new Date().toISOString().split("T")[0],
+        entry_date: localToday(),
         entry_type: entryType,
         content: text.trim(),
         visible_to_manager: visibleToManager,
@@ -831,10 +832,10 @@ function JournalPanel({
                 {/* Date */}
                 <div className="shrink-0 text-right" style={{ minWidth: 60 }}>
                   <p className="text-[10px] text-white/25 leading-tight" style={{ fontFamily: "var(--font-heading)" }}>
-                    {new Date(entry.entry_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    {new Date(entry.entry_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                   </p>
                   <p className="text-[9px] text-white/15" style={{ fontFamily: "var(--font-heading)" }}>
-                    {new Date(entry.entry_date).getFullYear()}
+                    {new Date(entry.entry_date + "T00:00:00").getFullYear()}
                   </p>
                 </div>
 
@@ -898,7 +899,7 @@ function PersonNotePanel({
 }) {
   const qc = useQueryClient()
   const [noteText, setNoteText] = useState("")
-  const [noteDate, setNoteDate] = useState(() => new Date().toISOString().split("T")[0])
+  const [noteDate, setNoteDate] = useState(() => localToday())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
 
@@ -1058,12 +1059,29 @@ function PersonNotePanel({
   )
 }
 
-function MyTeamTab() {
+function MyTeamTab({ isSuperAdmin }: { isSuperAdmin: boolean }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const { data: reports = [], isLoading } = useQuery({
+  // Regular managers: fetch assigned direct reports
+  const { data: reports = [], isLoading: reportsLoading } = useQuery({
     queryKey: ["my-direct-reports"],
     queryFn: getMyDirectReports,
+    enabled: !isSuperAdmin,
+  })
+
+  // Super Admin: fetch ALL profiles so they can add notes to anyone
+  const { data: allProfiles = [], isLoading: profilesLoading } = useQuery({
+    queryKey: ["all-team-profiles"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, display_name, full_name, avatar_color, avatar_initials, role")
+        .not("status", "eq", "Pending")
+        .order("full_name", { ascending: true })
+      if (error) throw error
+      return (data ?? []) as { id: string; display_name: string | null; full_name: string | null; avatar_color: string | null; avatar_initials: string | null; role: string | null }[]
+    },
+    enabled: isSuperAdmin,
   })
 
   const { data: adminName = "Super Admin" } = useQuery({
@@ -1080,11 +1098,30 @@ function MyTeamTab() {
     staleTime: Infinity,
   })
 
+  const isLoading = isSuperAdmin ? profilesLoading : reportsLoading
+
+  // Build a unified list: { profileId, name, initials, avatarColor, role }
+  const teamMembers = isSuperAdmin
+    ? allProfiles.map(p => ({
+        profileId: p.id,
+        name: p.display_name ?? p.full_name ?? "Team Member",
+        initials: p.avatar_initials ?? (p.full_name ?? "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase(),
+        avatarColor: p.avatar_color,
+        role: p.role,
+      }))
+    : reports.map(a => ({
+        profileId: a.subject_profile_id,
+        name: a.subject?.display_name ?? a.subject?.full_name ?? "Team Member",
+        initials: a.subject?.avatar_initials ?? (a.subject?.full_name ?? "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase(),
+        avatarColor: a.subject?.avatar_color ?? null,
+        role: a.subject?.role ?? null,
+      }))
+
   if (isLoading) {
     return <div className="py-16 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>Loading your team…</div>
   }
 
-  if (reports.length === 0) {
+  if (teamMembers.length === 0) {
     return (
       <div className="py-16 text-center space-y-3">
         <div className="h-12 w-12 rounded-full mx-auto flex items-center justify-center"
@@ -1102,35 +1139,34 @@ function MyTeamTab() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-white/30 pb-1" style={{ fontFamily: "var(--font-heading)" }}>
-        {reports.length} direct report{reports.length !== 1 ? "s" : ""} · notes are private and never visible to your team
+        {isSuperAdmin
+          ? `${teamMembers.length} team member${teamMembers.length !== 1 ? "s" : ""} · DOM view — all personnel`
+          : `${teamMembers.length} direct report${teamMembers.length !== 1 ? "s" : ""} · notes are private and never visible to your team`
+        }
       </p>
-      {reports.map(assignment => {
-        const person = assignment.subject
-        if (!person) return null
-        const name = person.display_name ?? person.full_name ?? "Team Member"
-        const initials = person.avatar_initials ?? name.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
-        const isOpen = expandedId === assignment.subject_profile_id
+      {teamMembers.map(person => {
+        const isOpen = expandedId === person.profileId
 
         return (
-          <Card key={assignment.id} className="card-elevated border-0 overflow-hidden">
+          <Card key={person.profileId} className="card-elevated border-0 overflow-hidden">
             <button
-              onClick={() => setExpandedId(isOpen ? null : assignment.subject_profile_id)}
+              onClick={() => setExpandedId(isOpen ? null : person.profileId)}
               className="w-full flex items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
               style={{ borderBottom: isOpen ? "1px solid rgba(255,255,255,0.07)" : "none" }}
             >
               <div
                 className="h-9 w-9 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
                 style={{
-                  background: person.avatar_color ? `${person.avatar_color}22` : "rgba(212,160,23,0.1)",
-                  border: `1.5px solid ${person.avatar_color ?? "rgba(212,160,23,0.3)"}`,
-                  color: person.avatar_color ?? "var(--skyshare-gold)",
+                  background: person.avatarColor ? `${person.avatarColor}22` : "rgba(212,160,23,0.1)",
+                  border: `1.5px solid ${person.avatarColor ?? "rgba(212,160,23,0.3)"}`,
+                  color: person.avatarColor ?? "var(--skyshare-gold)",
                   fontFamily: "var(--font-display)",
                 }}
               >
-                {initials}
+                {person.initials}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white/80">{name}</p>
+                <p className="text-sm font-medium text-white/80">{person.name}</p>
                 {person.role && (
                   <p className="text-[10px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>{person.role}</p>
                 )}
@@ -1147,8 +1183,8 @@ function MyTeamTab() {
             </button>
             {isOpen && (
               <PersonNotePanel
-                subjectProfileId={assignment.subject_profile_id}
-                subjectName={name}
+                subjectProfileId={person.profileId}
+                subjectName={person.name}
                 adminName={adminName}
               />
             )}
@@ -1324,7 +1360,7 @@ export default function MyJourney() {
       )}
 
       {/* ── My Team Tab ──────────────────────────────────────────────────────── */}
-      {activeTab === "team" && <MyTeamTab />}
+      {activeTab === "team" && <MyTeamTab isSuperAdmin={isSuperAdmin} />}
     </div>
   )
 }

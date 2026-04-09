@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase"
+import { localToday } from "@/shared/lib/dates"
 import type {
   LogbookEntry, LogbookEntryLine, LogbookEntrySignatory,
   LogbookEntryStatus, LogbookSection, CertType,
@@ -90,7 +91,7 @@ export async function createLogbookEntry(payload: {
       guest_serial: payload.guestSerial ?? null,
       work_order_id: payload.workOrderId ?? null,
       wo_number: payload.woNumber ?? null,
-      entry_date: payload.entryDate ?? new Date().toISOString().split("T")[0],
+      entry_date: payload.entryDate ?? localToday(),
       total_aircraft_time: payload.totalAircraftTime ?? null,
       total_aircraft_time_new: payload.totalAircraftTimeNew ?? null,
       landings: payload.landings ?? null,

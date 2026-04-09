@@ -13,8 +13,6 @@ import { toast } from "sonner"
 import type { Profile } from "@/entities/supabase"
 import {
   getAllAssignments,
-  getAssignmentsForManager,
-  getPeopleManagerProfiles,
   addAssignment,
   removeAssignment,
   type Assignment,
@@ -125,7 +123,7 @@ const today = new Date()
 function isOverdue(row: TrainingRow): boolean {
   return (
     row.due_date != null &&
-    new Date(row.due_date) < today &&
+    new Date(row.due_date + "T00:00:00") < today &&
     !row.status.toLowerCase().includes("complete")
   )
 }
@@ -331,7 +329,7 @@ function TeamOverviewTable({
     if (a.status === "open") {
       const cur = actionsByTech.get(a.technician_id) ?? { open: 0, overdue: 0 }
       cur.open++
-      if (a.due_date && new Date(a.due_date) < today) cur.overdue++
+      if (a.due_date && new Date(a.due_date + "T00:00:00") < today) cur.overdue++
       actionsByTech.set(a.technician_id, cur)
     }
   }
@@ -686,7 +684,7 @@ function SharedJournalFeed({
                         {entry.entry_type}
                       </span>
                       <span className="text-[10px] text-white/20 ml-auto shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
-                        {new Date(entry.entry_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        {new Date(entry.entry_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       </span>
                     </div>
                     <p className="text-sm text-white/55 leading-relaxed whitespace-pre-wrap">{entry.content}</p>
@@ -1027,10 +1025,7 @@ function ActiveAdHocTracker({
 function ManagerAssignmentsPanel({ profiles, myProfileId }: { profiles: Profile[]; myProfileId: string }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [managerSelect, setManagerSelect] = useState("")
-  const [subjectSelect, setSubjectSelect] = useState("")
-  const [viewAsId, setViewAsId] = useState<string | null>(null)
-  const [addErr, setAddErr] = useState<string | null>(null)
+  const [selectedManagerId, setSelectedManagerId] = useState<string | null>(null)
 
   const { data: assignments = [], isLoading: la } = useQuery({
     queryKey: ["admin-all-assignments"],
@@ -1038,61 +1033,62 @@ function ManagerAssignmentsPanel({ profiles, myProfileId }: { profiles: Profile[
     enabled: open,
   })
 
-  const { data: managerProfiles = [] } = useQuery({
-    queryKey: ["admin-people-manager-profiles"],
-    queryFn: getPeopleManagerProfiles,
-    enabled: open,
-  })
-
-  const { data: viewAsReports = [], isLoading: lvr } = useQuery({
-    queryKey: ["admin-view-as-manager", viewAsId],
-    queryFn: () => getAssignmentsForManager(viewAsId!),
-    enabled: !!viewAsId && open,
-  })
-
-  // Profile maps
-  const profileById = new Map<string, Profile>(profiles.map(p => [p.id, p]))
-  const profileName = (id: string) => {
-    const p = profileById.get(id)
-    return p?.full_name ?? p?.display_name ?? id.slice(0, 8)
+  // Derive manager list from profiles (anyone could be a manager)
+  // and count how many reports each current manager has
+  const assignmentsByManager = new Map<string, Assignment[]>()
+  for (const a of assignments) {
+    const list = assignmentsByManager.get(a.manager_profile_id) ?? []
+    list.push(a)
+    assignmentsByManager.set(a.manager_profile_id, list)
   }
 
+  const managerCount = assignmentsByManager.size
+
+  // For the selected manager, build a Set of assigned subject IDs and a map of assignment IDs
+  const selectedAssignments = selectedManagerId ? (assignmentsByManager.get(selectedManagerId) ?? []) : []
+  const assignedSubjectIds = new Set(selectedAssignments.map(a => a.subject_profile_id))
+  const assignmentIdBySubject = new Map(selectedAssignments.map(a => [a.subject_profile_id, a.id]))
+
+  // Everyone except the selected manager themselves
+  const checklistProfiles = profiles.filter(p => p.id !== selectedManagerId)
+
   const doAdd = useMutation({
-    mutationFn: () => {
-      if (managerSelect === subjectSelect) throw new Error("Manager and subject cannot be the same person")
-      return addAssignment(managerSelect, subjectSelect, myProfileId)
-    },
+    mutationFn: (subjectId: string) => addAssignment(selectedManagerId!, subjectId, myProfileId),
     onSuccess: () => {
-      setManagerSelect("")
-      setSubjectSelect("")
-      setAddErr(null)
       qc.invalidateQueries({ queryKey: ["admin-all-assignments"] })
-      qc.invalidateQueries({ queryKey: ["admin-people-manager-profiles"] })
-      toast.success("Assignment added")
+      toast.success("Assigned")
     },
-    onError: (e: any) => setAddErr(e.message ?? "Failed to add assignment"),
+    onError: (e: any) => toast.error(e.message ?? "Failed to assign"),
   })
 
   const doRemove = useMutation({
     mutationFn: (id: string) => removeAssignment(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-all-assignments"] })
-      qc.invalidateQueries({ queryKey: ["admin-people-manager-profiles"] })
-      qc.invalidateQueries({ queryKey: ["admin-view-as-manager", viewAsId] })
-      toast.success("Assignment removed")
+      toast.success("Unassigned")
     },
-    onError: (e: any) => toast.error(e.message ?? "Failed to remove assignment"),
+    onError: (e: any) => toast.error(e.message ?? "Failed to unassign"),
   })
 
-  const selectStyle = {
+  function togglePerson(profileId: string) {
+    if (assignedSubjectIds.has(profileId)) {
+      const assignmentId = assignmentIdBySubject.get(profileId)
+      if (assignmentId) doRemove.mutate(assignmentId)
+    } else {
+      doAdd.mutate(profileId)
+    }
+  }
+
+  const selectStyle: React.CSSProperties = {
     background: "hsl(0 0% 10%)",
     border: "1px solid rgba(255,255,255,0.12)",
     color: "rgba(255,255,255,0.7)",
     borderRadius: 6,
-    padding: "5px 10px",
-    fontSize: 12,
+    padding: "8px 14px",
+    fontSize: 13,
     outline: "none",
     fontFamily: "var(--font-body)",
+    minWidth: 260,
   }
 
   return (
@@ -1115,7 +1111,7 @@ function ManagerAssignmentsPanel({ profiles, myProfileId }: { profiles: Profile[
               MANAGER ASSIGNMENTS
             </h2>
             <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
-              Who manages whom · {assignments.length} assignment{assignments.length !== 1 ? "s" : ""} · {managerProfiles.length} manager{managerProfiles.length !== 1 ? "s" : ""}
+              Who manages whom · {assignments.length} assignment{assignments.length !== 1 ? "s" : ""} · {managerCount} manager{managerCount !== 1 ? "s" : ""}
             </p>
           </div>
         </div>
@@ -1126,167 +1122,104 @@ function ManagerAssignmentsPanel({ profiles, myProfileId }: { profiles: Profile[
       </button>
 
       {open && (
-        <div className="space-y-0">
+        <div className="px-5 py-5 space-y-4">
 
-          {/* ── Add assignment form ── */}
-          <div className="px-5 py-4 space-y-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
-            <p className="text-[10px] uppercase tracking-wider text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
-              Add Assignment — Supervisor manages Direct Report
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>Supervisor</label>
-                <select value={managerSelect} onChange={e => setManagerSelect(e.target.value)} style={selectStyle}>
-                  <option value="">Select supervisor…</option>
-                  {profiles.map(p => (
-                    <option key={p.id} value={p.id}>{p.full_name ?? p.display_name ?? p.id}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>Direct Report</label>
-                <select value={subjectSelect} onChange={e => setSubjectSelect(e.target.value)} style={selectStyle}>
-                  <option value="">Select direct report…</option>
-                  {profiles
-                    .filter(p => p.id !== managerSelect)
-                    .map(p => (
-                      <option key={p.id} value={p.id}>{p.full_name ?? p.display_name ?? p.id}</option>
-                    ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-white/30 invisible">Add</label>
-                <Button
-                  size="sm"
-                  disabled={!managerSelect || !subjectSelect || doAdd.isPending}
-                  onClick={() => doAdd.mutate()}
-                  className="h-8 gap-1.5 text-xs"
-                  style={{
-                    background: managerSelect && subjectSelect ? "rgba(130,80,200,0.3)" : "rgba(255,255,255,0.04)",
-                    color: managerSelect && subjectSelect ? "rgba(180,140,240,1)" : "rgba(255,255,255,0.2)",
-                    border: `1px solid ${managerSelect && subjectSelect ? "rgba(130,80,200,0.4)" : "rgba(255,255,255,0.08)"}`,
-                    fontFamily: "var(--font-heading)",
-                    letterSpacing: "0.06em",
-                  }}
-                >
-                  <Plus size={11} />
-                  {doAdd.isPending ? "Adding…" : "Add"}
-                </Button>
-              </div>
-            </div>
-            {addErr && <p className="text-xs text-red-400">{addErr}</p>}
-          </div>
-
-          {/* ── Assignment table ── */}
           {la ? (
             <div className="py-8 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>Loading…</div>
-          ) : assignments.length === 0 ? (
-            <div className="py-8 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>No assignments yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                    {["Manager", "Direct Report", "Since", ""].map(h => (
-                      <th key={h} className="px-5 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider"
-                        style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)", opacity: 0.5 }}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {assignments.map(a => {
-                    const mgr = a.manager ?? (profileById.get(a.manager_profile_id) ? { display_name: null, full_name: profileById.get(a.manager_profile_id)!.full_name, avatar_color: null, avatar_initials: null } : null)
-                    const sub = a.subject ?? (profileById.get(a.subject_profile_id) ? { display_name: null, full_name: profileById.get(a.subject_profile_id)!.full_name, avatar_color: null, avatar_initials: null } : null)
+            <>
+              {/* Manager picker */}
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-wider text-white/35 block" style={{ fontFamily: "var(--font-heading)" }}>
+                  Select a manager to configure their team
+                </label>
+                <select
+                  value={selectedManagerId ?? ""}
+                  onChange={e => setSelectedManagerId(e.target.value || null)}
+                  style={selectStyle}
+                >
+                  <option value="">Choose a manager…</option>
+                  {profiles.map(p => {
+                    const count = assignmentsByManager.get(p.id)?.length ?? 0
                     return (
-                      <tr key={a.id} className="transition-colors hover:bg-white/[0.02]"
-                        style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                        <td className="px-5 py-3 text-sm text-white/65">
-                          {mgr?.full_name ?? mgr?.display_name ?? profileName(a.manager_profile_id)}
-                        </td>
-                        <td className="px-5 py-3 text-sm text-white/65">
-                          {sub?.full_name ?? sub?.display_name ?? profileName(a.subject_profile_id)}
-                        </td>
-                        <td className="px-5 py-3 text-xs text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
-                          {formatDate(a.created_at)}
-                        </td>
-                        <td className="px-5 py-3 text-right">
-                          <button
-                            onClick={() => doRemove.mutate(a.id)}
-                            disabled={doRemove.isPending}
-                            className="text-[10px] px-2.5 py-1 rounded transition-colors"
-                            style={{ background: "rgba(193,2,48,0.07)", color: "rgba(220,80,80,0.6)", border: "1px solid rgba(193,2,48,0.18)", fontFamily: "var(--font-heading)", cursor: "pointer" }}
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
+                      <option key={p.id} value={p.id}>
+                        {p.full_name ?? p.display_name ?? p.id}{count > 0 ? ` (${count} report${count !== 1 ? "s" : ""})` : ""}
+                      </option>
                     )
                   })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                </select>
+              </div>
 
-          {/* ── View as Manager dropdown ── */}
-          <div className="px-5 py-4 space-y-3" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
-            <div className="flex items-center gap-3 flex-wrap">
-              <p className="text-[10px] uppercase tracking-wider text-white/30 shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
-                View as Manager
-              </p>
-              <select
-                value={viewAsId ?? ""}
-                onChange={e => setViewAsId(e.target.value || null)}
-                style={{ ...selectStyle, minWidth: 200 }}
-              >
-                <option value="">Select a people-manager…</option>
-                {managerProfiles.map(p => (
-                  <option key={p.id} value={p.id}>{p.full_name ?? p.display_name ?? p.id}</option>
-                ))}
-              </select>
-            </div>
-
-            {viewAsId && (
-              lvr ? (
-                <div className="text-xs text-white/25 py-2" style={{ fontFamily: "var(--font-heading)" }}>Loading…</div>
-              ) : viewAsReports.length === 0 ? (
-                <div className="text-xs text-white/25 py-2" style={{ fontFamily: "var(--font-heading)" }}>No reports assigned to this manager.</div>
-              ) : (
-                <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
-                  <div className="px-4 py-2.5" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}>
-                    <p className="text-[10px] uppercase tracking-wider text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
-                      {managerProfiles.find(p => p.id === viewAsId)?.full_name ?? "This Manager"}'s Team · {viewAsReports.length} report{viewAsReports.length !== 1 ? "s" : ""}
+              {/* Checkbox list of team members */}
+              {selectedManagerId && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-wider text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                      {profiles.find(p => p.id === selectedManagerId)?.full_name ?? "Manager"}'s direct reports
+                    </p>
+                    <p className="text-[10px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+                      {assignedSubjectIds.size} of {checklistProfiles.length} assigned
                     </p>
                   </div>
-                  <div>
-                    {viewAsReports.map(a => {
-                      const person = a.subject
-                      const name = person?.full_name ?? person?.display_name ?? profileName(a.subject_profile_id)
-                      const initials = person?.avatar_initials ?? name.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
+
+                  <div
+                    className="rounded-lg overflow-hidden overflow-y-auto"
+                    style={{ border: "1px solid rgba(255,255,255,0.08)", maxHeight: 400 }}
+                  >
+                    {checklistProfiles.map((p, idx) => {
+                      const isAssigned = assignedSubjectIds.has(p.id)
+                      const initials = p.avatar_initials ?? (p.full_name ?? "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
                       return (
-                        <div key={a.id} className="flex items-center gap-3 px-4 py-2.5"
-                          style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                        <button
+                          key={p.id}
+                          onClick={() => togglePerson(p.id)}
+                          disabled={doAdd.isPending || doRemove.isPending}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.04]"
+                          style={{ borderBottom: idx < checklistProfiles.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}
+                        >
+                          {/* Checkbox */}
                           <div
-                            className="h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                            className="h-5 w-5 rounded flex items-center justify-center shrink-0 transition-colors"
                             style={{
-                              background: person?.avatar_color ? `${person.avatar_color}22` : "rgba(255,255,255,0.06)",
-                              border: `1px solid ${person?.avatar_color ?? "rgba(255,255,255,0.12)"}`,
-                              color: person?.avatar_color ?? "rgba(255,255,255,0.4)",
+                              background: isAssigned ? "rgba(130,80,200,0.3)" : "rgba(255,255,255,0.04)",
+                              border: `1.5px solid ${isAssigned ? "rgba(160,120,220,0.7)" : "rgba(255,255,255,0.15)"}`,
+                            }}
+                          >
+                            {isAssigned && <CheckCircle2 className="h-3.5 w-3.5" style={{ color: "rgba(180,140,240,1)" }} />}
+                          </div>
+
+                          {/* Avatar */}
+                          <div
+                            className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold"
+                            style={{
+                              background: p.avatar_color ? `${p.avatar_color}22` : "rgba(255,255,255,0.06)",
+                              border: `1.5px solid ${p.avatar_color ?? "rgba(255,255,255,0.12)"}`,
+                              color: p.avatar_color ?? "rgba(255,255,255,0.4)",
                               fontFamily: "var(--font-display)",
                             }}
                           >
                             {initials}
                           </div>
-                          <span className="text-sm text-white/65">{name}</span>
-                        </div>
+
+                          {/* Name + role */}
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm ${isAssigned ? "text-white/80 font-medium" : "text-white/50"}`}>
+                              {p.full_name ?? p.display_name ?? p.id}
+                            </p>
+                            {p.role && (
+                              <p className="text-[10px] text-white/25 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+                                {p.role}
+                              </p>
+                            )}
+                          </div>
+                        </button>
                       )
                     })}
                   </div>
                 </div>
-              )
-            )}
-          </div>
+              )}
+            </>
+          )}
 
         </div>
       )}

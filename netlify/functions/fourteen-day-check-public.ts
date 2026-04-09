@@ -62,13 +62,14 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Load the token row + aircraft registration
+  // Load the token row + aircraft registration + assigned template
   const { data, error } = await adminClient
     .from("fourteen_day_check_tokens")
     .select(`
       id,
       token,
       field_schema,
+      template:template_id ( id, field_schema ),
       aircraft:aircraft_id (
         id,
         aircraft_registrations (
@@ -97,11 +98,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const currentReg = aircraft.aircraft_registrations.find((r) => r.is_current);
   const registration = currentReg?.registration ?? "UNKNOWN";
 
+  // Prefer the assigned template's field_schema over the token's own stale copy
+  const template = data.template as { id: string; field_schema: unknown } | null;
+  const fieldSchema = template?.field_schema ?? data.field_schema;
+
   // Return only the safe public payload — never expose token UUID, traxxall_url, created_by
   return jsonResponse(200, {
     tokenId: data.id,
     registration,
     aircraftId: aircraft.id,
-    fieldSchema: data.field_schema,
+    fieldSchema,
   });
 };
