@@ -333,7 +333,7 @@ export default function InvoiceDetail() {
             style={{ borderTop: "1px solid #e5e7eb", background: "#f9fafb" }}
           >
             <span>Customer Invoice: {inv.invoiceNumber}</span>
-            <span>Printed by Beet Box · CB Aviation MX Suite</span>
+            <span>Printed by Work Orders · CB Aviation MX Suite</span>
           </div>
 
         </div>

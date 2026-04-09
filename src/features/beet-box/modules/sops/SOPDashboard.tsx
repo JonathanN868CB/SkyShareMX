@@ -54,7 +54,7 @@ export default function SOPDashboard() {
             <h1 className="text-white mb-1" style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}>
               SOP Library
             </h1>
-            <p className="text-white/45 text-sm">{SOPS.length} standard operating procedures · Beet Box MRO Suite</p>
+            <p className="text-white/45 text-sm">{SOPS.length} standard operating procedures · Work Orders MRO Suite</p>
           </div>
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg" style={{ background: "rgba(212,160,23,0.1)", border: "1px solid rgba(212,160,23,0.2)" }}>
             <BookMarked className="w-4 h-4" style={{ color: "var(--skyshare-gold)" }} />

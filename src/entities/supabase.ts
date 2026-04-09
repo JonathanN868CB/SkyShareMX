@@ -165,7 +165,7 @@ export type Database = {
     }
     Enums: {
       app_role: "Super Admin" | "Admin" | "Manager" | "Technician" | "Guest"
-      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "My Training" | "Docs & Links" | "My Journey" | "My Team" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence" | "Parts" | "External Requests" | "Beet Box" | "Records Vault"
+      app_section: "Dashboard" | "Aircraft Info" | "AI Assistant" | "Aircraft Conformity" | "14-Day Check" | "Maintenance Planning" | "Ten or More" | "Terminal-OGD" | "Projects" | "My Training" | "Docs & Links" | "My Journey" | "My Team" | "Vendor Map" | "Compliance" | "Safety" | "Discrepancy Intelligence" | "Parts" | "External Requests" | "Work Orders" | "Records Vault"
       user_status: "Active" | "Inactive" | "Suspended" | "Pending"
     }
     CompositeTypes: {
@@ -221,7 +221,7 @@ export const APP_SECTIONS: AppSection[] = [
   // ── Operations ────────────────────────────────────────────
   "Discrepancy Intelligence",
   "Records Vault",
-  "Beet Box",
+  "Work Orders",
   "My Journey",
   "My Training",
   "Vendor Map",

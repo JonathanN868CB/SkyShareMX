@@ -1,14 +1,14 @@
 import { supabase } from "@/lib/supabase"
 import type { Mechanic, MechanicCert } from "../types"
 
-// All users with Beet Box module access, with their primary cert.
+// All users with Work Orders module access, with their primary cert.
 // Pass laborOnly=true (default) to only return labor-eligible members.
 // Pass laborOnly=false to get everyone (used by the Team settings tab).
 export async function getTechnicians(laborOnly = true): Promise<Mechanic[]> {
   const { data: perms, error: pErr } = await supabase
     .from("user_permissions")
     .select("user_id")
-    .eq("section", "Beet Box")
+    .eq("section", "Work Orders")
 
   if (pErr) throw pErr
 

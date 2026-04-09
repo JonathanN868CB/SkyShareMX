@@ -1,4 +1,4 @@
-﻿// ─── Beet Box Mock Data ───────────────────────────────────────────────────────
+﻿// ─── Work Orders Mock Data ───────────────────────────────────────────────────────
 // All data is static/hardcoded for demo purposes. No Supabase connections.
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -359,7 +359,7 @@ export interface TrainingRecord {
   notes: string
 }
 
-// ─── SOPs — Real procedures for SkyShareMX / Beet Box ────────────────────────
+// ─── SOPs — Real procedures for SkyShareMX / Work Orders ────────────────────────
 
 export const SOPS: SOP[] = [
   // ── Work Orders ────────────────────────────────────────────────────────────
@@ -373,11 +373,11 @@ export const SOPS: SOP[] = [
     reviewDate: "2026-10-01",
     author: "Jonathan Schaedig",
     approvedBy: "Jonathan Schaedig",
-    description: "Step-by-step procedure for creating a new work order in Beet Box, including aircraft selection, type designation, priority setting, and initial item entry.",
+    description: "Step-by-step procedure for creating a new work order in Work Orders, including aircraft selection, type designation, priority setting, and initial item entry.",
     tags: ["work order", "create", "new WO", "draft"],
     relatedSOPs: ["sop-02", "sop-04"],
     steps: [
-      { id: "s01-1", number: 1, instruction: "Navigate to Beet Box → Work Orders from the sidebar, then click the '+ New Work Order' button in the top right." },
+      { id: "s01-1", number: 1, instruction: "Navigate to Work Orders → Work Orders from the sidebar, then click the '+ New Work Order' button in the top right." },
       { id: "s01-2", number: 2, instruction: "Select the aircraft. For fleet aircraft, choose from the dropdown — registration, make, model, and serial will auto-populate. For guest aircraft, toggle to 'Guest' and enter the registration and serial manually." },
       { id: "s01-3", number: 3, instruction: "Choose the WO Type from the dropdown (e.g. 100-Hour, Annual, Phase, Squawk, Airworthiness Directive, etc.). This categorizes the work order for billing and audit purposes." },
       { id: "s01-4", number: 4, instruction: "Enter the meter reading at open (Hobbs or tach time). This is recorded for compliance tracking and logbook reference." },
@@ -463,7 +463,7 @@ export const SOPS: SOP[] = [
     reviewDate: "2026-10-01",
     author: "Jonathan Schaedig",
     approvedBy: "Jonathan Schaedig",
-    description: "How to import scheduled maintenance tasks from a Traxxall spreadsheet export into a new Beet Box work order.",
+    description: "How to import scheduled maintenance tasks from a Traxxall spreadsheet export into a new Work Orders work order.",
     tags: ["traxxall", "import", "CSV", "scheduled maintenance"],
     relatedSOPs: ["sop-01", "sop-02"],
     steps: [
@@ -532,7 +532,7 @@ export const SOPS: SOP[] = [
     tags: ["purchase order", "PO", "ordering", "vendor"],
     relatedSOPs: ["sop-06", "sop-09"],
     steps: [
-      { id: "s08-1", number: 1, instruction: "Navigate to Beet Box → Purchase Orders, then click '+ New Purchase Order'." },
+      { id: "s08-1", number: 1, instruction: "Navigate to Work Orders → Purchase Orders, then click '+ New Purchase Order'." },
       { id: "s08-2", number: 2, instruction: "Enter the Vendor Name and contact information. If the vendor is in the Vendor Map, reference their details there." },
       { id: "s08-3", number: 3, instruction: "Add line items: Part Number, Description, Qty Ordered, Unit Cost, and optionally a WO Reference linking the part to a specific work order." },
       { id: "s08-4", number: 4, instruction: "Set the Expected Delivery Date if known. This helps track parts in the 'Waiting on Parts' WO status." },
@@ -555,7 +555,7 @@ export const SOPS: SOP[] = [
     tags: ["receiving", "PO", "inventory", "receipt"],
     relatedSOPs: ["sop-08", "sop-06"],
     steps: [
-      { id: "s09-1", number: 1, instruction: "Open the Purchase Order detail page from Beet Box → Purchase Orders." },
+      { id: "s09-1", number: 1, instruction: "Open the Purchase Order detail page from Work Orders → Purchase Orders." },
       { id: "s09-2", number: 2, instruction: "For each line item received, update the 'Qty Received' field with the actual quantity delivered." },
       { id: "s09-3", number: 3, instruction: "If only some items have arrived, the PO status automatically changes to 'Partial'. When all lines are fully received, mark the PO as 'Received'." },
       { id: "s09-4", number: 4, instruction: "Receiving triggers an inventory transaction (receipt type) that automatically increments the qty_on_hand for each part in the inventory system." },
@@ -622,7 +622,7 @@ export const SOPS: SOP[] = [
     tags: ["invoice", "billing", "create", "work order"],
     relatedSOPs: ["sop-04", "sop-13"],
     steps: [
-      { id: "s12-1", number: 1, instruction: "Navigate to Beet Box → Invoicing, then click '+ New Invoice' or open the Invoice tab from within a completed work order." },
+      { id: "s12-1", number: 1, instruction: "Navigate to Work Orders → Invoicing, then click '+ New Invoice' or open the Invoice tab from within a completed work order." },
       { id: "s12-2", number: 2, instruction: "Select the work order to invoice from. The system pre-fills aircraft info, customer name, and pulls all labor hours and parts from the WO items." },
       { id: "s12-3", number: 3, instruction: "Review the auto-generated line items. Labor lines show each item's hours × labor rate. Parts lines list each part with qty × unit price." },
       { id: "s12-4", number: 4, instruction: "Shop supplies are calculated at 5% of total labor cost and added as a misc line." },
@@ -646,7 +646,7 @@ export const SOPS: SOP[] = [
     tags: ["invoice", "PDF", "export", "print"],
     relatedSOPs: ["sop-12"],
     steps: [
-      { id: "s13-1", number: 1, instruction: "Open the Invoice tab in the work order detail view, or navigate to the invoice from Beet Box → Invoicing." },
+      { id: "s13-1", number: 1, instruction: "Open the Invoice tab in the work order detail view, or navigate to the invoice from Work Orders → Invoicing." },
       { id: "s13-2", number: 2, instruction: "Verify all line items, totals, and customer details are correct." },
       { id: "s13-3", number: 3, instruction: "Click 'Export PDF'. The system renders the invoice in a print-friendly format with company branding." },
       { id: "s13-4", number: 4, instruction: "Review the PDF preview, then click 'Download' to save locally." },
@@ -668,7 +668,7 @@ export const SOPS: SOP[] = [
     tags: ["tools", "calibration", "compliance", "tracking"],
     relatedSOPs: [],
     steps: [
-      { id: "s14-1", number: 1, instruction: "Navigate to Beet Box → Tool Calibration from the sidebar." },
+      { id: "s14-1", number: 1, instruction: "Navigate to Work Orders → Tool Calibration from the sidebar." },
       { id: "s14-2", number: 2, instruction: "To add a new tool, click '+ Add Tool'. Enter: Tool Number, Description, Serial Number, Manufacturer, Location, Calibration Interval (in days), Calibration Vendor, and the date of last calibration." },
       { id: "s14-3", number: 3, instruction: "The system automatically calculates the Next Calibration Due date and sets the tool status: Active (green), Due Soon (amber, within 30 days), or Overdue (red)." },
       { id: "s14-4", number: 4, instruction: "When a calibration is performed, open the tool detail page and click 'Record Calibration'. Enter the date, who performed it, the new certificate number, and any notes." },
@@ -712,7 +712,7 @@ export const SOPS: SOP[] = [
     tags: ["safety", "reporting", "incident", "hazard"],
     relatedSOPs: ["sop-15"],
     steps: [
-      { id: "s16-1", number: 1, instruction: "Navigate to Safety's House from the main SkyShareMX sidebar (not Beet Box). This is accessible to all authenticated users." },
+      { id: "s16-1", number: 1, instruction: "Navigate to Safety's House from the main SkyShareMX sidebar (not Work Orders). This is accessible to all authenticated users." },
       { id: "s16-2", number: 2, instruction: "Document the safety observation including: what happened, where, when, who was involved, and what corrective or preventive action was taken or is recommended." },
       { id: "s16-3", number: 3, instruction: "If the safety concern relates to a specific aircraft, reference the tail number and any related work order numbers." },
       { id: "s16-4", number: 4, instruction: "Submit the report. Safety reports are reviewed by management and tracked for trend analysis.", note: "Safety reporting is non-punitive. The goal is to identify hazards before they cause harm. Report everything — near-misses are the most valuable data points for prevention." },
@@ -723,22 +723,22 @@ export const SOPS: SOP[] = [
   {
     id: "sop-17",
     sopNumber: "SOP-BB-017",
-    title: "Navigating the Beet Box MX Suite",
+    title: "Navigating the Work Orders MX Suite",
     category: "Portal Navigation",
     revision: "1.0",
     effectiveDate: "2026-04-01",
     reviewDate: "2026-10-01",
     author: "Jonathan Schaedig",
     approvedBy: "Jonathan Schaedig",
-    description: "Overview of the Beet Box sidebar navigation, module layout, and how to move between the MX suite and the main SkyShareMX portal.",
+    description: "Overview of the Work Orders sidebar navigation, module layout, and how to move between the MX suite and the main SkyShareMX portal.",
     tags: ["navigation", "sidebar", "portal", "orientation"],
     relatedSOPs: ["sop-18"],
     steps: [
-      { id: "s17-1", number: 1, instruction: "Access Beet Box from the main SkyShareMX sidebar by clicking 'Beet Box'. This opens the full-screen MX suite with its own sidebar navigation." },
-      { id: "s17-2", number: 2, instruction: "The Beet Box sidebar has two sections: Operations (Work Orders, Invoicing, Inventory, Parts, Purchase Orders, Tool Calibration, Settings) and Knowledge (SOP Library, Training)." },
+      { id: "s17-1", number: 1, instruction: "Access Work Orders from the main SkyShareMX sidebar by clicking 'Work Orders'. This opens the full-screen MX suite with its own sidebar navigation." },
+      { id: "s17-2", number: 2, instruction: "The Work Orders sidebar has two sections: Operations (Work Orders, Invoicing, Inventory, Parts, Purchase Orders, Tool Calibration, Settings) and Knowledge (SOP Library, Training)." },
       { id: "s17-3", number: 3, instruction: "Click any module name to navigate to its dashboard. The active module is highlighted with a gold left bar in the sidebar." },
       { id: "s17-4", number: 4, instruction: "When viewing a Work Order detail page, the sidebar automatically collapses to maximize the work area. Hover or click the menu icon to expand it." },
-      { id: "s17-5", number: 5, instruction: "To return to the main SkyShareMX portal, click '← Back to Portal' at the bottom of the Beet Box sidebar." },
+      { id: "s17-5", number: 5, instruction: "To return to the main SkyShareMX portal, click '← Back to Portal' at the bottom of the Work Orders sidebar." },
     ],
   },
   {
@@ -756,7 +756,7 @@ export const SOPS: SOP[] = [
     relatedSOPs: ["sop-17", "sop-19"],
     steps: [
       { id: "s18-1", number: 1, instruction: "After logging in with your SkyShare Google account, you land on the Dashboard — the central hub showing portal updates, department directory, and core values." },
-      { id: "s18-2", number: 2, instruction: "The left sidebar organizes all modules into sections: Overview (Dashboard, Aircraft Info, AI Assistant), Operations (Discrepancy Intelligence, Records Vault, Beet Box, Training, Vendors, 14-Day Check, Projects, Compliance, Safety), and Administration (Users, Alerts, Settings)." },
+      { id: "s18-2", number: 2, instruction: "The left sidebar organizes all modules into sections: Overview (Dashboard, Aircraft Info, AI Assistant), Operations (Discrepancy Intelligence, Records Vault, Work Orders, Training, Vendors, 14-Day Check, Projects, Compliance, Safety), and Administration (Users, Alerts, Settings)." },
       { id: "s18-3", number: 3, instruction: "Modules marked 'BETA' are in active development. Modules with a lock icon require specific role permissions to access." },
       { id: "s18-4", number: 4, instruction: "Use Aircraft Info to view the full fleet with registration, make/model, serial, avionics configuration, and program subscriptions." },
       { id: "s18-5", number: 5, instruction: "The Records Vault provides full-text search, browsing, and timeline views of aircraft maintenance records. Select an aircraft from the vault sidebar to filter records." },
@@ -777,7 +777,7 @@ export const SOPS: SOP[] = [
     tags: ["training", "compliance", "mechanic", "certification"],
     relatedSOPs: ["sop-17"],
     steps: [
-      { id: "s19-1", number: 1, instruction: "Navigate to Beet Box → Training from the Knowledge section of the sidebar. This opens the Training compliance matrix." },
+      { id: "s19-1", number: 1, instruction: "Navigate to Work Orders → Training from the Knowledge section of the sidebar. This opens the Training compliance matrix." },
       { id: "s19-2", number: 2, instruction: "The matrix shows all mechanics as rows and all SOPs as columns. Each cell is color-coded: green (current), amber (expiring within 90 days), red (expired), or gray (not trained)." },
       { id: "s19-3", number: 3, instruction: "Click on any mechanic row to view their detailed training record — showing each SOP, who trained them, when, and the expiration date." },
       { id: "s19-4", number: 4, instruction: "From the detail view, click any SOP title to jump to its full procedure in the SOP Library." },

@@ -111,95 +111,91 @@ export function BeetBoxSidebar() {
           </button>
         </div>
       ) : (
-        /* Wide: full header row — unchanged from original */
+        /* Wide: two-row stacked header — height locked to match dashboard hero */
         <div
-          className="flex items-start gap-3 px-4 pt-5 pb-4 flex-shrink-0"
-          style={{ borderBottom: "1px solid hsl(0 0% 14%)" }}
+          className="flex flex-col justify-between flex-shrink-0"
+          style={{ minHeight: "104px" }}
         >
-          <BeetIcon
-            className="w-8 h-8 flex-shrink-0 mt-0.5"
-            style={{ color: "var(--skyshare-gold)" }}
-          />
-          <div className="flex flex-col flex-shrink-0">
-            <span
-              className="text-white/90 uppercase leading-tight whitespace-nowrap"
-              style={{ fontFamily: "var(--font-display)", fontSize: "18px", letterSpacing: "0.1em" }}
+          {/* Row 1 — utility: back link · suggestion · collapse */}
+          <div className="flex items-center justify-between px-5 pt-3">
+            <button
+              onClick={() => navigate("/app")}
+              onMouseEnter={() => setPortalHovered(true)}
+              onMouseLeave={() => setPortalHovered(false)}
+              title="Back to Portal"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-sm"
+              style={{
+                border:     portalHovered ? "1px solid rgba(212,160,23,0.65)" : "1px solid rgba(212,160,23,0.25)",
+                background: portalHovered
+                  ? "linear-gradient(135deg, rgba(212,160,23,0.18) 0%, rgba(212,160,23,0.06) 100%)"
+                  : "linear-gradient(135deg, rgba(212,160,23,0.07) 0%, transparent 100%)",
+                boxShadow:  portalHovered ? "0 0 0 1px rgba(212,160,23,0.1), 0 2px 14px rgba(212,160,23,0.2)" : "none",
+                transition: "border 0.2s ease, background 0.2s ease, box-shadow 0.25s ease",
+              }}
             >
-              Beet Box
-            </span>
-            <span
-              className="uppercase whitespace-nowrap"
-              style={{ fontFamily: "var(--font-heading)", fontSize: "9px", color: "var(--skyshare-gold)", opacity: 0.65, letterSpacing: "0.25em" }}
-            >
-              MX Suite
-            </span>
+              <svg
+                width="8" height="8" viewBox="0 0 8 8" fill="none"
+                style={{
+                  color:      portalHovered ? "var(--skyshare-gold)" : "rgba(212,160,23,0.6)",
+                  transform:  portalHovered ? "translateX(-2px)" : "translateX(0)",
+                  transition: "color 0.2s ease, transform 0.2s ease",
+                  flexShrink: 0,
+                }}
+              >
+                <path d="M5 1.5L2 4L5 6.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span
+                className="leading-none"
+                style={{
+                  fontFamily:    "var(--font-heading)",
+                  fontSize:      "10px",
+                  letterSpacing: "0.02em",
+                  color:         portalHovered ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.55)",
+                  transition:    "color 0.2s ease",
+                }}
+              >
+                SkyShareMX
+              </span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <SuggestionWidget variant="sidebar" />
+              {onWODetail && (
+                <button
+                  onClick={() => setCollapsed(true)}
+                  onMouseEnter={() => setToggleHovered(true)}
+                  onMouseLeave={() => setToggleHovered(false)}
+                  title="Collapse navigation"
+                  className={cn(TOGGLE_BTN.base, "w-7 h-7 text-white/60 hover:text-white flex-shrink-0")}
+                  style={toggleHovered ? TOGGLE_BTN.hoverStyle : TOGGLE_BTN.style}
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5 flex-shrink-0" />
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="flex-1" />
-
-          {/* Back to Portal + Suggestion widget stacked */}
-          <div className="flex flex-col items-end gap-1.5 flex-shrink-0 mr-1">
-
-          {/* Back to Portal */}
-          <button
-            onClick={() => navigate("/app")}
-            onMouseEnter={() => setPortalHovered(true)}
-            onMouseLeave={() => setPortalHovered(false)}
-            title="Back to Portal"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm"
-            style={{
-              border:     portalHovered ? "1px solid rgba(212,160,23,0.65)" : "1px solid rgba(212,160,23,0.2)",
-              background: portalHovered
-                ? "linear-gradient(135deg, rgba(212,160,23,0.18) 0%, rgba(212,160,23,0.06) 100%)"
-                : "linear-gradient(135deg, rgba(212,160,23,0.07) 0%, rgba(0,0,0,0) 100%)",
-              boxShadow:  portalHovered ? "0 0 0 1px rgba(212,160,23,0.1), 0 2px 14px rgba(212,160,23,0.2)" : "none",
-              transition: "border 0.2s ease, background 0.2s ease, box-shadow 0.25s ease",
-            }}
-          >
-            <svg
-              width="8" height="8" viewBox="0 0 8 8" fill="none"
-              style={{
-                color:      portalHovered ? "var(--skyshare-gold)" : "rgba(212,160,23,0.6)",
-                transform:  portalHovered ? "translateX(-2px)" : "translateX(0)",
-                transition: "color 0.2s ease, transform 0.2s ease",
-                flexShrink: 0,
-              }}
-            >
-              <path d="M5 1.5L2 4L5 6.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span
-              className="leading-none"
-              style={{
-                fontFamily:    "var(--font-heading)",
-                fontSize:      "10.5px",
-                letterSpacing: portalHovered ? "0.03em" : "0.01em",
-                color:         portalHovered ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.62)",
-                transition:    "color 0.2s ease, letter-spacing 0.2s ease",
-              }}
-            >
-              SkyShareMX
-            </span>
-          </button>
-
-          {/* Suggestion widget */}
-          <SuggestionWidget variant="sidebar" />
-
-          </div>{/* end stacked group */}
-
-          {/* Collapse toggle — only on WO detail */}
-          {onWODetail && (
-            <button
-              onClick={() => setCollapsed(true)}
-              onMouseEnter={() => setToggleHovered(true)}
-              onMouseLeave={() => setToggleHovered(false)}
-              title="Collapse navigation"
-              className={cn(TOGGLE_BTN.base, "h-8 px-2.5 text-xs text-white/60 hover:text-white flex-shrink-0")}
-              style={toggleHovered ? TOGGLE_BTN.hoverStyle : TOGGLE_BTN.style}
-            >
-              <PanelLeftClose className="w-4 h-4 flex-shrink-0" />
-              <span>Hide</span>
-            </button>
-          )}
+          {/* Row 2 — branding: icon + title */}
+          <div className="flex items-center gap-3 px-5 pb-3.5">
+            <BeetIcon
+              className="w-8 h-8 flex-shrink-0"
+              style={{ color: "var(--skyshare-gold)" }}
+            />
+            <div className="flex flex-col">
+              <span
+                className="text-white/90 uppercase leading-tight whitespace-nowrap"
+                style={{ fontFamily: "var(--font-display)", fontSize: "18px", letterSpacing: "0.1em" }}
+              >
+                Beet Box
+              </span>
+              <span
+                className="uppercase whitespace-nowrap"
+                style={{ fontFamily: "var(--font-heading)", fontSize: "9px", color: "var(--skyshare-gold)", opacity: 0.65, letterSpacing: "0.25em" }}
+              >
+                MX Suite
+              </span>
+            </div>
+          </div>
         </div>
       )}
 

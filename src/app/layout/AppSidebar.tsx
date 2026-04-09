@@ -66,6 +66,7 @@ type SidebarItemGroup = {
 type SidebarSection = {
   title: string
   adminOnly?: boolean
+  superAdminOnly?: boolean
   managersOnly?: boolean
   items: SidebarItem[]
   groups?: SidebarItemGroup[]
@@ -97,7 +98,7 @@ const sidebarSections: SidebarSection[] = [
     items: [
       { name: "Discrepancy Intelligence", path: "/app/discrepancy-intelligence", icon: Activity,      section: "Discrepancy Intelligence"  },
       { name: "Records Vault",            path: "/app/records-vault",            icon: BookOpen,     section: "Records Vault"             },
-      { name: "Beet Box",               path: "/app/beet-box",                 icon: BeetIcon,      section: "Beet Box"                  },
+      { name: "Work Orders",             path: "/app/beet-box",                 icon: BeetIcon,      section: "Work Orders"               },
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
       { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "My Training"                },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
@@ -136,7 +137,7 @@ const sidebarSections: SidebarSection[] = [
   },
   {
     title: "Administration",
-    adminOnly: true,
+    superAdminOnly: true,
     items: [
       { name: "Users",                   path: "/app/admin/users",       icon: Users,         section: "Dashboard"                   },
       { name: "Team Training & Journey", path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
@@ -170,6 +171,7 @@ export function AppSidebar() {
 
   const visibleSections = sidebarSections.filter(s =>
     (!s.adminOnly || isAdmin) &&
+    (!s.superAdminOnly || isSuperAdmin) &&
     (!s.managersOnly || isSuperAdmin || isPeopleManager || hasAccess("My Team"))
   )
 
@@ -227,7 +229,7 @@ export function AppSidebar() {
               {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
               {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
               {!collapsed && item.name === "Site Suggestions" && <SuggestionsBadge />}
-              {!collapsed && (item.name === "Beet Box" || item.name === "Records Vault" || item.name === "Projects") && (
+              {!collapsed && (item.name === "Work Orders" || item.name === "Records Vault" || item.name === "Projects") && (
                 <span
                   className="flex-shrink-0 text-[8px] font-bold tracking-widest px-1 py-0.5 rounded"
                   style={{
