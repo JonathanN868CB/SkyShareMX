@@ -85,23 +85,52 @@ Status: ${data.status}`;
 }
 
 // ── Fetch active learnings for injection into system prompt ────
+// Locked lessons always inject (no slot limit).
+// Rolling lessons fill remaining slots up to 30, newest first.
 async function getLearningsContext(supabase: ReturnType<typeof createClient>): Promise<string> {
-  const { data, error } = await supabase
+  const now = new Date().toISOString();
+
+  // 1. Locked — always injected, no cap
+  const { data: locked } = await supabase
     .from("dw1ght_learnings")
     .select("lesson, category, aircraft_type")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(30);
+    .eq("context", "interview")
+    .eq("pin_status", "locked")
+    .order("created_at", { ascending: false });
 
-  if (error || !data || data.length === 0) return "";
+  const lockedRows = locked ?? [];
 
-  const lines = data.map((l) => {
+  // 2. Rolling active — fill remaining slots (respect snooze: skip if inactive_until is in the future)
+  const remainingSlots = Math.max(0, 30 - lockedRows.length);
+  const { data: rolling } = remainingSlots > 0
+    ? await supabase
+        .from("dw1ght_learnings")
+        .select("lesson, category, aircraft_type, inactive_until")
+        .eq("context", "interview")
+        .eq("pin_status", "rolling")
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(remainingSlots * 2) // fetch extra to filter snoozed
+    : { data: [] };
+
+  // Filter out snoozed lessons (inactive_until in the future)
+  const rollingRows = (rolling ?? [])
+    .filter((l: { inactive_until: string | null }) => !l.inactive_until || l.inactive_until <= now)
+    .slice(0, remainingSlots);
+
+  const allRows = [...lockedRows, ...rollingRows];
+  if (allRows.length === 0) return "";
+
+  const lines = allRows.map((l: { lesson: string; aircraft_type?: string | null }) => {
     const prefix = l.aircraft_type ? `[${l.aircraft_type}] ` : "";
     return `- ${prefix}${l.lesson}`;
   });
 
-  return `\n\nLESSONS FROM PAST INTERVIEWS (self-generated — apply these):
-${lines.join("\n")}`;
+  const lockedCount = lockedRows.length;
+  const rollingCount = rollingRows.length;
+  const header = `\n\nLESSONS FROM PAST INTERVIEWS — apply these (${lockedCount} locked, ${rollingCount} rolling):`;
+
+  return header + "\n" + lines.join("\n");
 }
 
 // ── Start Interview: create enrichment row + return opening ─────

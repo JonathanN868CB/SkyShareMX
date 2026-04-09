@@ -14,7 +14,6 @@ export type WOItemStatus =
 export type LogbookSection =
   | "Airframe" | "Engine 1" | "Engine 2" | "Propeller" | "APU" | "Other"
 
-export type Priority = "routine" | "urgent" | "aog"
 export type PartCondition = "new" | "overhauled" | "serviceable" | "as_removed"
 export type TransactionType = "receipt" | "issue" | "return" | "adjustment" | "scrap"
 export type POStatus = "draft" | "sent" | "partial" | "received" | "closed" | "voided"
@@ -27,6 +26,29 @@ export type TrainingStatus = "current" | "expiring_soon" | "expired" | "not_trai
 export type SOPCategory =
   | "Work Orders" | "Parts & Inventory" | "Logbook" | "Invoicing"
   | "Tool Calibration" | "Safety" | "Portal Navigation"
+
+// ─── Aircraft Times Snapshot ──────────────────────────────────────────────────
+// Captured at WO open from Traxxall import or manual entry.
+// Stored as times_snapshot JSONB on bb_work_orders.
+
+export interface AircraftTimesSnapshot {
+  airframeHrs:   number | null
+  landings:      number | null
+  eng1Tsn:       number | null
+  eng1Csn:       number | null
+  eng1Serial:    string | null
+  eng2Tsn:       number | null
+  eng2Csn:       number | null
+  eng2Serial:    string | null
+  propTsn:       number | null
+  propCsn:       number | null
+  propSerial:    string | null
+  apuHrs:        number | null
+  apuStarts:     number | null
+  apuSerial:     string | null
+  hobbs:         number | null
+  parseWarnings: string[]
+}
 
 // ─── Aircraft ─────────────────────────────────────────────────────────────────
 
@@ -54,6 +76,8 @@ export interface AircraftRef {
   serialNumber: string | null   // fleet: aircraft.serial_number; guest: guest_serial
   make: string | null
   modelFull: string | null
+  engineManufacturer: string | null
+  engineModel: string | null
 }
 
 // ─── Mechanic / Technician ────────────────────────────────────────────────────
@@ -65,6 +89,7 @@ export interface Mechanic {
   // From bb_mechanic_certs (primary cert)
   certType: CertType | null
   certNumber: string | null
+  laborEligible: boolean
 }
 
 // ─── Work Orders ─────────────────────────────────────────────────────────────
@@ -79,8 +104,6 @@ export interface WorkOrder {
   // Resolved display ref (populated by join in service)
   aircraft: AircraftRef | null
   status: WOStatus
-  priority: Priority
-  woType: string
   description: string | null
   openedBy: string | null       // profile id
   openedByName: string | null   // denormalized display
@@ -88,12 +111,13 @@ export interface WorkOrder {
   closedAt: string | null
   meterAtOpen: number | null
   meterAtClose: number | null
+  timesSnapshot: Record<string, number | null | string[]> | null
   discrepancyRef: string | null
   notes: string | null
   // Loaded relations
-  mechanics: Mechanic[]
   items: WOItem[]
   statusHistory: WOStatusChange[]
+  auditTrail: AuditEntry[]
   createdAt: string
   updatedAt: string
 }
@@ -109,6 +133,7 @@ export interface WOItem {
   serialNumber: string | null
   discrepancy: string
   correctiveAction: string
+  refCode: string
   mechanicId: string | null
   mechanicName: string | null
   estimatedHours: number
@@ -133,6 +158,10 @@ export interface WOItemPart {
   description: string
   qty: number
   unitPrice: number
+  catalogId: string | null
+  inventoryPartId: string | null
+  serialNumber: string | null
+  condition: string | null
 }
 
 export interface WOItemLabor {
@@ -157,6 +186,35 @@ export interface WOStatusChange {
   notes: string | null
 }
 
+export type AuditEntryType =
+  | "status_change"
+  | "sign_off"
+  | "sign_off_cleared"
+  | "labor_added"
+  | "labor_removed"
+  | "part_added"
+  | "part_removed"
+  | "item_status_change"
+  | "text_edit"
+  | "item_created"
+  | "wo_created"
+
+export interface AuditEntry {
+  id: string
+  workOrderId: string
+  entryType: AuditEntryType
+  actorId: string | null
+  actorName: string | null
+  summary: string
+  detail: string | null
+  fieldName: string | null
+  oldValue: string | null
+  newValue: string | null
+  itemId: string | null
+  itemNumber: number | null
+  createdAt: string
+}
+
 // ─── Inventory ────────────────────────────────────────────────────────────────
 
 export interface InventoryPart {
@@ -174,6 +232,7 @@ export interface InventoryPart {
   vendorName: string | null
   isConsumable: boolean
   notes: string | null
+  catalogId: string | null
   transactions: PartTransaction[]
   createdAt: string
   updatedAt: string
@@ -194,11 +253,87 @@ export interface PartTransaction {
   createdAt: string
 }
 
+// ─── Parts Catalog ───────────────────────────────────────────────────────────
+
+export type PartClassification = "oem" | "pma" | "tso" | "standard_hardware" | "consumable" | "raw_material"
+export type CatalogRelationshipType = "supersedes" | "interchanges_with"
+
+export interface CatalogEntry {
+  id: string
+  partNumber: string
+  description: string | null
+  ataChapter: string | null
+  partType: PartClassification | null
+  unitOfMeasure: string
+  manufacturer: string | null
+  isSerialized: boolean
+  isShelfLife: boolean
+  shelfLifeMonths: number | null
+  isRotable: boolean
+  aircraftApplicability: string[] | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  // Optionally loaded relations
+  vendors?: CatalogVendorLink[]
+  relationships?: CatalogRelationshipRow[]
+  inventoryOnHand?: number
+}
+
+export interface CatalogVendorLink {
+  id: string
+  catalogId: string
+  vendorId: string
+  vendorName: string
+  leadTimeDays: number | null
+  lastUnitCost: number | null
+  isPreferred: boolean
+  notes: string | null
+  createdAt: string
+}
+
+export interface CatalogRelationshipRow {
+  id: string
+  relatedPartId: string
+  relatedPartNumber: string
+  relatedDescription: string | null
+  relationshipType: CatalogRelationshipType
+  direction: "outgoing" | "incoming"
+  notes: string | null
+}
+
+// ─── Parts Suppliers ─────────────────────────────────────────────────────────
+
+export type SupplierType = "oem" | "distributor" | "repair_station" | "broker"
+export type SupplierApprovalStatus = "pending" | "approved" | "conditional" | "suspended" | "revoked"
+
+export interface PartsSupplier {
+  id: string
+  name: string
+  vendorType: SupplierType
+  approvalStatus: SupplierApprovalStatus
+  approvalDate: string | null
+  certificateType: string | null
+  certificateNumber: string | null
+  traceabilityVerified: boolean
+  lastAuditDate: string | null
+  contactName: string | null
+  phone: string | null
+  email: string | null
+  accountNumber: string | null
+  website: string | null
+  notes: string | null
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 export interface PurchaseOrder {
   id: string
   poNumber: string
+  vendorId: string | null
   vendorName: string
   vendorContact: string | null
   status: POStatus
@@ -217,6 +352,8 @@ export interface POLine {
   lineNumber: number
   partNumber: string
   description: string
+  catalogId: string | null
+  partsRequestLineId: string | null
   qtyOrdered: number
   qtyReceived: number
   unitCost: number
@@ -225,21 +362,63 @@ export interface POLine {
   updatedAt: string
 }
 
+// ─── Receiving / Traceability ────────────────────────────────────────────────
+
+export type CertificateType = "faa_8130-3" | "easa_form1" | "manufacturer_cert" | "none"
+export type InspectionStatus = "accepted" | "quarantine" | "rejected"
+
+export interface ReceivingRecord {
+  id: string
+  poLineId: string
+  partNumber: string
+  catalogId: string | null
+  qtyReceived: number
+  condition: PartCondition
+  serialNumber: string | null
+  batchLot: string | null
+  tagNumber: string | null
+  tagDate: string | null
+  certifyingAgency: string | null
+  certificateType: CertificateType
+  inspectionStatus: InspectionStatus
+  locationBin: string | null
+  receivedBy: string | null
+  receivedByName: string
+  receivedAt: string
+  notes: string | null
+  createdAt: string
+}
+
 // ─── Tool Calibration ─────────────────────────────────────────────────────────
+
+export type ToolType = "Cert" | "Ref"
 
 export interface Tool {
   id: string
   toolNumber: string
   description: string
+  details: string | null
+  make: string | null
+  model: string | null
   serialNumber: string | null
-  manufacturer: string | null
-  location: string | null
+  toolType: ToolType              // "Cert" = Certified (requires calibration), "Ref" = Reference Only
+  toolTypeFull: string | null     // "Certified" | "Reference Only"
+  toolRoom: string | null
   status: ToolStatus
+  location: string | null
+  locationNotes: string | null
+  vendor: string | null
+  toolCost: number
+  purchaseDate: string | null
+  labelDate: string | null
   calibrationIntervalDays: number
+  calibrationDueDays: number | null
+  calibrationNotes: string | null
+  calibrationCost: number
   lastCalibratedAt: string | null
   nextCalibrationDue: string | null
-  calibrationVendor: string | null
-  notes: string | null
+  requiresApproval: boolean
+  inactive: boolean
   history: CalibrationRecord[]
   createdAt: string
   updatedAt: string
@@ -253,6 +432,8 @@ export interface CalibrationRecord {
   calibratedAt: string
   nextDue: string
   certificateNumber: string | null
+  vendor: string | null
+  cost: number
   notes: string | null
   createdAt: string
 }
@@ -350,6 +531,7 @@ export interface LogbookEntryLine {
   entryId: string
   lineNumber: number
   text: string
+  refCode: string
   signatoryId: string | null
   woItemId: string | null
 }

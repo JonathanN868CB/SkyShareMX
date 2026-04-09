@@ -4,6 +4,7 @@
 // Ties together: data fetch → format → Supabase Storage upload → history record
 
 import { supabase } from "@/lib/supabase"
+import { localToday } from "@/shared/lib/dates"
 import { fetchReportData } from "./data"
 import { generateRosterCsv } from "./generateRosterCsv"
 import { generateAuditPdf } from "./generateAuditPdf"
@@ -35,7 +36,7 @@ export async function generateReport(opts: GenerateReportOpts): Promise<ReportRe
   let title: string
   let description: string
 
-  const dateStamp = new Date().toISOString().slice(0, 10)
+  const dateStamp = localToday()
   const laneLabel = opts.laneFilter === "nine" ? "9-or-Less"
     : opts.laneFilter === "ten" ? "10-or-More"
     : "All Lanes"

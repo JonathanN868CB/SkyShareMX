@@ -1,5 +1,10 @@
 import { supabase } from "@/lib/supabase"
-import type { PurchaseOrder, POLine, POStatus } from "../types"
+import type {
+  PurchaseOrder, POLine, POStatus,
+  PartCondition, CertificateType, InspectionStatus, ReceivingRecord,
+} from "../types"
+import { recordTransaction } from "./inventory"
+import { notifyProfileIds } from "@/features/parts/helpers"
 
 export async function getPurchaseOrders(filters?: {
   status?: POStatus | POStatus[]
@@ -9,6 +14,7 @@ export async function getPurchaseOrders(filters?: {
     .from("bb_purchase_orders")
     .select("*, bb_purchase_order_lines(*)")
     .order("created_at", { ascending: false })
+    .range(0, 9999)
 
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
@@ -34,7 +40,18 @@ export async function getPurchaseOrderById(id: string): Promise<PurchaseOrder | 
   return mapPORow(data)
 }
 
+// ─── Vendor lookup for PO creation ─────────────────────────────────────────
+
+export async function getVendorsForPO(): Promise<{ id: string; name: string }[]> {
+  // Pull from bb_parts_suppliers (approved parts suppliers, NOT maintenance vendors)
+  const { getApprovedSuppliers } = await import("./suppliers")
+  return getApprovedSuppliers()
+}
+
+// ─── Create ────────────────────────────────────────────────────────────────
+
 export async function createPurchaseOrder(payload: {
+  vendorId?: string
   vendorName: string
   vendorContact?: string
   expectedDelivery?: string
@@ -46,6 +63,8 @@ export async function createPurchaseOrder(payload: {
     qtyOrdered: number
     unitCost: number
     woRef?: string
+    catalogId?: string
+    partsRequestLineId?: string | null
   }>
 }): Promise<PurchaseOrder> {
   const year = new Date().getFullYear()
@@ -60,6 +79,7 @@ export async function createPurchaseOrder(payload: {
     .from("bb_purchase_orders")
     .insert({
       po_number: poNumber,
+      vendor_id: null,
       vendor_name: payload.vendorName,
       vendor_contact: payload.vendorContact ?? null,
       expected_delivery: payload.expectedDelivery ?? null,
@@ -85,6 +105,8 @@ export async function createPurchaseOrder(payload: {
           qty_received: 0,
           unit_cost: l.unitCost,
           wo_ref: l.woRef ?? null,
+          catalog_id: l.catalogId ?? null,
+          parts_request_line_id: l.partsRequestLineId ?? null,
         }))
       )
 
@@ -102,16 +124,247 @@ export async function updatePOStatus(id: string, status: POStatus): Promise<void
   if (error) throw error
 }
 
-// Receiving workflow: update qty_received on a PO line
-export async function receivePOLine(
-  lineId: string,
-  qtyReceived: number
+// ─── Receiving workflow with full traceability ─────────────────────────────
+
+export interface ReceiveItemInput {
+  lineId: string
+  partNumber: string
+  description: string
+  catalogId?: string
+  qty: number
+  condition: PartCondition
+  serialNumber?: string
+  batchLot?: string
+  tagNumber?: string
+  tagDate?: string
+  certifyingAgency?: string
+  certificateType?: CertificateType
+  inspectionStatus?: InspectionStatus
+  locationBin?: string
+  notes?: string
+}
+
+export async function receiveItems(
+  poId: string,
+  items: ReceiveItemInput[],
+  receivedBy: { id: string; name: string }
 ): Promise<void> {
-  const { error } = await supabase
+  // Get PO number for transaction references
+  const { data: poRow } = await supabase
+    .from("bb_purchase_orders")
+    .select("po_number")
+    .eq("id", poId)
+    .single()
+  const poNumber = poRow?.po_number ?? ""
+
+  for (const item of items) {
+    if (item.qty <= 0) continue
+
+    // 1. Insert receiving record
+    await supabase.from("bb_receiving_records").insert({
+      po_line_id: item.lineId,
+      part_number: item.partNumber,
+      catalog_id: item.catalogId ?? null,
+      qty_received: item.qty,
+      condition: item.condition,
+      serial_number: item.serialNumber ?? null,
+      batch_lot: item.batchLot ?? null,
+      tag_number: item.tagNumber ?? null,
+      tag_date: item.tagDate ?? null,
+      certifying_agency: item.certifyingAgency ?? null,
+      certificate_type: item.certificateType ?? "none",
+      inspection_status: item.inspectionStatus ?? "accepted",
+      location_bin: item.locationBin ?? null,
+      received_by: receivedBy.id,
+      received_by_name: receivedBy.name,
+      notes: item.notes ?? null,
+    })
+
+    // 2. Update PO line qty_received
+    const { data: line } = await supabase
+      .from("bb_purchase_order_lines")
+      .select("qty_received, parts_request_line_id")
+      .eq("id", item.lineId)
+      .single()
+
+    const newTotal = (line?.qty_received ?? 0) + item.qty
+    await supabase
+      .from("bb_purchase_order_lines")
+      .update({ qty_received: newTotal })
+      .eq("id", item.lineId)
+
+    // 2b. If this PO line links to a parts request line, mark it received
+    if (line?.parts_request_line_id) {
+      await supabase
+        .from("parts_request_lines")
+        .update({ line_status: "received", po_number: poNumber })
+        .eq("id", line.parts_request_line_id)
+    }
+
+    // 3. Find or create inventory part, then record transaction
+    const { data: inv } = await supabase
+      .from("bb_inventory_parts")
+      .select("id")
+      .eq("part_number", item.partNumber)
+      .maybeSingle()
+
+    let partId: string
+    if (inv) {
+      partId = inv.id
+    } else {
+      const { data: newInv, error: insErr } = await supabase
+        .from("bb_inventory_parts")
+        .insert({
+          part_number: item.partNumber,
+          description: item.description || "",
+          qty_on_hand: 0,
+          qty_reserved: 0,
+          reorder_point: 0,
+          unit_cost: 0,
+          condition: item.condition,
+          uom: "EA",
+          is_consumable: false,
+          catalog_id: item.catalogId ?? null,
+          location_bin: item.locationBin ?? null,
+        })
+        .select("id")
+        .single()
+      if (insErr) throw insErr
+      partId = newInv.id
+    }
+
+    await recordTransaction(partId, {
+      type: "receipt",
+      qty: item.qty,
+      performedBy: receivedBy.id,
+      performedName: receivedBy.name,
+      poRef: poNumber,
+      notes: [
+        item.condition !== "new" ? `Condition: ${item.condition}` : "",
+        item.serialNumber ? `S/N: ${item.serialNumber}` : "",
+        item.tagNumber ? `Tag: ${item.tagNumber}` : "",
+        item.notes ?? "",
+      ].filter(Boolean).join(" | ") || undefined,
+    })
+  }
+
+  // 4. Auto-update PO status
+  const updated = await getPurchaseOrderById(poId)
+  if (updated) {
+    const allDone = updated.lines.every(l => l.qtyReceived >= l.qtyOrdered)
+    const anyReceived = updated.lines.some(l => l.qtyReceived > 0)
+    if (allDone) await updatePOStatus(poId, "received")
+    else if (anyReceived && updated.status === "sent") await updatePOStatus(poId, "partial")
+  }
+
+  // 5. Check if any parts requests are now fully received via this PO
+  // Collect distinct request IDs linked through PO lines
+  const { data: linkedLines } = await supabase
     .from("bb_purchase_order_lines")
-    .update({ qty_received: qtyReceived })
-    .eq("id", lineId)
+    .select("parts_request_line_id")
+    .eq("purchase_order_id", poId)
+    .not("parts_request_line_id", "is", null)
+
+  if (linkedLines && linkedLines.length > 0) {
+    const requestLineIds = linkedLines.map((l: any) => l.parts_request_line_id)
+
+    // Find which requests these lines belong to
+    const { data: reqLines } = await supabase
+      .from("parts_request_lines")
+      .select("request_id")
+      .in("id", requestLineIds)
+
+    const requestIds = [...new Set((reqLines ?? []).map((l: any) => l.request_id))]
+
+    for (const requestId of requestIds) {
+      // Check if all lines on this request are received
+      const { data: allReqLines } = await supabase
+        .from("parts_request_lines")
+        .select("line_status")
+        .eq("request_id", requestId)
+
+      const allReceived = allReqLines?.every(l => l.line_status === "received") ?? false
+      if (!allReceived) continue
+
+      // Update request header
+      const { data: reqHeader } = await supabase
+        .from("parts_requests")
+        .select("status, requested_by, work_order, job_description, aircraft_tail, order_type")
+        .eq("id", requestId)
+        .single()
+
+      if (!reqHeader || reqHeader.status === "received" || reqHeader.status === "closed") continue
+
+      await supabase
+        .from("parts_requests")
+        .update({ status: "received" })
+        .eq("id", requestId)
+
+      await supabase.from("parts_status_history").insert({
+        request_id: requestId,
+        old_status: reqHeader.status,
+        new_status: "received",
+        changed_by: receivedBy.id,
+        note: `Received via PO ${poNumber}`,
+      })
+
+      // Notify the mechanic
+      const jobLabel = reqHeader.order_type === "stock"
+        ? `Stock — ${reqHeader.job_description}`
+        : `${reqHeader.aircraft_tail} — ${reqHeader.job_description}`
+
+      await notifyProfileIds(
+        [reqHeader.requested_by],
+        "parts_received",
+        "Parts have arrived",
+        `Your parts for ${jobLabel} have been received${reqHeader.work_order ? ` — WO# ${reqHeader.work_order}` : ""}`,
+        { link: `/app/beet-box/parts/${requestId}` }
+      )
+    }
+  }
+}
+
+// ─── Receiving history ─────────────────────────────────────────────────────
+
+export async function getReceivingRecords(poId: string): Promise<ReceivingRecord[]> {
+  // Get all line IDs for this PO
+  const { data: lines } = await supabase
+    .from("bb_purchase_order_lines")
+    .select("id")
+    .eq("purchase_order_id", poId)
+
+  if (!lines || lines.length === 0) return []
+
+  const lineIds = lines.map(l => l.id)
+  const { data, error } = await supabase
+    .from("bb_receiving_records")
+    .select("*")
+    .in("po_line_id", lineIds)
+    .order("received_at", { ascending: false })
+
   if (error) throw error
+
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    poLineId: r.po_line_id,
+    partNumber: r.part_number,
+    catalogId: r.catalog_id,
+    qtyReceived: r.qty_received,
+    condition: r.condition,
+    serialNumber: r.serial_number,
+    batchLot: r.batch_lot,
+    tagNumber: r.tag_number,
+    tagDate: r.tag_date,
+    certifyingAgency: r.certifying_agency,
+    certificateType: r.certificate_type,
+    inspectionStatus: r.inspection_status,
+    locationBin: r.location_bin,
+    receivedBy: r.received_by,
+    receivedByName: r.received_by_name,
+    receivedAt: r.received_at,
+    notes: r.notes,
+    createdAt: r.created_at,
+  }))
 }
 
 function mapPORow(row: any): PurchaseOrder {
@@ -127,6 +380,8 @@ function mapPORow(row: any): PurchaseOrder {
       qtyReceived: l.qty_received,
       unitCost: l.unit_cost,
       woRef: l.wo_ref,
+      catalogId: l.catalog_id ?? null,
+      partsRequestLineId: l.parts_request_line_id ?? null,
       createdAt: l.created_at,
       updatedAt: l.updated_at,
     }))
@@ -134,6 +389,7 @@ function mapPORow(row: any): PurchaseOrder {
   return {
     id: row.id,
     poNumber: row.po_number,
+    vendorId: row.vendor_id ?? null,
     vendorName: row.vendor_name,
     vendorContact: row.vendor_contact,
     status: row.status as POStatus,

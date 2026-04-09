@@ -1,20 +1,20 @@
 import { useState, useCallback, useRef, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import * as XLSX from "xlsx"
 import {
   ArrowLeft, Upload, FileSpreadsheet, X, AlertTriangle,
-  CheckCircle2, ClipboardList, Clock, Calendar, GripVertical,
+  CheckCircle2, ClipboardList, GripVertical, Check,
   Trash2, Pencil, TriangleAlert, ShieldAlert, PackageCheck,
-  ChevronDown, ChevronRight, Plus,
+  ChevronDown, ChevronRight, Plus, Zap, BookText,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
-import { Textarea } from "@/shared/ui/textarea"
-import { Label } from "@/shared/ui/label"
 import { cn } from "@/shared/lib/utils"
-import { getFleetAircraft, getTechnicians, createWorkOrder, upsertWOItem, getMyProfileId } from "../../services"
-import { WO_TYPES } from "../../constants"
-import type { FleetAircraft, Mechanic, WOItem, LogbookSection } from "../../types"
+import { getFleetAircraft, createWorkOrder, updateWorkOrder, upsertWOItem, deleteWorkOrder, deleteAllWOItems, getMyProfileId, getWorkOrderById, lookupFlatRate, lookupCorrectiveAction } from "../../services"
+import type { FleetAircraft, WOItem, LogbookSection, AircraftTimesSnapshot } from "../../types"
+import type { LibFlatRate, LibCorrectiveAction } from "../../services/library"
+import { supabase } from "@/lib/supabase"
+import { TimesEditModal } from "./TimesEditModal"
 
 // ─── Traxxall parser ──────────────────────────────────────────────────────────
 
@@ -42,6 +42,7 @@ interface ParsedTask {
   importId:        string
   section:         LogbookSection
   taskNumber:      string
+  refCode:         string
   description:     string
   nextDueDate:     string | null
   nextDueHours:    string | null
@@ -54,11 +55,154 @@ interface ParsedImport {
   aircraftReg:          string
   aircraftModel:        string
   currentHrsAirframe:   string
+  times:                AircraftTimesSnapshot | null
   tasks:                ParsedTask[]
+  isFresh?:             boolean
 }
 
 function col(headers: (string | null)[], name: string): number {
   return headers.findIndex(h => h && h.trim() === name)
+}
+
+// Rows to ignore — calibrated/ATC adjustment values, not actual times
+const LA_IGNORE = /^atc\s*\d+|^ach$/i
+
+function numVal(v: string | number | null | undefined): number | null {
+  if (v == null) return null
+  const n = parseFloat(String(v).replace(/,/g, ""))
+  return isNaN(n) ? null : n
+}
+
+function parseLastActuals(lastSheet: XLSX.WorkSheet): AircraftTimesSnapshot {
+  const la = XLSX.utils.sheet_to_json<(string | number | null)[]>(lastSheet, { header: 1, defval: null })
+  if (la.length < 2) return emptySnapshot([])
+
+  // ── Detect columnar format (row 0 = component headers) ──────────────────
+  // Row 0 looks like: [tailNumber, "A/F", "ENG1", "ENG2", "APU1"]
+  const headerRow = la[0] as (string | number | null)[]
+  let colAF = -1, colE1 = -1, colE2 = -1, colAPU = -1
+
+  for (let c = 1; c < headerRow.length; c++) {
+    const h = String(headerRow[c] ?? "").trim().toUpperCase().replace(/\s+/g, "")
+    if (h === "A/F" || h === "AIRFRAME" || h === "AF")    colAF  = c
+    else if (/^ENG1?$|^E1$|^ENGINE1?$/.test(h))           colE1  = c
+    else if (/^ENG2$|^E2$|^ENGINE2$/.test(h))             colE2  = c
+    else if (/^APU\d*$/.test(h))                          colAPU = c
+  }
+
+  const isColumnar = colAF > 0 || colE1 > 0
+
+  // ── Build label → full row map ──────────────────────────────────────────
+  const rowMap = new Map<string, (string | number | null)[]>()
+  for (let i = 1; i < la.length; i++) {
+    const row = la[i]
+    const label = String(row?.[0] ?? "").trim()
+    if (!label || LA_IGNORE.test(label)) continue
+    rowMap.set(label.toLowerCase(), row)
+  }
+
+  function getFromRow(labelVariants: string[], colIdx: number): number | null {
+    for (const lbl of labelVariants) {
+      const row = rowMap.get(lbl.toLowerCase())
+      if (!row) continue
+      const v = numVal(row[colIdx])
+      if (v !== null) return v
+    }
+    return null
+  }
+
+  function getStringFromRow(labelVariants: string[], colIdx: number): string | null {
+    for (const lbl of labelVariants) {
+      const row = rowMap.get(lbl.toLowerCase())
+      if (!row) continue
+      const v = String(row[colIdx] ?? "").trim()
+      if (v) return v
+    }
+    return null
+  }
+
+  // ── Columnar parsing ─────────────────────────────────────────────────────
+  if (isColumnar) {
+    const afC  = colAF  > 0 ? colAF  : 1
+    const e1C  = colE1  > 0 ? colE1  : -1
+    const e2C  = colE2  > 0 ? colE2  : -1
+    const apuC = colAPU > 0 ? colAPU : -1
+
+    const airframeHrs = getFromRow(["hrs", "ttaf"], afC)
+    const landings    = getFromRow(["ldg", "landings", "landing"], afC)
+
+    const eng1Tsn = e1C > 0 ? getFromRow(["hrs", "tsn"], e1C) : null
+    const eng1Csn = e1C > 0 ? getFromRow(["enc", "starts", "cycles"], e1C) : null
+    const eng1Serial = e1C > 0 ? getStringFromRow(["s/n", "serial", "sn", "serial no", "serial number"], e1C) : null
+
+    const eng2Tsn = e2C > 0 ? getFromRow(["hrs", "tsn"], e2C) : null
+    const eng2Csn = e2C > 0 ? getFromRow(["enc", "starts", "cycles"], e2C) : null
+    const eng2Serial = e2C > 0 ? getStringFromRow(["s/n", "serial", "sn", "serial no", "serial number"], e2C) : null
+
+    // APU: dedicated column first, then A/F column fallback rows
+    const apuHrs    = apuC > 0
+      ? getFromRow(["hrs"], apuC)
+      : getFromRow(["hrs(apu)", "apu hrs", "apu hours"], afC)
+    const apuStarts = apuC > 0
+      ? getFromRow(["apus", "starts", "start(apu)"], apuC)
+      : getFromRow(["start(apu)", "apu starts", "apus"], afC)
+    const apuSerial = apuC > 0
+      ? getStringFromRow(["s/n", "serial", "sn", "serial no", "serial number"], apuC)
+      : null
+
+    const parseWarnings: string[] = []
+    if (airframeHrs === null) parseWarnings.push("Airframe hours not found — enter manually")
+    if (landings    === null) parseWarnings.push("Landings not found — enter manually")
+
+    return {
+      airframeHrs, landings,
+      eng1Tsn, eng1Csn, eng1Serial,
+      eng2Tsn, eng2Csn, eng2Serial,
+      propTsn: null, propCsn: null, propSerial: null,
+      apuHrs, apuStarts, apuSerial,
+      hobbs: null,
+      parseWarnings,
+    }
+  }
+
+  // ── Fallback: key-value format (col 0 = label, col 1 = value) ───────────
+  const map = new Map<string, number>()
+  for (const [lbl, row] of rowMap) {
+    const v = numVal(row[1])
+    if (v !== null) map.set(lbl, v)
+  }
+  const kv = (...keys: string[]) => keys.map(k => map.get(k.toLowerCase())).find(v => v != null) ?? null
+
+  return {
+    airframeHrs: kv("hrs", "ttaf", "total time"),
+    landings:    kv("ldg", "landings", "landing"),
+    eng1Tsn:     kv("eng hrs", "engine hrs", "e1 hrs", "tsn"),
+    eng1Csn:     kv("enc", "eng cycles", "csn"),
+    eng1Serial:  null,
+    eng2Tsn:     kv("e2 hrs", "eng2 hrs"),
+    eng2Csn:     kv("e2 cycles", "e2 csn"),
+    eng2Serial:  null,
+    propTsn:     kv("prop hrs", "prop tsn"),
+    propCsn:     kv("prop cycles"),
+    propSerial:  null,
+    apuHrs:      kv("apu hrs", "apu hours", "hrs(apu)"),
+    apuStarts:   kv("apu starts", "start(apu)", "apus"),
+    apuSerial:   null,
+    hobbs:       kv("hobbs"),
+    parseWarnings: [],
+  }
+}
+
+function emptySnapshot(warnings: string[]): AircraftTimesSnapshot {
+  return {
+    airframeHrs: null, landings: null,
+    eng1Tsn: null, eng1Csn: null, eng1Serial: null,
+    eng2Tsn: null, eng2Csn: null, eng2Serial: null,
+    propTsn: null, propCsn: null, propSerial: null,
+    apuHrs: null, apuStarts: null, apuSerial: null,
+    hobbs: null,
+    parseWarnings: warnings,
+  }
 }
 
 function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
@@ -81,17 +225,18 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
   const iNDHrs   = col(headers, "Next Due")
   const iRemain  = col(headers, "Remaining Time")
   const iRTSDays = col(headers, "RTS Days Remaining")
+  // Try to find an assembly serial number column (Traxxall may call it various things)
+  const iSerial  = ["Assembly S/N", "Component S/N", "S/N", "Serial No", "Serial Number", "Serial"]
+    .reduce((found, name) => found >= 0 ? found : col(headers, name), -1)
 
   let aircraftReg   = ""
   let aircraftModel = ""
-  let currentHrsAirframe = ""
 
-  if (lastSheet) {
-    const la = XLSX.utils.sheet_to_json<string[]>(lastSheet, { header: 1, defval: null })
-    for (const laRow of la) {
-      if (laRow[0] === "Hrs") currentHrsAirframe = String(laRow[1] ?? "")
-    }
-  }
+  const times = lastSheet ? parseLastActuals(lastSheet) : null
+  const currentHrsAirframe = times?.airframeHrs != null ? String(times.airframeHrs) : ""
+
+  // Collect first serial seen per MA code from Task Export rows
+  const maSerials: Record<string, string> = {}
 
   const tasks: ParsedTask[] = []
 
@@ -106,6 +251,12 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
     if (!aircraftModel) aircraftModel = String(row[iAcModel]  ?? "").trim()
 
     const ma      = String(row[iMA]     ?? "").trim()
+
+    // Capture assembly serial from Task Export if the column exists
+    if (iSerial >= 0 && ma && !maSerials[ma]) {
+      const s = String(row[iSerial] ?? "").trim()
+      if (s) maSerials[ma] = s
+    }
     const section = MA_MAP[ma] ?? "Other"
     const ata     = String(row[iATA]    ?? "").trim()
     const taskNo  = String(row[iTaskNo] ?? "").trim()
@@ -126,7 +277,7 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
     const taskNumber = [ata ? `ATA ${ata}` : null, taskNo || null].filter(Boolean).join(" — ")
 
     tasks.push({
-      importId: `import-${i}`, section, taskNumber,
+      importId: `import-${i}`, section, taskNumber, refCode: taskNo,
       description: desc, nextDueDate: ndd, nextDueHours: ndh,
       remainingDisplay: remain, urgencyDays, selected: true,
     })
@@ -138,10 +289,17 @@ function parseTraxxall(wb: XLSX.WorkBook): ParsedImport | null {
     return a.urgencyDays - b.urgencyDays
   })
 
-  return { aircraftReg, aircraftModel, currentHrsAirframe, tasks }
-}
+  // Merge Task Export serials into the times snapshot (Last Actuals serials take precedence)
+  const patchedTimes = times ? {
+    ...times,
+    eng1Serial: times.eng1Serial ?? maSerials["ENG1"] ?? null,
+    eng2Serial: times.eng2Serial ?? maSerials["ENG2"] ?? null,
+    propSerial: times.propSerial ?? maSerials["PROP1"] ?? maSerials["PROP"] ?? null,
+    apuSerial:  times.apuSerial  ?? maSerials["APU"]  ?? null,
+  } : null
 
-// WO_TYPES imported from ../../constants
+  return { aircraftReg, aircraftModel, currentHrsAirframe, times: patchedTimes, tasks }
+}
 
 // ─── Drag-and-drop helpers ────────────────────────────────────────────────────
 function reorderTasks(tasks: ParsedTask[], dragId: string, targetId: string): ParsedTask[] {
@@ -160,33 +318,35 @@ function moveSectionTasks(tasks: ParsedTask[], dragId: string, targetSection: Lo
   return tasks.map(t => t.importId === dragId ? { ...t, section: targetSection } : t)
 }
 
-// ─── Sub-component: Urgency badge ─────────────────────────────────────────────
-function UrgencyChip({ days, display }: { days: number; display: string }) {
-  if (!display) return null
-  const overdue   = days < 0
-  const dueSoon   = days >= 0 && days < 14
-  const moderate  = days >= 14 && days < 30
+
+// ─── Library lookup state ─────────────────────────────────────────────────────
+type LibStatus = "idle" | "found" | "not_found"
+
+interface TaskLibState {
+  caStatus:  LibStatus
+  frStatus:  LibStatus
+  applyCA:   boolean
+  applyFR:   boolean
+  caText:    string | null      // fetched corrective action text
+  frHours:   number | null      // fetched flat rate hours
+  frRate:    number | null      // fetched flat rate labor rate
+}
+
+// ─── Sub-component: Library status chip ───────────────────────────────────────
+function LibChip({ status, label }: { status: LibStatus; label: string }) {
+  if (status === "idle") return null
+  const found = status === "found"
   return (
     <span
-      className="text-xs font-semibold px-2 py-0.5 rounded-full"
+      className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
       style={{
-        background: overdue  ? "rgba(239,68,68,0.15)"  :
-                    dueSoon  ? "rgba(251,191,36,0.15)"  :
-                    moderate ? "rgba(251,146,60,0.12)"  :
-                               "rgba(255,255,255,0.07)",
-        color: overdue  ? "#f87171"  :
-               dueSoon  ? "#fbbf24"  :
-               moderate ? "#fb923c"  :
-                          "rgba(255,255,255,0.4)",
-        border: `1px solid ${
-          overdue  ? "rgba(239,68,68,0.3)"  :
-          dueSoon  ? "rgba(251,191,36,0.3)" :
-          moderate ? "rgba(251,146,60,0.2)" :
-                     "rgba(255,255,255,0.1)"
-        }`,
+        background: found ? "rgba(110,231,183,0.12)" : "rgba(239,68,68,0.1)",
+        color:      found ? "#6ee7b7" : "#f87171",
+        border:     `1px solid ${found ? "rgba(110,231,183,0.3)" : "rgba(239,68,68,0.25)"}`,
+        whiteSpace: "nowrap",
       }}
     >
-      {display}
+      {found ? `✓ ${label}` : `✕ ${label}`}
     </span>
   )
 }
@@ -196,25 +356,121 @@ type Mode = "choose" | "fresh" | "import-upload" | "import-review"
 
 export default function WorkOrderCreate() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const rebuildId = searchParams.get("rebuild")   // ?rebuild=<wo_id> → re-enter builder on existing draft
+
   const [mode, setMode]   = useState<Mode>("choose")
+
+  // Auto-saved draft — created when entering import-review, deleted if user backs out
+  const [draftWoId,     setDraftWoId]     = useState<string | null>(null)
+  const [draftWoNumber, setDraftWoNumber] = useState<string | null>(null)
+  // true = rebuild mode: editing an existing draft from WorkOrderDetail
+  const [isRebuild, setIsRebuild] = useState(false)
+  const rebuildDoneRef = useRef(false)   // prevent double-fire when fleet loads
 
   // Fleet data
   const [fleet, setFleet]         = useState<FleetAircraft[]>([])
-  const [technicians, setTechnicians] = useState<Mechanic[]>([])
   const [aircraftMode, setAircraftMode] = useState<"fleet" | "guest">("fleet")
 
   useEffect(() => {
-    Promise.all([getFleetAircraft(), getTechnicians()])
-      .then(([ac, techs]) => { setFleet(ac); setTechnicians(techs) })
-      .catch(() => {/* silently degrade — dropdowns will be empty */})
+    getFleetAircraft()
+      .then(ac => setFleet(ac))
+      .catch(() => {/* silently degrade — dropdown will be empty */})
   }, [])
 
+  // ── Rebuild mode: load existing draft and jump straight to review ──────────
+  useEffect(() => {
+    if (!rebuildId) return
+    if (rebuildDoneRef.current) return   // only run once even when fleet loads
+    rebuildDoneRef.current = true
+    ;(async () => {
+      try {
+        const wo = await getWorkOrderById(rebuildId)
+        if (!wo || wo.status !== "draft") return
+        // Match fleet aircraft
+        const matchedAc = fleet.find(a => a.id === wo.aircraftId)
+        const reg   = wo.aircraft?.registration ?? wo.guestRegistration ?? matchedAc?.registration ?? matchedAc?.serialNumber ?? ""
+        const model = wo.aircraft ? `${wo.aircraft.make ?? ""} ${wo.aircraft.modelFull ?? ""}`.trim()
+                    : matchedAc ? `${matchedAc.make} ${matchedAc.modelFull}`.trim() : ""
+
+        // Restore times from the stored snapshot
+        const snap = wo.timesSnapshot as Record<string, number | null> | null
+        const restoredTimes: AircraftTimesSnapshot | null = snap ? {
+          airframeHrs:   snap.airframeHrs   ?? null,
+          landings:      snap.landings      ?? null,
+          eng1Tsn:       snap.eng1Tsn       ?? null,
+          eng1Csn:       snap.eng1Csn       ?? null,
+          eng2Tsn:       snap.eng2Tsn       ?? null,
+          eng2Csn:       snap.eng2Csn       ?? null,
+          propTsn:       snap.propTsn       ?? null,
+          propCsn:       snap.propCsn       ?? null,
+          apuHrs:        snap.apuHrs        ?? null,
+          apuStarts:     snap.apuStarts     ?? null,
+          hobbs:         snap.hobbs         ?? null,
+          parseWarnings: [],
+        } : null
+
+        // Restore tasks from existing WO items
+        const restoredTasks: ParsedTask[] = wo.items.map(item => ({
+          importId:         item.id,
+          section:          item.logbookSection,
+          description:      item.category,
+          taskNumber:       item.taskNumber ?? "",
+          nextDueDate:      null,
+          nextDueHours:     null,
+          remainingDisplay: "",
+          urgencyDays:      0,
+          selected:         true,
+        }))
+
+        setParsed({
+          aircraftReg:        reg,
+          aircraftModel:      model,
+          currentHrsAirframe: wo.meterAtOpen != null ? String(wo.meterAtOpen) : "",
+          times:              restoredTimes,
+          tasks:              restoredTasks,
+        })
+        setDraftWoId(wo.id)
+        setDraftWoNumber(wo.woNumber)
+        setIsRebuild(true)
+        setMode("import-review")
+      } catch {/* silently ignore — bad ID */}
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rebuildId, fleet.length])
+
+  // ── Auto-save draft when entering import-review ────────────────────────────
+  async function autoSaveDraftWO(reg: string, model: string, meterAtOpen: number | null | undefined): Promise<{ id: string; woNumber: string } | null> {
+    try {
+      const profileId = await getMyProfileId()
+      if (!profileId) return null
+      const wo = await createWorkOrder({
+        description:       `Draft — ${reg}`,
+        guestRegistration: reg || undefined,
+        meterAtOpen:       meterAtOpen ?? undefined,
+        openedBy:          profileId,
+      })
+      setDraftWoId(wo.id)
+      setDraftWoNumber(wo.woNumber)
+      return { id: wo.id, woNumber: wo.woNumber }
+    } catch {
+      return null   // non-fatal — fall back to creating on commit
+    }
+  }
+
+  // ── Discard auto-saved draft if user navigates back before committing ──────
+  async function discardDraft() {
+    if (draftWoId && !isRebuild) {
+      try { await deleteWorkOrder(draftWoId) } catch {/* ignore */}
+    }
+    setDraftWoId(null)
+    setDraftWoNumber(null)
+    setIsRebuild(false)
+  }
 
   // Fresh form
   const [form, setForm]     = useState({
-    aircraftId: "", guestRegistration: "", guestSerial: "",
-    woType: "", priority: "routine" as "routine" | "urgent" | "aog",
-    description: "", meterAtOpen: "", mechanic: "",
+    aircraftId: "", guestRegistration: "", guestSerial: "", meterAtOpen: "",
   })
   const [submitting, setSubmitting]   = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -223,6 +479,8 @@ export default function WorkOrderCreate() {
   const [dropZoneActive, setDropZoneActive] = useState(false)
   const [parseError, setParseError]         = useState<string | null>(null)
   const [parsed, setParsed]                 = useState<ParsedImport | null>(null)
+  // Hobbs differential — fetched from aircraft_details when aircraft is matched
+  const [hobbsDiff, setHobbsDiff]           = useState<number | null>(null)
 
   // Review state
   const [draggedId, setDraggedId]           = useState<string | null>(null)
@@ -245,12 +503,63 @@ export default function WorkOrderCreate() {
   const commitDropRef = useRef<(dragId: string) => void>(null as any)
   const dragState  = useRef<{ id: string; startX: number; startY: number; active: boolean } | null>(null)
 
+  // Aircraft times edit modal state
+  const [timesEditOpen, setTimesEditOpen] = useState(false)
+
   // Add-item state (import review)
   const [addingToSection, setAddingToSection] = useState<LogbookSection | null>(null)
   const [newTaskDesc, setNewTaskDesc]         = useState("")
   const [newTaskNum, setNewTaskNum]           = useState("")
 
+  // ── Library lookup state — keyed by task.importId ────────────────────────
+  const [libCache, setLibCache] = useState<Record<string, TaskLibState>>({})
+  // Progress counter: scoped to a specific section so other sections don't show it
+  const [libProgress, setLibProgress] = useState<{ section: LogbookSection; done: number; total: number; type: "ca" | "fr" } | null>(null)
+  // Per-section applied state: tracks whether "Add" has been run (so button shows "Remove")
+  const [sectionApplied, setSectionApplied] = useState<Record<string, { ca: boolean; fr: boolean }>>({})
+  // Per-section removing animation (brief flash when removing)
+  const [sectionRemoving, setSectionRemoving] = useState<Record<string, { ca: boolean; fr: boolean }>>({})
+
+  // Fetch Hobbs differential when a parsed aircraft is matched to the fleet
+  useEffect(() => {
+    const reg = parsed?.aircraftReg
+    if (!reg) { setHobbsDiff(null); return }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(supabase as any)
+      .from("aircraft_details")
+      .select("hobbs_differential")
+      .eq("tail_number", reg)
+      .maybeSingle()
+      .then(({ data }: { data: { hobbs_differential: number | null } | null }) => {
+        setHobbsDiff(data?.hobbs_differential != null ? Number(data.hobbs_differential) : null)
+      })
+      .catch(() => setHobbsDiff(null))
+  }, [parsed?.aircraftReg])
+
   // ── Fresh form ─────────────────────────────────────────────────────────────
+  async function handleFreshContinue() {
+    const ac = fleet.find(a => a.id === form.aircraftId)
+    const aircraftReg = aircraftMode === "fleet"
+      ? (ac?.registration ?? ac?.serialNumber ?? "")
+      : form.guestRegistration
+    const aircraftModel = aircraftMode === "fleet"
+      ? `${ac?.make ?? ""} ${ac?.modelFull ?? ""}`.trim()
+      : ""
+    const meterAtOpen = form.meterAtOpen ? parseFloat(form.meterAtOpen) : null
+    setParsed({
+      aircraftReg,
+      aircraftModel,
+      currentHrsAirframe: form.meterAtOpen,
+      times: null,
+      tasks: [],
+      isFresh: true,
+    })
+    setMode("import-review")
+    // Auto-save draft in background — don't block navigation
+    autoSaveDraftWO(aircraftReg, aircraftModel, meterAtOpen)
+  }
+
+  // (legacy — kept for error state reset)
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitting(true)
@@ -258,19 +567,12 @@ export default function WorkOrderCreate() {
       const profileId = await getMyProfileId()
       if (!profileId) throw new Error("Not authenticated")
       const wo = await createWorkOrder({
-        woType: form.woType,
-        description: form.description || undefined,
-        priority: form.priority,
         aircraftId: aircraftMode === "fleet" ? form.aircraftId || undefined : undefined,
         guestRegistration: aircraftMode === "guest" ? form.guestRegistration || undefined : undefined,
         guestSerial: aircraftMode === "guest" ? form.guestSerial || undefined : undefined,
         meterAtOpen: form.meterAtOpen ? parseFloat(form.meterAtOpen) : undefined,
         openedBy: profileId,
       })
-      if (form.mechanic && profileId) {
-        const { assignMechanic } = await import("../../services")
-        await assignMechanic(wo.id, form.mechanic, profileId)
-      }
       navigate(`/app/beet-box/work-orders/${wo.id}`)
     } catch (err) {
       console.error("Failed to create work order:", err)
@@ -297,6 +599,8 @@ export default function WorkOrderCreate() {
         }
         setParsed(result)
         setMode("import-review")
+        // Auto-save draft in background — don't block navigation
+        autoSaveDraftWO(result.aircraftReg, result.aircraftModel, result.times?.airframeHrs ?? null)
       } catch {
         setParseError("Could not read this file. Make sure it's a valid Traxxall Excel export.")
       }
@@ -459,6 +763,92 @@ export default function WorkOrderCreate() {
     }
   }, [])
 
+  // ── Library lookup helpers ────────────────────────────────────────────────
+  const aircraftModel = parsed?.aircraftModel ?? ""
+
+  function getLib(importId: string): TaskLibState {
+    return libCache[importId] ?? {
+      caStatus: "idle", frStatus: "idle",
+      applyCA: false, applyFR: false,
+      caText: null, frHours: null, frRate: null,
+    }
+  }
+
+  async function lookupTaskCA(importId: string, refCode: string): Promise<TaskLibState> {
+    const result: LibCorrectiveAction | null = await lookupCorrectiveAction(aircraftModel, refCode)
+    const patch: Partial<TaskLibState> = result
+      ? { caStatus: "found", applyCA: true, caText: result.correctiveActionText }
+      : { caStatus: "not_found", applyCA: false, caText: null }
+    const next = { ...getLib(importId), ...patch }
+    setLibCache(c => ({ ...c, [importId]: next }))
+    return next
+  }
+
+  async function lookupTaskFR(importId: string, refCode: string): Promise<TaskLibState> {
+    const result: LibFlatRate | null = await lookupFlatRate(aircraftModel, refCode)
+    const patch: Partial<TaskLibState> = result
+      ? { frStatus: "found", applyFR: true, frHours: result.hours, frRate: result.laborRate }
+      : { frStatus: "not_found", applyFR: false, frHours: null, frRate: null }
+    const next = { ...getLib(importId), ...patch }
+    setLibCache(c => ({ ...c, [importId]: next }))
+    return next
+  }
+
+  function toggleApplyCA(importId: string) {
+    const cur = getLib(importId)
+    if (cur.caStatus === "idle") return // must lookup first
+    setLibCache(c => ({ ...c, [importId]: { ...cur, applyCA: !cur.applyCA } }))
+  }
+
+  function toggleApplyFR(importId: string) {
+    const cur = getLib(importId)
+    if (cur.frStatus === "idle") return
+    setLibCache(c => ({ ...c, [importId]: { ...cur, applyFR: !cur.applyFR } }))
+  }
+
+  async function applyLibraryToSection(section: LogbookSection, type: "ca" | "fr") {
+    if (!parsed) return
+    const key = type === "ca" ? "ca" : "fr"
+    const cur = sectionApplied[section] ?? { ca: false, fr: false }
+
+    if (cur[key]) {
+      // ── Remove ── flash "removing" briefly, clear cache for this section
+      setSectionRemoving(s => ({ ...s, [section]: { ...(s[section] ?? { ca: false, fr: false }), [key]: true } }))
+      const tasks = parsed.tasks.filter(t => t.section === section)
+      // Quick removal with brief per-item delay for visual effect
+      for (let i = 0; i < tasks.length; i++) {
+        const t = tasks[i]
+        setLibCache(c => {
+          const cur2 = c[t.importId]
+          if (!cur2) return c
+          const cleared: Partial<TaskLibState> = type === "ca"
+            ? { caStatus: "idle", applyCA: false, caText: null }
+            : { frStatus: "idle", applyFR: false, frHours: null, frRate: null }
+          return { ...c, [t.importId]: { ...cur2, ...cleared } }
+        })
+        setLibProgress({ section, done: i + 1, total: tasks.length, type })
+        await new Promise(r => setTimeout(r, 30))  // brief stagger for visual
+      }
+      await new Promise(r => setTimeout(r, 400))
+      setSectionRemoving(s => ({ ...s, [section]: { ...(s[section] ?? { ca: false, fr: false }), [key]: false } }))
+      setSectionApplied(s => ({ ...s, [section]: { ...(s[section] ?? { ca: false, fr: false }), [key]: false } }))
+      setLibProgress(null)
+    } else {
+      // ── Add ── batch lookup for all eligible tasks
+      const tasks = parsed.tasks.filter(t => t.section === section && t.selected && t.taskNumber)
+      if (tasks.length === 0) return
+      setLibProgress({ section, done: 0, total: tasks.length, type })
+      for (let i = 0; i < tasks.length; i++) {
+        const t = tasks[i]
+        if (type === "ca") await lookupTaskCA(t.importId, t.taskNumber)
+        else               await lookupTaskFR(t.importId, t.taskNumber)
+        setLibProgress({ section, done: i + 1, total: tasks.length, type })
+      }
+      setSectionApplied(s => ({ ...s, [section]: { ...(s[section] ?? { ca: false, fr: false }), [key]: true } }))
+      setTimeout(() => setLibProgress(p => p?.section === section && p.type === type ? null : p), 800)
+    }
+  }
+
   // ── Manual task addition (import review) ─────────────────────────────────
   function addTask(section: LogbookSection) {
     if (!newTaskDesc.trim()) return
@@ -466,6 +856,7 @@ export default function WorkOrderCreate() {
       importId:         `manual-${Date.now()}`,
       section,
       taskNumber:       newTaskNum.trim(),
+      refCode:          newTaskNum.trim(),
       description:      newTaskDesc.trim(),
       nextDueDate:      null,
       nextDueHours:     null,
@@ -486,7 +877,6 @@ export default function WorkOrderCreate() {
     setSubmitting(true)
     setCommitError(null)
     try {
-      // Step 1 — get profiles.id (FK target), not auth.users.id
       const profileId = await getMyProfileId()
       if (!profileId) throw new Error("Not authenticated — could not resolve profile")
 
@@ -494,32 +884,64 @@ export default function WorkOrderCreate() {
         (a.registration ?? "").replace(/\s/g, "").toUpperCase() ===
         parsed.aircraftReg.replace(/\s/g, "").toUpperCase()
       )
-      const sections = [...new Set(selected.map(t => t.section))]
+      const sections   = [...new Set(selected.map(t => t.section))]
+      const desc = parsed.isFresh
+        ? `${parsed.aircraftReg} — ${selected.length} item${selected.length !== 1 ? "s" : ""}: ${sections.join(", ")}`
+        : `Traxxall import — ${parsed.aircraftReg}. ${selected.length} tasks across ${sections.join(", ")}.`
+      const meterAtOpen = parsed.times?.airframeHrs ?? (parsed.currentHrsAirframe ? parseFloat(parsed.currentHrsAirframe) : undefined)
+      // Strip parseWarnings before storing — store only numeric fields
+      const timesSnapshot = parsed.times
+        ? (({ parseWarnings, ...rest }) => rest)(parsed.times) as Record<string, number | null>
+        : null
 
-      // Step 2 — create the work order header
-      const wo = await createWorkOrder({
-        woType:            "Scheduled Maintenance — Traxxall Import",
-        description:       `Traxxall import — ${parsed.aircraftReg}. ${selected.length} tasks across ${sections.join(", ")}.`,
-        priority:          "routine",
-        aircraftId:        matchedAircraft?.id ?? undefined,
-        guestRegistration: matchedAircraft ? undefined : parsed.aircraftReg,
-        meterAtOpen:       parsed.currentHrsAirframe ? parseFloat(parsed.currentHrsAirframe) : undefined,
-        openedBy:          profileId,
-      })
+      let woId: string
 
-      // Step 3 — save all items sequentially to avoid RLS race on mechanic_id check
+      if (draftWoId) {
+        // Use the auto-saved draft — update identity, description, meter, and times snapshot
+        woId = draftWoId
+        if (isRebuild) {
+          // Clear existing items before re-committing
+          await deleteAllWOItems(woId)
+        }
+        await updateWorkOrder(woId, {
+          description:       desc,
+          aircraftId:        matchedAircraft?.id ?? null,
+          guestRegistration: matchedAircraft ? null : parsed.aircraftReg,
+          meterAtOpen:       meterAtOpen ?? undefined,
+          timesSnapshot,
+        })
+      } else {
+        // Fallback: create fresh (auto-save may have failed)
+        const wo = await createWorkOrder({
+          description:       desc,
+          aircraftId:        matchedAircraft?.id ?? undefined,
+          guestRegistration: matchedAircraft ? undefined : parsed.aircraftReg,
+          meterAtOpen,
+          openedBy:          profileId,
+        })
+        woId = wo.id
+        // Patch the snapshot onto the freshly-created WO
+        await updateWorkOrder(woId, { timesSnapshot })
+      }
+
+      // Save all items sequentially to avoid RLS race on mechanic_id check
       for (let idx = 0; idx < selected.length; idx++) {
         const t = selected[idx]
+        const lib = libCache[t.importId]
+        const correctiveAction = (lib?.applyCA && lib.caText) ? lib.caText : ""
+        const estimatedHours   = (lib?.applyFR && lib.frHours != null) ? lib.frHours : 0
+        const laborRate        = (lib?.applyFR && lib.frRate  != null) ? lib.frRate  : 125
         await upsertWOItem({
-          workOrderId:         wo.id,
+          workOrderId:         woId,
           itemNumber:          idx + 1,
           category:            t.description,
           logbookSection:      t.section,
           taskNumber:          t.taskNumber || null,
+          refCode:             t.refCode || null,
           discrepancy:         `Perform ${t.description}.`,
-          correctiveAction:    "",
-          estimatedHours:      0,
-          laborRate:           125,
+          correctiveAction,
+          estimatedHours,
+          laborRate,
           shippingCost:        0,
           outsideServicesCost: 0,
           signOffRequired:     true,
@@ -528,7 +950,7 @@ export default function WorkOrderCreate() {
         })
       }
 
-      navigate(`/app/beet-box/work-orders/${wo.id}`)
+      navigate(`/app/beet-box/work-orders/${woId}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err)
       console.error("Commit failed:", msg)
@@ -541,7 +963,7 @@ export default function WorkOrderCreate() {
   const selectedCount = parsed?.tasks.filter(t => t.selected).length ?? 0
   const overdueCount  = parsed?.tasks.filter(t => t.selected && t.urgencyDays < 0).length ?? 0
   const dueSoonCount  = parsed?.tasks.filter(t => t.selected && t.urgencyDays >= 0 && t.urgencyDays < 14).length ?? 0
-  const isValid       = (aircraftMode === "fleet" ? form.aircraftId : form.guestRegistration) && form.woType && form.description
+  const isValid       = aircraftMode === "fleet" ? !!form.aircraftId : !!form.guestRegistration
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -550,12 +972,13 @@ export default function WorkOrderCreate() {
       {/* ── HEADER ──────────────────────────────────────────────────────────── */}
       {mode !== "import-review" && (
         <>
-          <div className="hero-area px-8 py-7">
+          <div className="hero-area px-8 pt-14 pb-7">
             <button
               onClick={() => mode === "choose" ? navigate("/app/beet-box/work-orders") : setMode("choose")}
-              className="flex items-center gap-2 text-white/40 hover:text-white/70 text-sm mb-4 transition-colors"
+              className="flex items-center gap-1.5 text-white/65 hover:text-white text-xs font-semibold mb-5 px-3 py-1.5 rounded-lg transition-all"
+              style={{ background: "hsl(0,0%,17%)", border: "1px solid hsl(0,0%,26%)" }}
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
               {mode === "choose" ? "Work Orders" : "Back"}
             </button>
             <h1 className="text-white" style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}>
@@ -606,99 +1029,68 @@ export default function WorkOrderCreate() {
         </div>
       )}
 
-      {/* ── FRESH FORM ──────────────────────────────────────────────────────── */}
+      {/* ── FRESH FORM — aircraft picker only, then jumps to the board UI ─── */}
       {mode === "fresh" && (
-        <div className="px-8 py-6 max-w-2xl">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between mb-1">
-                <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Aircraft *</Label>
-                <div className="flex rounded overflow-hidden" style={{ border: "1px solid hsl(0,0%,25%)" }}>
-                  {(["fleet", "guest"] as const).map(m => (
-                    <button key={m} type="button" onClick={() => setAircraftMode(m)}
-                      className={cn("px-2.5 py-1 text-xs transition-colors", aircraftMode === m ? "bg-white/10 text-white" : "text-white/35 hover:text-white/60")}>
-                      {m === "fleet" ? "From Fleet" : "Guest / Manual"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {aircraftMode === "fleet" ? (
-                <select value={form.aircraftId} onChange={e => setForm(f => ({ ...f, aircraftId: e.target.value }))}
-                  className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30" required>
-                  <option value="">Select aircraft…</option>
-                  {fleet.map(ac => (
-                    <option key={ac.id} value={ac.id}>
-                      {ac.registration ?? ac.serialNumber} — {ac.make} {ac.modelFull} ({ac.year})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    placeholder="Tail number (e.g. N863CB) *"
-                    value={form.guestRegistration}
-                    onChange={e => setForm(f => ({ ...f, guestRegistration: e.target.value }))}
-                    required={aircraftMode === "guest"}
-                    className="flex-1 px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
-                  />
-                  <input
-                    placeholder="Serial (optional)"
-                    value={form.guestSerial}
-                    onChange={e => setForm(f => ({ ...f, guestSerial: e.target.value }))}
-                    className="w-36 px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
-                  />
-                </div>
-              )}
+        <div className="px-8 py-8 max-w-lg">
+          <p className="text-white/40 text-sm mb-6">Which aircraft is this work order for?</p>
+          <div className="space-y-4">
+            {/* Fleet / Guest toggle */}
+            <div className="flex rounded overflow-hidden w-fit" style={{ border: "1px solid hsl(0,0%,25%)" }}>
+              {(["fleet", "guest"] as const).map(m => (
+                <button key={m} type="button" onClick={() => setAircraftMode(m)}
+                  className={cn("px-3 py-1.5 text-xs transition-colors", aircraftMode === m ? "bg-white/10 text-white" : "text-white/35 hover:text-white/60")}>
+                  {m === "fleet" ? "From Fleet" : "Guest / Manual"}
+                </button>
+              ))}
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Work Order Type *</Label>
-              <select value={form.woType} onChange={e => setForm(f => ({ ...f, woType: e.target.value }))}
-                className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30" required>
-                <option value="">Select type…</option>
-                {WO_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Priority</Label>
-              <div className="flex gap-3">
-                {(["routine", "urgent", "aog"] as const).map(p => (
-                  <button key={p} type="button" onClick={() => setForm(f => ({ ...f, priority: p }))}
-                    className="flex-1 py-2 rounded text-xs font-semibold uppercase tracking-widest transition-all"
-                    style={{
-                      fontFamily: "var(--font-heading)",
-                      background: form.priority === p ? p === "routine" ? "rgba(100,116,139,0.3)" : p === "urgent" ? "rgba(245,158,11,0.2)" : "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.04)",
-                      border: form.priority === p ? p === "routine" ? "1px solid rgba(100,116,139,0.5)" : p === "urgent" ? "1px solid rgba(245,158,11,0.4)" : "1px solid rgba(239,68,68,0.5)" : "1px solid rgba(255,255,255,0.08)",
-                      color: form.priority === p ? p === "routine" ? "#94a3b8" : p === "urgent" ? "#fbbf24" : "#f87171" : "rgba(255,255,255,0.35)",
-                    }}>{p.toUpperCase()}</button>
+
+            {aircraftMode === "fleet" ? (
+              <select value={form.aircraftId} onChange={e => setForm(f => ({ ...f, aircraftId: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-lg text-sm border border-white/10 text-white focus:outline-none focus:border-white/30"
+                style={{ background: "hsl(0,0%,14%)", colorScheme: "dark" }}>
+                <option value="">Select aircraft…</option>
+                {fleet.map(ac => (
+                  <option key={ac.id} value={ac.id}>
+                    {ac.registration ?? ac.serialNumber} — {ac.make} {ac.modelFull} ({ac.year})
+                  </option>
                 ))}
+              </select>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  placeholder="Tail number (e.g. N863CB)"
+                  value={form.guestRegistration}
+                  onChange={e => setForm(f => ({ ...f, guestRegistration: e.target.value }))}
+                  className="flex-1 px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                />
+                <input
+                  placeholder="Serial (optional)"
+                  value={form.guestSerial}
+                  onChange={e => setForm(f => ({ ...f, guestSerial: e.target.value }))}
+                  className="w-36 px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                />
               </div>
-            </div>
+            )}
+
             <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Description *</Label>
-              <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                placeholder="Describe the work to be performed…" rows={4}
-                className="bg-white/[0.06] border-white/10 text-white/90 placeholder:text-white/25 focus:border-white/30 resize-none" required />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Meter at Open</Label>
+              <label className="text-white/50 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Current Meter (optional)</label>
               <Input type="number" step="0.1" value={form.meterAtOpen} onChange={e => setForm(f => ({ ...f, meterAtOpen: e.target.value }))}
                 placeholder="e.g. 4218.3" className="bg-white/[0.06] border-white/10 text-white/90 placeholder:text-white/25 focus:border-white/30" />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-white/70 text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-heading)" }}>Assign Mechanic</Label>
-              <select value={form.mechanic} onChange={e => setForm(f => ({ ...f, mechanic: e.target.value }))}
-                className="w-full px-3 py-2 rounded text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30">
-                <option value="">Unassigned</option>
-                {technicians.map(m => <option key={m.id} value={m.id}>{m.name}{m.certType ? ` — ${m.certType}` : ""}</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-3 pt-2">
-              <Button type="submit" disabled={!isValid || submitting} style={{ background: "var(--skyshare-gold)", color: "#000" }} className="font-semibold px-6">
-                {submitting ? "Opening WO…" : "Open Work Order"}
+
+            <div className="flex items-center gap-3 pt-1">
+              <Button
+                type="button"
+                disabled={!isValid}
+                onClick={handleFreshContinue}
+                style={{ background: isValid ? "var(--skyshare-gold)" : "rgba(212,160,23,0.2)", color: isValid ? "#000" : "rgba(212,160,23,0.4)" }}
+                className="font-semibold px-6"
+              >
+                Continue →
               </Button>
               <Button type="button" variant="ghost" onClick={() => setMode("choose")} className="text-white/50 hover:text-white/80">Cancel</Button>
             </div>
-          </form>
+          </div>
         </div>
       )}
 
@@ -746,19 +1138,20 @@ export default function WorkOrderCreate() {
 
           {/* ── Masthead ──────────────────────────────────────────────────── */}
           <div
-            className="flex-shrink-0 px-8 py-5 flex items-start justify-between"
+            className="flex-shrink-0 px-8 py-5 flex items-start gap-6"
             style={{
               background: "linear-gradient(to right, hsl(0,0%,11%), hsl(0,0%,9%))",
               borderBottom: "1px solid hsl(0,0%,18%)",
               borderTop: "3px solid var(--skyshare-gold)",
             }}
           >
-            <div>
+            {/* Left: aircraft identity */}
+            <div className="flex-1 min-w-0">
               <button
-                onClick={() => { setParsed(null); setMode("import-upload") }}
+                onClick={() => { discardDraft(); setParsed(null); setMode(parsed?.isFresh ? "fresh" : "import-upload") }}
                 className="flex items-center gap-1.5 text-white/35 hover:text-white/65 text-xs mb-3 transition-colors"
               >
-                <ArrowLeft className="w-3.5 h-3.5" /> Upload different file
+                <ArrowLeft className="w-3.5 h-3.5" /> {parsed?.isFresh ? "Back" : "Upload different file"}
               </button>
               <div className="flex items-center gap-3 mb-1">
                 <h1
@@ -768,22 +1161,136 @@ export default function WorkOrderCreate() {
                   {parsed.aircraftReg}
                 </h1>
                 <span className="text-white/50 text-base">{parsed.aircraftModel}</span>
-                {parsed.currentHrsAirframe && (
+                {draftWoNumber && (
                   <span
-                    className="text-xs px-2.5 py-1 rounded-full font-mono"
-                    style={{ background: "rgba(212,160,23,0.12)", color: "rgba(212,160,23,0.8)", border: "1px solid rgba(212,160,23,0.25)" }}
+                    className="px-2 py-0.5 rounded text-[11px] font-bold tracking-wider"
+                    style={{ background: "rgba(161,161,170,0.15)", border: "1px solid rgba(161,161,170,0.3)", color: "#a1a1aa", fontFamily: "var(--font-heading)" }}
                   >
-                    {parsed.currentHrsAirframe} hrs A/F
+                    DRAFT · WO# {draftWoNumber}
                   </span>
                 )}
               </div>
               <p className="text-white/35 text-sm">
-                Traxxall basket import · Review and organize before committing to a work order
+                {isRebuild
+                  ? "Rebuilding draft · Re-upload or modify items below, then commit to replace existing items"
+                  : parsed?.isFresh ? "New work order · Add work items to sections below, then commit"
+                  : "Traxxall basket import · Review and organize before committing to a work order"}
               </p>
             </div>
 
-            {/* Stat cards */}
-            <div className="flex items-center gap-3 flex-shrink-0 ml-8">
+            {/* Center: aircraft times chip strip (import only) */}
+            {!parsed.isFresh && (
+              <div className="flex-shrink-0" style={{ maxWidth: "420px", minWidth: "220px" }}>
+                {(() => {
+                  const t = parsed.times
+                  if (t == null) return (
+                    <button onClick={() => setTimesEditOpen(true)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/30 hover:text-white/60 text-xs transition-colors"
+                      style={{ border: "1px dashed hsl(0,0%,28%)" }}>
+                      <Pencil className="w-3.5 h-3.5" /> No Last Actuals tab — click to enter times manually
+                    </button>
+                  )
+
+                  type Chip = { key: string; color: string; label: string; lines: { v: string; u: string }[] }
+                  const chips: Chip[] = []
+
+                  // Airframe
+                  if (t.airframeHrs != null || t.landings != null) {
+                    chips.push({ key: "af", color: "#d4a017", label: "A/F", lines: [
+                      ...(t.airframeHrs != null ? [{ v: t.airframeHrs.toLocaleString(), u: "hrs" }] : []),
+                      ...(t.landings    != null ? [{ v: t.landings.toLocaleString(),    u: "ldg" }] : []),
+                    ]})
+                  }
+                  // Engine 1
+                  if (t.eng1Tsn != null || t.eng1Csn != null) {
+                    chips.push({ key: "e1", color: "#60a5fa", label: "ENG 1", lines: [
+                      ...(t.eng1Tsn != null ? [{ v: t.eng1Tsn.toLocaleString(), u: "TSN" }] : []),
+                      ...(t.eng1Csn != null ? [{ v: t.eng1Csn.toLocaleString(), u: "ENC" }] : []),
+                    ]})
+                  }
+                  // Engine 2
+                  if (t.eng2Tsn != null || t.eng2Csn != null) {
+                    chips.push({ key: "e2", color: "#93c5fd", label: "ENG 2", lines: [
+                      ...(t.eng2Tsn != null ? [{ v: t.eng2Tsn.toLocaleString(), u: "TSN" }] : []),
+                      ...(t.eng2Csn != null ? [{ v: t.eng2Csn.toLocaleString(), u: "ENC" }] : []),
+                    ]})
+                  }
+                  // Propeller
+                  if (t.propTsn != null || t.propCsn != null) {
+                    chips.push({ key: "prop", color: "#6ee7b7", label: "PROP", lines: [
+                      ...(t.propTsn != null ? [{ v: t.propTsn.toLocaleString(), u: "TSN" }] : []),
+                      ...(t.propCsn != null ? [{ v: t.propCsn.toLocaleString(), u: "CSN" }] : []),
+                    ]})
+                  }
+                  // APU
+                  if (t.apuHrs != null || t.apuStarts != null) {
+                    chips.push({ key: "apu", color: "#c4b5fd", label: "APU", lines: [
+                      ...(t.apuHrs    != null ? [{ v: t.apuHrs.toLocaleString(),    u: "hrs"    }] : []),
+                      ...(t.apuStarts != null ? [{ v: t.apuStarts.toLocaleString(), u: "starts" }] : []),
+                    ]})
+                  }
+                  // Hobbs
+                  if (t.hobbs != null) {
+                    const hobbsLines: { v: string; u: string }[] = [{ v: t.hobbs.toLocaleString(), u: "hrs" }]
+                    if (hobbsDiff != null) {
+                      const expected = Math.round((t.hobbs + hobbsDiff) * 10) / 10
+                      const delta    = t.airframeHrs != null ? Math.round((t.airframeHrs - expected) * 10) / 10 : null
+                      if (delta != null && Math.abs(delta) > 0.05) {
+                        hobbsLines.push({ v: `Δ ${delta > 0 ? "+" : ""}${delta}`, u: "vs A/F" })
+                      }
+                    }
+                    chips.push({ key: "hobbs", color: hobbsDiff != null && t.airframeHrs != null && Math.abs(Math.round((t.airframeHrs - (t.hobbs + hobbsDiff)) * 10) / 10) > 2 ? "#fbbf24" : "#34d399", label: "HOBBS", lines: hobbsLines })
+                  }
+
+                  return (
+                    <div className="flex items-stretch gap-2 flex-wrap">
+                      {chips.length === 0 ? (
+                        <button onClick={() => setTimesEditOpen(true)}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg text-amber-400/70 hover:text-amber-400 text-xs transition-colors"
+                          style={{ border: "1px dashed rgba(251,191,36,0.35)" }}>
+                          <AlertTriangle className="w-3.5 h-3.5" /> Times could not be parsed — click to enter manually
+                        </button>
+                      ) : chips.map(chip => (
+                        <div
+                          key={chip.key}
+                          className="flex flex-col justify-between px-3 py-2 rounded-lg"
+                          style={{
+                            background: `${chip.color}0d`,
+                            border: `1px solid ${chip.color}30`,
+                            borderTop: `2px solid ${chip.color}`,
+                          }}
+                        >
+                          <span
+                            className="text-[9px] font-bold uppercase tracking-widest mb-1.5 leading-none"
+                            style={{ color: chip.color, fontFamily: "var(--font-heading)", opacity: 0.8 }}
+                          >
+                            {chip.label}
+                          </span>
+                          <div className="flex flex-col gap-0.5">
+                            {chip.lines.map((ln, i) => (
+                              <div key={i} className="flex items-baseline gap-1">
+                                <span className="text-white/85 text-xs font-mono tabular-nums leading-none">{ln.v}</span>
+                                <span className="text-white/30 text-[9px] leading-none">{ln.u}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => setTimesEditOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg self-center text-white/40 hover:text-white/70 transition-colors text-xs flex-shrink-0 font-medium"
+                        style={{ border: "1px solid hsl(0,0%,28%)", fontFamily: "var(--font-heading)" }}
+                      >
+                        <Pencil className="w-3 h-3" /> Edit Times
+                      </button>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+
+            {/* Right: stat cards */}
+            <div className="flex items-center gap-3 flex-shrink-0">
               {[
                 {
                   icon: PackageCheck,
@@ -800,7 +1307,7 @@ export default function WorkOrderCreate() {
                   color: "#fbbf24",
                   bg:    "rgba(251,191,36,0.08)",
                   border:"rgba(251,191,36,0.2)",
-                  hidden: dueSoonCount === 0,
+                  hidden: dueSoonCount === 0 || !!parsed?.isFresh,
                 },
                 {
                   icon: ShieldAlert,
@@ -809,7 +1316,7 @@ export default function WorkOrderCreate() {
                   color: "#f87171",
                   bg:    "rgba(239,68,68,0.1)",
                   border:"rgba(239,68,68,0.25)",
-                  hidden: overdueCount === 0,
+                  hidden: overdueCount === 0 || !!parsed?.isFresh,
                 },
               ].filter(s => !s.hidden).map(stat => {
                 const Icon = stat.icon
@@ -847,6 +1354,13 @@ export default function WorkOrderCreate() {
               const allSelected   = sectionTasks.every(t => t.selected)
               const someSelected  = sectionTasks.some(t => t.selected)
               const isCollapsed   = collapsedSections.has(section)
+              const snap          = parsed.times as any
+              const sectionSerial: string | null =
+                section === "Airframe"  ? null :
+                section === "Engine 1"  ? (snap?.eng1Serial ?? null) :
+                section === "Engine 2"  ? (snap?.eng2Serial ?? null) :
+                section === "Propeller" ? (snap?.propSerial ?? null) :
+                section === "APU"       ? (snap?.apuSerial  ?? null) : null
 
               return (
                 <div key={section}>
@@ -880,13 +1394,94 @@ export default function WorkOrderCreate() {
                       {someSelected && !allSelected && <div className="w-1.5 h-1.5 rounded-sm" style={{ background: color }} />}
                     </button>
 
-                    <span className="text-sm font-bold uppercase tracking-widest flex-1" style={{ color }}>
+                    <span className="text-sm font-bold uppercase tracking-widest" style={{ color }}>
                       {section}
                     </span>
+
+                    {sectionSerial && (
+                      <span className="text-white/35 text-[10px] font-mono truncate" title={`S/N ${sectionSerial}`}>
+                        S/N {sectionSerial}
+                      </span>
+                    )}
 
                     <span className="text-white/30 text-xs font-mono">
                       {sectionTasks.filter(t => t.selected).length}/{sectionTasks.length}
                     </span>
+
+                    {/* Library apply buttons — right side of section header */}
+                    {!parsed.isFresh && (() => {
+                      const secApplied  = sectionApplied[section]  ?? { ca: false, fr: false }
+                      const secRemoving = sectionRemoving[section]  ?? { ca: false, fr: false }
+                      const frLoading   = libProgress?.section === section && libProgress.type === "fr"
+                      const caLoading   = libProgress?.section === section && libProgress.type === "ca"
+                      const frActive    = secApplied.fr || frLoading || secRemoving.fr
+                      const caActive    = secApplied.ca || caLoading || secRemoving.ca
+
+                      return (
+                        <div className="flex items-center gap-2 ml-auto" onClick={e => e.stopPropagation()}>
+
+                          {/* Progress bar — only shows for THIS section */}
+                          {(frLoading || caLoading) && libProgress && (
+                            <div className="flex items-center gap-2 mr-1">
+                              <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
+                                <div
+                                  className="h-full rounded-full transition-all duration-200"
+                                  style={{
+                                    width: `${libProgress.total > 0 ? (libProgress.done / libProgress.total) * 100 : 0}%`,
+                                    background: caLoading ? "#6ee7b7" : "var(--skyshare-gold)",
+                                  }}
+                                />
+                              </div>
+                              <span className="text-[10px] font-mono tabular-nums" style={{ color: caLoading ? "rgba(110,231,183,0.6)" : "rgba(212,160,23,0.6)" }}>
+                                {libProgress.done}/{libProgress.total}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Flat Rates button — Add / depressed / Remove */}
+                          <button
+                            onClick={() => applyLibraryToSection(section, "fr")}
+                            disabled={frLoading || secRemoving.fr}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-all disabled:cursor-wait"
+                            style={frActive ? {
+                              background: "rgba(212,160,23,0.22)",
+                              border: "1px solid rgba(212,160,23,0.55)",
+                              color: "var(--skyshare-gold)",
+                              boxShadow: "inset 0 1px 3px rgba(0,0,0,0.4)",
+                            } : {
+                              background: "rgba(212,160,23,0.08)",
+                              border: "1px solid rgba(212,160,23,0.25)",
+                              color: "rgba(212,160,23,0.7)",
+                            }}
+                            title={frActive ? "Remove flat rates from all items in this section" : "Apply flat rate labor to all selected items"}
+                          >
+                            <Zap className="w-3 h-3" />
+                            {(frLoading || secRemoving.fr) ? "Working…" : frActive ? "Remove Flat Rates" : "Add Flat Rates"}
+                          </button>
+
+                          {/* Canned Actions button — Add / depressed / Remove */}
+                          <button
+                            onClick={() => applyLibraryToSection(section, "ca")}
+                            disabled={caLoading || secRemoving.ca}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold transition-all disabled:cursor-wait"
+                            style={caActive ? {
+                              background: "rgba(110,231,183,0.18)",
+                              border: "1px solid rgba(110,231,183,0.45)",
+                              color: "#6ee7b7",
+                              boxShadow: "inset 0 1px 3px rgba(0,0,0,0.4)",
+                            } : {
+                              background: "rgba(110,231,183,0.06)",
+                              border: "1px solid rgba(110,231,183,0.2)",
+                              color: "rgba(110,231,183,0.65)",
+                            }}
+                            title={caActive ? "Remove canned actions from all items in this section" : "Apply canned corrective actions to all selected items"}
+                          >
+                            <BookText className="w-3 h-3" />
+                            {(caLoading || secRemoving.ca) ? "Working…" : caActive ? "Remove Canned Actions" : "Add Canned Actions"}
+                          </button>
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   {/* Task rows */}
@@ -976,24 +1571,83 @@ export default function WorkOrderCreate() {
                                 )}
                               </div>
 
-                              {/* Due info */}
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                {task.nextDueDate && (
-                                  <div className="flex items-center gap-1 text-xs text-white/35">
-                                    <Calendar className="w-3 h-3 flex-shrink-0" />
-                                    <span className="font-mono">{task.nextDueDate}</span>
+                              {/* Per-row library checkboxes — only visible once a lookup has run */}
+                              {!parsed.isFresh && task.taskNumber && (() => {
+                                const lib = getLib(task.importId)
+                                if (lib.frStatus === "idle" && lib.caStatus === "idle") return null
+                                return (
+                                  <div
+                                    className="flex items-center gap-3 flex-shrink-0"
+                                    onPointerDown={e => e.stopPropagation()}
+                                  >
+                                    {/* Flat Rate checkbox */}
+                                    {lib.frStatus !== "idle" && (
+                                      lib.frStatus === "not_found" ? (
+                                        <span className="flex items-center gap-1 text-[10px] text-white/25 select-none">
+                                          <span className="w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0" style={{ borderColor: "rgba(255,255,255,0.12)", background: "transparent" }}>
+                                            <span className="text-[8px] text-white/20">—</span>
+                                          </span>
+                                          <Zap className="w-2.5 h-2.5" />
+                                          <span className="font-mono">No FR</span>
+                                        </span>
+                                      ) : (
+                                        <label
+                                          className="flex items-center gap-1 text-[10px] cursor-pointer select-none group/cb"
+                                          title={lib.applyFR ? "Flat rate will be applied — uncheck to skip" : "Check to apply flat rate"}
+                                          onPointerDown={e => e.stopPropagation()}
+                                          onClick={() => toggleApplyFR(task.importId)}
+                                        >
+                                          <span
+                                            className="w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-all"
+                                            style={{
+                                              borderColor: lib.applyFR ? "var(--skyshare-gold)" : "rgba(255,255,255,0.2)",
+                                              background:  lib.applyFR ? "rgba(212,160,23,0.9)" : "transparent",
+                                            }}
+                                          >
+                                            {lib.applyFR && <Check className="w-2 h-2 text-black" />}
+                                          </span>
+                                          <Zap className="w-2.5 h-2.5 transition-colors" style={{ color: lib.applyFR ? "var(--skyshare-gold)" : "rgba(255,255,255,0.25)" }} />
+                                          <span className="font-mono transition-colors" style={{ color: lib.applyFR ? "rgba(212,160,23,0.9)" : "rgba(255,255,255,0.3)" }}>
+                                            {lib.frHours != null ? `${lib.frHours}h` : "FR"}
+                                          </span>
+                                        </label>
+                                      )
+                                    )}
+
+                                    {/* Canned Action checkbox */}
+                                    {lib.caStatus !== "idle" && (
+                                      lib.caStatus === "not_found" ? (
+                                        <span className="flex items-center gap-1 text-[10px] text-white/25 select-none">
+                                          <span className="w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0" style={{ borderColor: "rgba(255,255,255,0.12)", background: "transparent" }}>
+                                            <span className="text-[8px] text-white/20">—</span>
+                                          </span>
+                                          <BookText className="w-2.5 h-2.5" />
+                                          <span>No CA</span>
+                                        </span>
+                                      ) : (
+                                        <label
+                                          className="flex items-center gap-1 text-[10px] cursor-pointer select-none"
+                                          title={lib.applyCA ? "Canned action will be applied — uncheck to skip" : "Check to apply canned action"}
+                                          onPointerDown={e => e.stopPropagation()}
+                                          onClick={() => toggleApplyCA(task.importId)}
+                                        >
+                                          <span
+                                            className="w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-all"
+                                            style={{
+                                              borderColor: lib.applyCA ? "#6ee7b7" : "rgba(255,255,255,0.2)",
+                                              background:  lib.applyCA ? "rgba(110,231,183,0.85)" : "transparent",
+                                            }}
+                                          >
+                                            {lib.applyCA && <Check className="w-2 h-2 text-black" />}
+                                          </span>
+                                          <BookText className="w-2.5 h-2.5 transition-colors" style={{ color: lib.applyCA ? "#6ee7b7" : "rgba(255,255,255,0.25)" }} />
+                                          <span className="transition-colors" style={{ color: lib.applyCA ? "rgba(110,231,183,0.9)" : "rgba(255,255,255,0.3)" }}>CA</span>
+                                        </label>
+                                      )
+                                    )}
                                   </div>
-                                )}
-                                {task.nextDueHours && !task.nextDueDate && (
-                                  <div className="flex items-center gap-1 text-xs text-white/35">
-                                    <Clock className="w-3 h-3 flex-shrink-0" />
-                                    <span className="font-mono">{task.nextDueHours}</span>
-                                  </div>
-                                )}
-                                {task.remainingDisplay && (
-                                  <UrgencyChip days={task.urgencyDays} display={task.remainingDisplay} />
-                                )}
-                              </div>
+                                )
+                              })()}
 
                               {/* Delete */}
                               <button
@@ -1086,7 +1740,9 @@ export default function WorkOrderCreate() {
             {/* Add to a section not yet in the import */}
             {SECTION_ORDER.filter(s => !parsed.tasks.some(t => t.section === s)).length > 0 && (
               <div className="mt-2 pt-3" style={{ borderTop: "1px solid hsl(0,0%,16%)" }}>
-                <p className="text-white/20 text-xs mb-2 px-1">Add items to additional sections:</p>
+                <p className="text-white/20 text-xs mb-2 px-1">
+                  {parsed?.isFresh && parsed.tasks.length === 0 ? "Select a section to start adding work items:" : "Add items to additional sections:"}
+                </p>
                 <div className="flex flex-wrap gap-2">
                   {SECTION_ORDER.filter(s => !parsed.tasks.some(t => t.section === s)).map(s => (
                     <button
@@ -1186,10 +1842,10 @@ export default function WorkOrderCreate() {
             <div className="flex items-center gap-3">
               <Button
                 variant="ghost" size="sm"
-                onClick={() => { setParsed(null); setMode("import-upload") }}
+                onClick={() => { discardDraft(); setParsed(null); setMode(parsed?.isFresh ? "fresh" : "import-upload") }}
                 className="text-white/35 hover:text-white/65 border border-white/10 hover:border-white/20"
               >
-                ← Upload Different File
+                {parsed?.isFresh ? "← Back" : "← Upload Different File"}
               </Button>
               <Button
                 size="sm"
@@ -1203,12 +1859,26 @@ export default function WorkOrderCreate() {
                   transition: "all 0.2s ease",
                 }}
               >
-                {submitting ? "Saving…" : "Commit to Work Order →"}
+                {submitting ? "Saving…" : isRebuild ? "Rebuild Work Order →" : "Commit to Work Order →"}
               </Button>
             </div>
           </div>
 
-          {/* ── Drag ghost — follows cursor ────────────────────────────��─── */}
+          {/* ── Aircraft Times full modal ───────────────────────────────── */}
+          <TimesEditModal
+            open={timesEditOpen}
+            onClose={() => setTimesEditOpen(false)}
+            aircraftLabel={parsed ? `${parsed.aircraftReg}${parsed.aircraftModel ? ` — ${parsed.aircraftModel}` : ""}` : "verify all values before committing"}
+            initialTimes={parsed?.times ?? null}
+            hobbsDiff={hobbsDiff}
+            onConfirm={newTimes => {
+              const newHrs = newTimes.airframeHrs != null ? String(newTimes.airframeHrs) : (parsed?.currentHrsAirframe ?? "")
+              setParsed(p => p ? { ...p, times: newTimes, currentHrsAirframe: newHrs } : p)
+              setTimesEditOpen(false)
+            }}
+          />
+
+          {/* ── Drag ghost — follows cursor ───────────────────────────────── */}
           {draggedId && ghostPos && (() => {
             const t = parsed.tasks.find(x => x.importId === draggedId)
             if (!t) return null
@@ -1244,9 +1914,16 @@ export default function WorkOrderCreate() {
                     <span className="text-sm text-white/90 leading-snug truncate block">{t.description}</span>
                     {t.taskNumber && <p className="text-white/25 text-xs font-mono mt-0.5">{t.taskNumber}</p>}
                   </div>
-                  {t.remainingDisplay && (
-                    <UrgencyChip days={t.urgencyDays} display={t.remainingDisplay} />
-                  )}
+                  {(() => {
+                    const lib = libCache[t.importId]
+                    if (!lib || (lib.caStatus === "idle" && lib.frStatus === "idle")) return null
+                    return (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {lib.frStatus !== "idle" && <LibChip status={lib.applyFR ? lib.frStatus : "idle"} label="FR" />}
+                        {lib.caStatus !== "idle" && <LibChip status={lib.applyCA ? lib.caStatus : "idle"} label="CA" />}
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
             )

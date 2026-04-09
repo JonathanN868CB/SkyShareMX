@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase"
+import { localToday } from "@/shared/lib/dates"
 import type { Invoice, InvoiceLine, InvoiceStatus, InvoiceLineType } from "../types"
 import { buildAircraftRef } from "./aircraft"
 
@@ -100,7 +101,7 @@ export async function createInvoice(payload: {
       guest_registration: payload.guestRegistration ?? null,
       customer_name: payload.customerName,
       status: "draft",
-      issued_date: payload.issuedDate ?? new Date().toISOString().split("T")[0],
+      issued_date: payload.issuedDate ?? localToday(),
       due_date: payload.dueDate ?? null,
       subtotal_labor: subtotalLabor,
       subtotal_parts: subtotalParts,

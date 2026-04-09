@@ -1,23 +1,40 @@
 import { supabase } from "@/lib/supabase"
 import type { Mechanic, MechanicCert } from "../types"
 
-// All active Technicians (role = 'Technician') with their primary cert
-export async function getTechnicians(): Promise<Mechanic[]> {
-  const [{ data: profiles, error: pErr }, { data: certs, error: cErr }] =
+// All users with Work Orders module access, with their primary cert.
+// Pass laborOnly=true (default) to only return labor-eligible members.
+// Pass laborOnly=false to get everyone (used by the Team settings tab).
+export async function getTechnicians(laborOnly = true): Promise<Mechanic[]> {
+  const { data: perms, error: pErr } = await supabase
+    .from("user_permissions")
+    .select("user_id")
+    .eq("section", "Work Orders")
+
+  if (pErr) throw pErr
+
+  const profileIds = (perms ?? []).map(p => p.user_id)
+  if (!profileIds.length) return []
+
+  let profileQuery = supabase
+    .from("profiles")
+    .select("id, full_name, display_name, email, bb_labor_eligible")
+    .in("id", profileIds)
+    .order("full_name")
+
+  if (laborOnly) {
+    profileQuery = profileQuery.eq("bb_labor_eligible", true)
+  }
+
+  const [{ data: profiles, error: prErr }, { data: certs, error: cErr }] =
     await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id, full_name, display_name, email")
-        .eq("role", "Technician")
-        .eq("status", "Active")
-        .order("full_name"),
+      profileQuery,
       supabase
         .from("bb_mechanic_certs")
         .select("profile_id, cert_type, cert_number, is_primary")
         .eq("is_primary", true),
     ])
 
-  if (pErr) throw pErr
+  if (prErr) throw prErr
   if (cErr) throw cErr
 
   const certMap = new Map(
@@ -32,8 +49,17 @@ export async function getTechnicians(): Promise<Mechanic[]> {
       email: p.email,
       certType: (cert?.cert_type as Mechanic["certType"]) ?? null,
       certNumber: cert?.cert_number ?? null,
+      laborEligible: p.bb_labor_eligible ?? true,
     }
   })
+}
+
+export async function setBbLaborEligible(profileId: string, eligible: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_bb_labor_eligible", {
+    target_profile_id: profileId,
+    eligible,
+  })
+  if (error) throw error
 }
 
 export async function getTechnicianById(id: string): Promise<Mechanic | null> {
@@ -97,8 +123,21 @@ export async function upsertMechanicCert(
     notes: cert.notes,
   }
 
-  const { data, error } = cert.id
-    ? await supabase.from("bb_mechanic_certs").update(payload).eq("id", cert.id).select().single()
+  let targetId = cert.id
+
+  if (!targetId) {
+    // No ID supplied — find any existing primary cert for this profile to avoid creating duplicates
+    const { data: existing } = await supabase
+      .from("bb_mechanic_certs")
+      .select("id")
+      .eq("profile_id", cert.profileId)
+      .eq("is_primary", true)
+      .maybeSingle()
+    targetId = existing?.id
+  }
+
+  const { data, error } = targetId
+    ? await supabase.from("bb_mechanic_certs").update(payload).eq("id", targetId).select().single()
     : await supabase.from("bb_mechanic_certs").insert(payload).select().single()
 
   if (error) throw error

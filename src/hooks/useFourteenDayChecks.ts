@@ -17,6 +17,8 @@ export type AircraftCheckSummary = {
   registration: string
   model: string | null
   traxxallUrl: string | null
+  templateId: string | null
+  templateName: string | null
   lastSubmittedAt: string | null
   lastReviewStatus: FourteenDayCheckSubmission["review_status"] | null
   daysSince: number | null
@@ -49,6 +51,8 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       token,
       aircraft_id,
       traxxall_url,
+      template_id,
+      template:template_id ( id, name ),
       aircraft:aircraft_id (
         id,
         model_full,
@@ -133,6 +137,8 @@ async function fetchFleetSummaries(): Promise<AircraftCheckSummary[]> {
       registration,
       model: t.aircraft?.model_full ?? null,
       traxxallUrl: t.traxxall_url ?? null,
+      templateId: t.template_id ?? null,
+      templateName: (t.template as { name?: string } | null)?.name ?? null,
       lastSubmittedAt: latest?.submitted_at ?? null,
       lastReviewStatus: latest?.review_status ?? null,
       daysSince,

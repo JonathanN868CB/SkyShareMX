@@ -1,9 +1,10 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useSearchParams } from "react-router-dom"
 import {
   Compass, Unlink, CalendarDays, Target, CheckSquare, BookOpen,
   ChevronDown, ChevronRight, CheckCircle2, Circle, AlertCircle,
-  Plus, Send, Lock, Briefcase, Trash2,
+  Plus, Send, Lock, Briefcase, Trash2, Users, Edit2,
 } from "lucide-react"
 import { useViewAsTech } from "@/hooks/useViewAsTech"
 import { ViewAsBar } from "@/components/training/ViewAsBar"
@@ -13,6 +14,18 @@ import { Button } from "@/shared/ui/button"
 import { Textarea } from "@/shared/ui/textarea"
 import { useAuth } from "@/features/auth"
 import { mxlms } from "@/lib/supabase-mxlms"
+import { supabase } from "@/lib/supabase"
+import { localToday } from "@/shared/lib/dates"
+import {
+  getMyDirectReports,
+  amIAPeopleManager,
+} from "@/features/my-journey/services/managerAssignments"
+import {
+  getMyNotesForSubject,
+  addManagerNote,
+  updateManagerNote,
+  deleteManagerNote,
+} from "@/features/my-journey/services/managerNotes"
 import type {
   MxlmsSession,
   MxlmsGoal,
@@ -545,7 +558,7 @@ function ActionItemsPanel({ items, loading }: { items: MxlmsActionItem[]; loadin
   const closed = items.filter(i => i.status !== "open")
 
   function ActionRow({ item }: { item: MxlmsActionItem }) {
-    const isOverdue = item.status === "open" && item.due_date && new Date(item.due_date) < new Date()
+    const isOverdue = item.status === "open" && item.due_date && new Date(item.due_date + "T00:00:00") < new Date()
     return (
       <div className="flex items-start gap-3 px-5 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
         {item.status === "open" ? (
@@ -710,7 +723,7 @@ function JournalPanel({
       const payload: MxlmsJournalInsert = {
         technician_id: techId,
         author_user_id: userId,
-        entry_date: new Date().toISOString().split("T")[0],
+        entry_date: localToday(),
         entry_type: entryType,
         content: text.trim(),
         visible_to_manager: visibleToManager,
@@ -819,10 +832,10 @@ function JournalPanel({
                 {/* Date */}
                 <div className="shrink-0 text-right" style={{ minWidth: 60 }}>
                   <p className="text-[10px] text-white/25 leading-tight" style={{ fontFamily: "var(--font-heading)" }}>
-                    {new Date(entry.entry_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    {new Date(entry.entry_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                   </p>
                   <p className="text-[9px] text-white/15" style={{ fontFamily: "var(--font-heading)" }}>
-                    {new Date(entry.entry_date).getFullYear()}
+                    {new Date(entry.entry_date + "T00:00:00").getFullYear()}
                   </p>
                 </div>
 
@@ -873,13 +886,333 @@ function JournalPanel({
   )
 }
 
+// ─── My Team Tab ─────────────────────────────────────────────────────────────
+
+function PersonNotePanel({
+  subjectProfileId,
+  subjectName,
+  adminName,
+}: {
+  subjectProfileId: string
+  subjectName: string
+  adminName: string
+}) {
+  const qc = useQueryClient()
+  const [noteText, setNoteText] = useState("")
+  const [noteDate, setNoteDate] = useState(() => localToday())
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState("")
+
+  const { data: notes = [], isLoading } = useQuery({
+    queryKey: ["manager-notes", subjectProfileId],
+    queryFn: () => getMyNotesForSubject(subjectProfileId),
+  })
+
+  const addNote = useMutation({
+    mutationFn: () => addManagerNote({ subject_profile_id: subjectProfileId, note_text: noteText, note_date: noteDate }),
+    onSuccess: () => {
+      setNoteText("")
+      qc.invalidateQueries({ queryKey: ["manager-notes", subjectProfileId] })
+      toast.success("Note saved")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to save note"),
+  })
+
+  const deleteNote = useMutation({
+    mutationFn: (id: string) => deleteManagerNote(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["manager-notes", subjectProfileId] })
+      toast.success("Note deleted")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to delete"),
+  })
+
+  const saveEdit = useMutation({
+    mutationFn: ({ id, text }: { id: string; text: string }) => updateManagerNote(id, text),
+    onSuccess: () => {
+      setEditingId(null)
+      qc.invalidateQueries({ queryKey: ["manager-notes", subjectProfileId] })
+      toast.success("Note updated")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to update"),
+  })
+
+  return (
+    <div>
+      {/* Composer */}
+      <div className="p-5 space-y-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        <p className="text-[10px] uppercase tracking-wider text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+          Private observation — only you and {adminName} can read these
+        </p>
+        <Textarea
+          placeholder={`Note about ${subjectName}…`}
+          value={noteText}
+          onChange={e => setNoteText(e.target.value)}
+          rows={3}
+          className="resize-none text-sm text-white/80 placeholder:text-white/20"
+          style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "var(--font-body)" }}
+        />
+        <div className="flex items-center justify-between gap-3">
+          <input
+            type="date"
+            value={noteDate}
+            onChange={e => setNoteDate(e.target.value)}
+            className="text-xs rounded px-2.5 py-1.5"
+            style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.55)", outline: "none" }}
+          />
+          <Button
+            size="sm"
+            disabled={!noteText.trim() || addNote.isPending}
+            onClick={() => addNote.mutate()}
+            className="gap-1.5 h-7 text-xs"
+            style={{
+              background: noteText.trim() ? "var(--skyshare-gold)" : "rgba(212,160,23,0.2)",
+              color: noteText.trim() ? "hsl(0 0% 8%)" : "rgba(0,0,0,0.3)",
+              border: "none",
+              fontFamily: "var(--font-heading)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            <Plus size={11} />
+            {addNote.isPending ? "Saving…" : "Save Note"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Notes list */}
+      {isLoading ? (
+        <div className="py-6 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>Loading…</div>
+      ) : notes.length === 0 ? (
+        <div className="py-6 text-center text-xs text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+          No notes yet. Add your first observation above.
+        </div>
+      ) : (
+        <div>
+          {notes.map(note => (
+            <div key={note.id} className="group px-5 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+              {editingId === note.id ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={editText}
+                    onChange={e => setEditText(e.target.value)}
+                    rows={3}
+                    autoFocus
+                    className="resize-none text-sm text-white/80"
+                    style={{ background: "hsl(0 0% 10%)", border: "1px solid rgba(255,255,255,0.15)" }}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveEdit.mutate({ id: note.id, text: editText })}
+                      disabled={!editText.trim() || saveEdit.isPending}
+                      style={{ fontSize: 11, padding: "3px 12px", borderRadius: 4, background: "rgba(212,160,23,0.18)", color: "#d4a017", border: "1px solid rgba(212,160,23,0.3)", cursor: "pointer" }}
+                    >
+                      {saveEdit.isPending ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      style={{ fontSize: 11, padding: "3px 12px", borderRadius: 4, background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.1)", cursor: "pointer" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-4">
+                  <div className="shrink-0 text-right" style={{ minWidth: 58 }}>
+                    <p className="text-[10px] text-white/25 leading-tight" style={{ fontFamily: "var(--font-heading)" }}>
+                      {new Date(note.note_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </p>
+                    <p className="text-[9px] text-white/15" style={{ fontFamily: "var(--font-heading)" }}>
+                      {new Date(note.note_date + "T12:00:00").getFullYear()}
+                    </p>
+                  </div>
+                  <p className="flex-1 text-sm text-white/65 leading-relaxed whitespace-pre-wrap">{note.note_text}</p>
+                  <div className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => { setEditingId(note.id); setEditText(note.note_text) }}
+                      className="p-1.5 rounded hover:bg-white/5"
+                      style={{ color: "rgba(255,255,255,0.3)" }}
+                    >
+                      <Edit2 size={13} />
+                    </button>
+                    <button
+                      onClick={() => deleteNote.mutate(note.id)}
+                      disabled={deleteNote.isPending}
+                      className="p-1.5 rounded hover:bg-white/5"
+                      style={{ color: "rgba(255,255,255,0.3)" }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="px-5 py-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+            <span className="text-[10px]" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.3 }}>
+              {notes.length} note{notes.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MyTeamTab({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // Regular managers: fetch assigned direct reports
+  const { data: reports = [], isLoading: reportsLoading } = useQuery({
+    queryKey: ["my-direct-reports"],
+    queryFn: getMyDirectReports,
+    enabled: !isSuperAdmin,
+  })
+
+  // Super Admin: fetch ALL profiles so they can add notes to anyone
+  const { data: allProfiles = [], isLoading: profilesLoading } = useQuery({
+    queryKey: ["all-team-profiles"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, display_name, full_name, avatar_color, avatar_initials, role")
+        .not("status", "eq", "Pending")
+        .order("full_name", { ascending: true })
+      if (error) throw error
+      return (data ?? []) as { id: string; display_name: string | null; full_name: string | null; avatar_color: string | null; avatar_initials: string | null; role: string | null }[]
+    },
+    enabled: isSuperAdmin,
+  })
+
+  const { data: adminName = "Super Admin" } = useQuery({
+    queryKey: ["super-admin-name"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("full_name, display_name")
+        .eq("role", "Super Admin")
+        .limit(1)
+        .maybeSingle()
+      return data?.full_name ?? data?.display_name ?? "Super Admin"
+    },
+    staleTime: Infinity,
+  })
+
+  const isLoading = isSuperAdmin ? profilesLoading : reportsLoading
+
+  // Build a unified list: { profileId, name, initials, avatarColor, role }
+  const teamMembers = isSuperAdmin
+    ? allProfiles.map(p => ({
+        profileId: p.id,
+        name: p.display_name ?? p.full_name ?? "Team Member",
+        initials: p.avatar_initials ?? (p.full_name ?? "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase(),
+        avatarColor: p.avatar_color,
+        role: p.role,
+      }))
+    : reports.map(a => ({
+        profileId: a.subject_profile_id,
+        name: a.subject?.display_name ?? a.subject?.full_name ?? "Team Member",
+        initials: a.subject?.avatar_initials ?? (a.subject?.full_name ?? "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase(),
+        avatarColor: a.subject?.avatar_color ?? null,
+        role: a.subject?.role ?? null,
+      }))
+
+  if (isLoading) {
+    return <div className="py-16 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>Loading your team…</div>
+  }
+
+  if (teamMembers.length === 0) {
+    return (
+      <div className="py-16 text-center space-y-3">
+        <div className="h-12 w-12 rounded-full mx-auto flex items-center justify-center"
+          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <Users className="h-5 w-5 text-white/15" />
+        </div>
+        <p className="text-sm text-white/30">No direct reports assigned yet.</p>
+        <p className="text-xs text-white/20 max-w-xs mx-auto leading-relaxed" style={{ fontFamily: "var(--font-heading)" }}>
+          Contact your Super Admin to set up team assignments.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-white/30 pb-1" style={{ fontFamily: "var(--font-heading)" }}>
+        {isSuperAdmin
+          ? `${teamMembers.length} team member${teamMembers.length !== 1 ? "s" : ""} · DOM view — all personnel`
+          : `${teamMembers.length} direct report${teamMembers.length !== 1 ? "s" : ""} · notes are private and never visible to your team`
+        }
+      </p>
+      {teamMembers.map(person => {
+        const isOpen = expandedId === person.profileId
+
+        return (
+          <Card key={person.profileId} className="card-elevated border-0 overflow-hidden">
+            <button
+              onClick={() => setExpandedId(isOpen ? null : person.profileId)}
+              className="w-full flex items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
+              style={{ borderBottom: isOpen ? "1px solid rgba(255,255,255,0.07)" : "none" }}
+            >
+              <div
+                className="h-9 w-9 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+                style={{
+                  background: person.avatarColor ? `${person.avatarColor}22` : "rgba(212,160,23,0.1)",
+                  border: `1.5px solid ${person.avatarColor ?? "rgba(212,160,23,0.3)"}`,
+                  color: person.avatarColor ?? "var(--skyshare-gold)",
+                  fontFamily: "var(--font-display)",
+                }}
+              >
+                {person.initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-white/80">{person.name}</p>
+                {person.role && (
+                  <p className="text-[10px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>{person.role}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[10px] text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+                  Notes
+                </span>
+                <ChevronDown
+                  className="h-4 w-4 text-white/25 transition-transform duration-200"
+                  style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
+                />
+              </div>
+            </button>
+            {isOpen && (
+              <PersonNotePanel
+                subjectProfileId={person.profileId}
+                subjectName={person.name}
+                adminName={adminName}
+              />
+            )}
+          </Card>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MyJourney() {
-  const { profile } = useAuth()
+  const { profile, permissions } = useAuth()
   const { effectiveTechId, isViewingOther } = useViewAsTech()
   const techId = effectiveTechId
   const userId = profile?.user_id ?? ""
+  const [searchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState<"journey" | "team">(
+    searchParams.get("tab") === "team" ? "team" : "journey"
+  )
+
+  // Sync tab when the URL query param changes (e.g. sidebar navigation)
+  useEffect(() => {
+    const tab = searchParams.get("tab")
+    if (tab === "team") setActiveTab("team")
+    else if (!tab) setActiveTab("journey")
+  }, [searchParams])
 
   const { data: sessions = [],  isLoading: ls } = useQuery({ queryKey: ["my-journey-sessions",  techId], queryFn: () => fetchSessions(techId!),       enabled: !!techId })
   const { data: goals = [],     isLoading: lg } = useQuery({ queryKey: ["my-journey-goals",     techId], queryFn: () => fetchGoals(techId!),          enabled: !!techId })
@@ -888,93 +1221,146 @@ export default function MyJourney() {
   const { data: journal = [],   isLoading: lj, refetch: refetchJournal } = useQuery({ queryKey: ["my-journey-journal",  techId], queryFn: () => fetchJournal(techId!),        enabled: !!techId })
   const { data: careerHistory = [], isLoading: lh } = useQuery({ queryKey: ["my-journey-career-history", techId], queryFn: () => fetchCareerHistory(techId!), enabled: !!techId })
 
+  // People-manager check — runs regardless of MXLMS link status
+  const { data: isPeopleManager = false } = useQuery({
+    queryKey: ["am-i-a-people-manager"],
+    queryFn: amIAPeopleManager,
+    enabled: !!profile?.id,
+  })
+
+  const isSuperAdmin = profile?.role === "Super Admin"
+  const showTabs = isSuperAdmin || isPeopleManager || permissions.includes("My Team")
+
   return (
     <div className="space-y-8">
 
       {/* Hero */}
       <div className="hero-area">
         <div className="flex items-center gap-3">
-          <Compass className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
+          {activeTab === "team"
+            ? <Users className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
+            : <Compass className="h-8 w-8" style={{ color: "var(--skyshare-gold)" }} />
+          }
           <div>
             <h1 className="text-[2.6rem] leading-none text-foreground"
               style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}>
-              MY JOURNEY™
+              {activeTab === "team" ? "MY TEAM™" : "MY JOURNEY™"}
             </h1>
             <div className="mt-1.5" style={{ height: "1px", background: "var(--skyshare-gold)", width: "3.5rem" }} />
           </div>
         </div>
         <p className="mt-3 text-sm text-muted-foreground"
           style={{ letterSpacing: "0.1em", fontFamily: "var(--font-heading)" }}>
-          Your professional growth — reviews, goals, and your story
+          {activeTab === "team"
+            ? "Your team — notes and observations"
+            : "Your professional growth — reviews, goals, and your story"}
         </p>
       </div>
 
-      {!techId ? (
-        <Card className="card-elevated border-0">
-          <NotLinked />
-        </Card>
-      ) : (
+      {/* Tabs — only visible to people-managers */}
+      {showTabs && (
+        <div className="flex gap-1 p-1 rounded-lg w-fit"
+          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          {[
+            { key: "journey" as const, label: "My Journey" },
+            { key: "team"    as const, label: "My Team", icon: Users },
+          ].map(tab => {
+            const active = activeTab === tab.key
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className="flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold transition-all"
+                style={{
+                  fontFamily: "var(--font-heading)",
+                  letterSpacing: "0.07em",
+                  background: active ? "rgba(212,160,23,0.15)" : "transparent",
+                  color: active ? "var(--skyshare-gold)" : "rgba(255,255,255,0.35)",
+                  border: active ? "1px solid rgba(212,160,23,0.3)" : "1px solid transparent",
+                }}
+              >
+                {tab.icon && <tab.icon size={13} />}
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── My Journey Tab ──────────────────────────────────────────────────── */}
+      {activeTab === "journey" && (
         <>
-          {/* View As bar — Super Admin only */}
-          <ViewAsBar page="journey" />
+          {!techId ? (
+            <Card className="card-elevated border-0">
+              <NotLinked />
+            </Card>
+          ) : (
+            <>
+              {/* View As bar — Super Admin only */}
+              <ViewAsBar page="journey" />
 
-          {/* Career Record */}
-          <CareerStrip history={careerHistory} loading={lh} />
+              {/* Career Record */}
+              <CareerStrip history={careerHistory} loading={lh} />
 
-          {/* Disclaimer */}
-          <div className="rounded-lg px-5 py-4"
-            style={{ background: "rgba(70,100,129,0.10)", border: "1px solid rgba(70,100,129,0.18)" }}>
-            <p className="text-xs leading-relaxed text-white/45" style={{ fontFamily: "var(--font-heading)" }}>
-              Your 4-1-1 review sessions are where most of this is built — goals, action items, and session notes
-              are added by your manager during each review. Journal entries you write and mark
-              as <strong className="text-white/65">Shared</strong> will be visible to your manager
-              and become part of your professional record.
-            </p>
-          </div>
+              {/* Disclaimer */}
+              <div className="rounded-lg px-5 py-4"
+                style={{ background: "rgba(70,100,129,0.10)", border: "1px solid rgba(70,100,129,0.18)" }}>
+                <p className="text-xs leading-relaxed text-white/45" style={{ fontFamily: "var(--font-heading)" }}>
+                  Your 4-1-1 review sessions are where most of this is built — goals, action items, and session notes
+                  are added by your manager during each review. Journal entries you write and mark
+                  as <strong className="text-white/65">Shared</strong> will be visible to your manager
+                  and become part of your professional record.
+                </p>
+              </div>
 
-          {/* Journal — moved to top */}
-          <Section icon={BookOpen} title="My Journal" sub="Notes, wins, and reflections">
-            <JournalPanel
-              entries={journal}
-              loading={lj}
-              techId={techId}
-              userId={userId}
-              onSuccess={() => refetchJournal()}
-              readOnly={isViewingOther}
-            />
-          </Section>
+              {/* Journal */}
+              <Section icon={BookOpen} title="My Journal" sub="Notes, wins, and reflections">
+                <JournalPanel
+                  entries={journal}
+                  loading={lj}
+                  techId={techId}
+                  userId={userId}
+                  onSuccess={() => refetchJournal()}
+                  readOnly={isViewingOther}
+                />
+              </Section>
 
-          {/* Review Schedule */}
-          <Section icon={CalendarDays} title="Review Schedule" sub="Upcoming and past 4-1-1 sessions">
-            <NextReviewCard sessions={sessions} loading={ls} />
-            {sessions.filter(s => s.status === "completed").length > 0 && (
-              <>
-                <div className="px-5 pt-1 pb-1">
-                  <span className="text-[10px] uppercase tracking-wider text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
-                    Session History
-                  </span>
-                </div>
-                <SessionHistory sessions={sessions} />
-              </>
-            )}
-          </Section>
+              {/* Review Schedule */}
+              <Section icon={CalendarDays} title="Review Schedule" sub="Upcoming and past 4-1-1 sessions">
+                <NextReviewCard sessions={sessions} loading={ls} />
+                {sessions.filter(s => s.status === "completed").length > 0 && (
+                  <>
+                    <div className="px-5 pt-1 pb-1">
+                      <span className="text-[10px] uppercase tracking-wider text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+                        Session History
+                      </span>
+                    </div>
+                    <SessionHistory sessions={sessions} />
+                  </>
+                )}
+              </Section>
 
-          {/* Goals */}
-          <Section icon={Target} title="Goals" sub={`${goals.filter(g => g.status === "open").length} active`}>
-            <GoalsPanel goals={goals} loading={lg} />
-          </Section>
+              {/* Goals */}
+              <Section icon={Target} title="Goals" sub={`${goals.filter(g => g.status === "open").length} active`}>
+                <GoalsPanel goals={goals} loading={lg} />
+              </Section>
 
-          {/* Action Items */}
-          <Section icon={CheckSquare} title="Action Items" sub={`${items.filter(i => i.status === "open").length} open`}>
-            <ActionItemsPanel items={items} loading={li} />
-          </Section>
+              {/* Action Items */}
+              <Section icon={CheckSquare} title="Action Items" sub={`${items.filter(i => i.status === "open").length} open`}>
+                <ActionItemsPanel items={items} loading={li} />
+              </Section>
 
-          {/* Career Interests */}
-          <Section icon={Briefcase} title="Career Interests" sub="Captured from your 4-1-1 reviews" defaultOpen={false}>
-            <CareerPanel interests={interests ?? null} loading={lc} />
-          </Section>
+              {/* Career Interests */}
+              <Section icon={Briefcase} title="Career Interests" sub="Captured from your 4-1-1 reviews" defaultOpen={false}>
+                <CareerPanel interests={interests ?? null} loading={lc} />
+              </Section>
+            </>
+          )}
         </>
       )}
+
+      {/* ── My Team Tab ──────────────────────────────────────────────────────── */}
+      {activeTab === "team" && <MyTeamTab isSuperAdmin={isSuperAdmin} />}
     </div>
   )
 }

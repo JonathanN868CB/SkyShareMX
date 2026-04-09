@@ -1,15 +1,26 @@
 import { useState, Fragment } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   GraduationCap, AlertCircle, Clock, Target, CheckSquare,
   BookOpen, ChevronDown, ChevronRight, ExternalLink, FileText, Users, CheckCircle2, Plus,
-  Bell, ShieldAlert,
+  Bell, ShieldAlert, Network, StickyNote, Trash2,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { supabase } from "@/lib/supabase"
 import { mxlms } from "@/lib/supabase-mxlms"
 import { useAuth } from "@/features/auth"
+import { toast } from "sonner"
 import type { Profile } from "@/entities/supabase"
+import {
+  getAllAssignments,
+  addAssignment,
+  removeAssignment,
+  type Assignment,
+} from "@/features/my-journey/services/managerAssignments"
+import {
+  getAllNotesAdmin,
+  deleteManagerNote,
+} from "@/features/my-journey/services/managerNotes"
 import type {
   MxlmsTechnician, MxlmsPendingCompletion,
   MxlmsSession, MxlmsGoal, MxlmsActionItem, MxlmsJournalEntry,
@@ -112,7 +123,7 @@ const today = new Date()
 function isOverdue(row: TrainingRow): boolean {
   return (
     row.due_date != null &&
-    new Date(row.due_date) < today &&
+    new Date(row.due_date + "T00:00:00") < today &&
     !row.status.toLowerCase().includes("complete")
   )
 }
@@ -287,6 +298,7 @@ function TeamOverviewTable({
   actions: Pick<MxlmsActionItem, "id" | "technician_id" | "status" | "due_date">[]
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [open, setOpen] = useState(true)
 
   // Build per-tech maps
   const trainingByTech  = new Map<number, TrainingRow[]>()
@@ -317,7 +329,7 @@ function TeamOverviewTable({
     if (a.status === "open") {
       const cur = actionsByTech.get(a.technician_id) ?? { open: 0, overdue: 0 }
       cur.open++
-      if (a.due_date && new Date(a.due_date) < today) cur.overdue++
+      if (a.due_date && new Date(a.due_date + "T00:00:00") < today) cur.overdue++
       actionsByTech.set(a.technician_id, cur)
     }
   }
@@ -328,15 +340,27 @@ function TeamOverviewTable({
 
   return (
     <div className="card-elevated rounded-lg overflow-hidden">
-      <div className="px-5 py-3.5 flex items-center gap-3"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-        <Users className="h-4 w-4 shrink-0 text-white/30" />
-        <p className="text-xs font-semibold text-white/50" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}>
-          TEAM OVERVIEW
-        </p>
-      </div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-5 py-3.5 text-left transition-colors hover:bg-white/[0.02]"
+        style={{ borderBottom: open ? "1px solid rgba(255,255,255,0.07)" : "none" }}
+      >
+        <div className="flex items-center gap-3">
+          <Users className="h-4 w-4 shrink-0 text-white/30" />
+          <p className="text-xs font-semibold text-white/50" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.08em" }}>
+            TEAM OVERVIEW
+          </p>
+          <span className="text-[10px] text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+            {sorted.length} member{sorted.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <ChevronDown
+          className="h-4 w-4 text-white/25 shrink-0 transition-transform duration-200"
+          style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}
+        />
+      </button>
 
-      <div className="overflow-x-auto">
+      {open && <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -572,7 +596,7 @@ function TeamOverviewTable({
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
   )
 }
@@ -660,7 +684,7 @@ function SharedJournalFeed({
                         {entry.entry_type}
                       </span>
                       <span className="text-[10px] text-white/20 ml-auto shrink-0" style={{ fontFamily: "var(--font-heading)" }}>
-                        {new Date(entry.entry_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        {new Date(entry.entry_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       </span>
                     </div>
                     <p className="text-sm text-white/55 leading-relaxed whitespace-pre-wrap">{entry.content}</p>
@@ -752,7 +776,7 @@ function ActiveAdHocTracker({
   }
 
   async function handleSoftCancel(record: MxlmsAdHocCompletion) {
-    if (!window.confirm(`Cancel "${record.name}"?\n\nThe record will be marked cancelled and removed from the active pipeline. This can be undone by a database admin if needed.`)) return
+    if (!window.confirm(`Cancel "${record.name}"? It will be removed from the active pipeline.`)) return
     try {
       const { error } = await mxlms
         .from("ad_hoc_completions")
@@ -760,13 +784,14 @@ function ActiveAdHocTracker({
         .eq("id", record.id)
       if (error) throw error
       qc.invalidateQueries({ queryKey: ["admin-active-adhoc"] })
-    } catch (err) {
-      console.error("Soft cancel failed:", err)
+      toast.success("Event cancelled")
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to cancel event")
     }
   }
 
   async function handleHardDelete(record: MxlmsAdHocCompletion) {
-    if (!window.confirm(`PERMANENTLY DELETE "${record.name}"?\n\nThis cannot be undone. The record will be removed from Supabase entirely. Drive files (if any) must be cleaned up manually.`)) return
+    if (!window.confirm(`Permanently delete "${record.name}"? This cannot be undone.`)) return
     try {
       const { error } = await mxlms
         .from("ad_hoc_completions")
@@ -774,8 +799,9 @@ function ActiveAdHocTracker({
         .eq("id", record.id)
       if (error) throw error
       qc.invalidateQueries({ queryKey: ["admin-active-adhoc"] })
-    } catch (err) {
-      console.error("Hard delete failed:", err)
+      toast.success("Event deleted")
+    } catch (err: any) {
+      toast.error(err?.message ?? "Failed to delete event")
     }
   }
 
@@ -994,6 +1020,377 @@ function ActiveAdHocTracker({
   )
 }
 
+// ─── Manager Assignments Panel ────────────────────────────────────────────────
+
+function ManagerAssignmentsPanel({ profiles, myProfileId }: { profiles: Profile[]; myProfileId: string }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [selectedManagerId, setSelectedManagerId] = useState<string | null>(null)
+
+  const { data: assignments = [], isLoading: la } = useQuery({
+    queryKey: ["admin-all-assignments"],
+    queryFn: getAllAssignments,
+    enabled: open,
+  })
+
+  // Derive manager list from profiles (anyone could be a manager)
+  // and count how many reports each current manager has
+  const assignmentsByManager = new Map<string, Assignment[]>()
+  for (const a of assignments) {
+    const list = assignmentsByManager.get(a.manager_profile_id) ?? []
+    list.push(a)
+    assignmentsByManager.set(a.manager_profile_id, list)
+  }
+
+  const managerCount = assignmentsByManager.size
+
+  // For the selected manager, build a Set of assigned subject IDs and a map of assignment IDs
+  const selectedAssignments = selectedManagerId ? (assignmentsByManager.get(selectedManagerId) ?? []) : []
+  const assignedSubjectIds = new Set(selectedAssignments.map(a => a.subject_profile_id))
+  const assignmentIdBySubject = new Map(selectedAssignments.map(a => [a.subject_profile_id, a.id]))
+
+  // Everyone except the selected manager themselves
+  const checklistProfiles = profiles.filter(p => p.id !== selectedManagerId)
+
+  const doAdd = useMutation({
+    mutationFn: (subjectId: string) => addAssignment(selectedManagerId!, subjectId, myProfileId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-all-assignments"] })
+      toast.success("Assigned")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to assign"),
+  })
+
+  const doRemove = useMutation({
+    mutationFn: (id: string) => removeAssignment(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-all-assignments"] })
+      toast.success("Unassigned")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to unassign"),
+  })
+
+  function togglePerson(profileId: string) {
+    if (assignedSubjectIds.has(profileId)) {
+      const assignmentId = assignmentIdBySubject.get(profileId)
+      if (assignmentId) doRemove.mutate(assignmentId)
+    } else {
+      doAdd.mutate(profileId)
+    }
+  }
+
+  const selectStyle: React.CSSProperties = {
+    background: "hsl(0 0% 10%)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "rgba(255,255,255,0.7)",
+    borderRadius: 6,
+    padding: "8px 14px",
+    fontSize: 13,
+    outline: "none",
+    fontFamily: "var(--font-body)",
+    minWidth: 260,
+  }
+
+  return (
+    <div className="card-elevated rounded-lg overflow-hidden"
+      style={{ borderLeft: "3px solid rgba(130,80,200,0.5)" }}>
+
+      {/* Header toggle */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
+        style={{ borderBottom: open ? "1px solid rgba(255,255,255,0.07)" : "none", background: "rgba(130,80,200,0.04)" }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded flex items-center justify-center shrink-0"
+            style={{ background: "rgba(130,80,200,0.12)" }}>
+            <Network className="h-4 w-4" style={{ color: "rgba(160,120,220,0.9)" }} />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-white/70" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}>
+              MANAGER ASSIGNMENTS
+            </h2>
+            <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+              Who manages whom · {assignments.length} assignment{assignments.length !== 1 ? "s" : ""} · {managerCount} manager{managerCount !== 1 ? "s" : ""}
+            </p>
+          </div>
+        </div>
+        <ChevronDown
+          className="h-4 w-4 text-white/25 shrink-0 transition-transform duration-200"
+          style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}
+        />
+      </button>
+
+      {open && (
+        <div className="px-5 py-5 space-y-4">
+
+          {la ? (
+            <div className="py-8 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>Loading…</div>
+          ) : (
+            <>
+              {/* Manager picker */}
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-wider text-white/35 block" style={{ fontFamily: "var(--font-heading)" }}>
+                  Select a manager to configure their team
+                </label>
+                <select
+                  value={selectedManagerId ?? ""}
+                  onChange={e => setSelectedManagerId(e.target.value || null)}
+                  style={selectStyle}
+                >
+                  <option value="">Choose a manager…</option>
+                  {profiles.map(p => {
+                    const count = assignmentsByManager.get(p.id)?.length ?? 0
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.full_name ?? p.display_name ?? p.id}{count > 0 ? ` (${count} report${count !== 1 ? "s" : ""})` : ""}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+
+              {/* Checkbox list of team members */}
+              {selectedManagerId && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-wider text-white/35" style={{ fontFamily: "var(--font-heading)" }}>
+                      {profiles.find(p => p.id === selectedManagerId)?.full_name ?? "Manager"}'s direct reports
+                    </p>
+                    <p className="text-[10px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+                      {assignedSubjectIds.size} of {checklistProfiles.length} assigned
+                    </p>
+                  </div>
+
+                  <div
+                    className="rounded-lg overflow-hidden overflow-y-auto"
+                    style={{ border: "1px solid rgba(255,255,255,0.08)", maxHeight: 400 }}
+                  >
+                    {checklistProfiles.map((p, idx) => {
+                      const isAssigned = assignedSubjectIds.has(p.id)
+                      const initials = p.avatar_initials ?? (p.full_name ?? "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => togglePerson(p.id)}
+                          disabled={doAdd.isPending || doRemove.isPending}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.04]"
+                          style={{ borderBottom: idx < checklistProfiles.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}
+                        >
+                          {/* Checkbox */}
+                          <div
+                            className="h-5 w-5 rounded flex items-center justify-center shrink-0 transition-colors"
+                            style={{
+                              background: isAssigned ? "rgba(130,80,200,0.3)" : "rgba(255,255,255,0.04)",
+                              border: `1.5px solid ${isAssigned ? "rgba(160,120,220,0.7)" : "rgba(255,255,255,0.15)"}`,
+                            }}
+                          >
+                            {isAssigned && <CheckCircle2 className="h-3.5 w-3.5" style={{ color: "rgba(180,140,240,1)" }} />}
+                          </div>
+
+                          {/* Avatar */}
+                          <div
+                            className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold"
+                            style={{
+                              background: p.avatar_color ? `${p.avatar_color}22` : "rgba(255,255,255,0.06)",
+                              border: `1.5px solid ${p.avatar_color ?? "rgba(255,255,255,0.12)"}`,
+                              color: p.avatar_color ?? "rgba(255,255,255,0.4)",
+                              fontFamily: "var(--font-display)",
+                            }}
+                          >
+                            {initials}
+                          </div>
+
+                          {/* Name + role */}
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm ${isAssigned ? "text-white/80 font-medium" : "text-white/50"}`}>
+                              {p.full_name ?? p.display_name ?? p.id}
+                            </p>
+                            {p.role && (
+                              <p className="text-[10px] text-white/25 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+                                {p.role}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Manager Notes Admin Feed ─────────────────────────────────────────────────
+
+function ManagerNotesAdminFeed({ profiles }: { profiles: Profile[] }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [filterManagerId, setFilterManagerId] = useState<string | null>(null)
+  const [filterSubjectId, setFilterSubjectId] = useState<string | null>(null)
+
+  const profileById = new Map<string, Profile>(profiles.map(p => [p.id, p]))
+  const profileName = (id: string) => {
+    const p = profileById.get(id)
+    return p?.full_name ?? p?.display_name ?? id.slice(0, 8)
+  }
+
+  const { data: notes = [], isLoading } = useQuery({
+    queryKey: ["admin-all-manager-notes"],
+    queryFn: getAllNotesAdmin,
+    enabled: open,
+  })
+
+  const deleteNote = useMutation({
+    mutationFn: (id: string) => deleteManagerNote(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-all-manager-notes"] })
+      toast.success("Note deleted")
+    },
+    onError: (e: any) => toast.error(e.message ?? "Failed to delete"),
+  })
+
+  // Distinct managers and subjects for filter dropdowns
+  const managerIds = [...new Set(notes.map(n => n.author_profile_id))]
+  const subjectIds = [...new Set(notes.map(n => n.subject_profile_id))]
+
+  const filtered = notes.filter(n =>
+    (!filterManagerId || n.author_profile_id === filterManagerId) &&
+    (!filterSubjectId || n.subject_profile_id === filterSubjectId)
+  )
+
+  const selectStyle = {
+    background: "hsl(0 0% 10%)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "rgba(255,255,255,0.6)",
+    borderRadius: 6,
+    padding: "4px 10px",
+    fontSize: 11,
+    outline: "none",
+    fontFamily: "var(--font-body)",
+  }
+
+  return (
+    <div className="card-elevated rounded-lg overflow-hidden"
+      style={{ borderLeft: "3px solid rgba(70,100,129,0.5)" }}>
+
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-5 py-4 text-left transition-colors hover:bg-white/[0.02]"
+        style={{ borderBottom: open ? "1px solid rgba(255,255,255,0.07)" : "none", background: "rgba(70,100,129,0.04)" }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded flex items-center justify-center shrink-0"
+            style={{ background: "rgba(70,100,129,0.12)" }}>
+            <StickyNote className="h-4 w-4" style={{ color: "var(--skyshare-blue-mid, #4e7fa0)" }} />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-white/70" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}>
+              MANAGER NOTES
+            </h2>
+            <p className="text-[11px] text-white/30 mt-0.5" style={{ fontFamily: "var(--font-heading)" }}>
+              Private observations written by people-managers — never visible to employees
+            </p>
+          </div>
+        </div>
+        <ChevronDown
+          className="h-4 w-4 text-white/25 shrink-0 transition-transform duration-200"
+          style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}
+        />
+      </button>
+
+      {open && (
+        <>
+          {/* Filter bar */}
+          {notes.length > 0 && (
+            <div className="px-5 py-3 flex flex-wrap items-center gap-3"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
+              <span className="text-[10px] text-white/30" style={{ fontFamily: "var(--font-heading)" }}>Filter:</span>
+              <select value={filterManagerId ?? ""} onChange={e => setFilterManagerId(e.target.value || null)} style={selectStyle}>
+                <option value="">All managers</option>
+                {managerIds.map(id => (
+                  <option key={id} value={id}>{profileName(id)}</option>
+                ))}
+              </select>
+              <select value={filterSubjectId ?? ""} onChange={e => setFilterSubjectId(e.target.value || null)} style={selectStyle}>
+                <option value="">All subjects</option>
+                {subjectIds.map(id => (
+                  <option key={id} value={id}>{profileName(id)}</option>
+                ))}
+              </select>
+              {(filterManagerId || filterSubjectId) && (
+                <button
+                  onClick={() => { setFilterManagerId(null); setFilterSubjectId(null) }}
+                  className="text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                  style={{ fontFamily: "var(--font-heading)" }}
+                >
+                  Clear ×
+                </button>
+              )}
+              <span className="ml-auto text-[10px] text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
+                {filtered.length} of {notes.length}
+              </span>
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="py-10 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>Loading…</div>
+          ) : notes.length === 0 ? (
+            <div className="py-10 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>No manager notes yet.</div>
+          ) : filtered.length === 0 ? (
+            <div className="py-8 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>No notes match the filter.</div>
+          ) : (
+            <div>
+              {filtered.map(note => {
+                const authorName = note.author?.full_name ?? note.author?.display_name ?? profileName(note.author_profile_id)
+                const subjectName = note.subject?.full_name ?? note.subject?.display_name ?? profileName(note.subject_profile_id)
+                return (
+                  <div key={note.id} className="group flex gap-4 px-5 py-4"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                    {/* Meta */}
+                    <div className="shrink-0 space-y-0.5" style={{ minWidth: 160 }}>
+                      <p className="text-[10px] text-white/25 leading-tight" style={{ fontFamily: "var(--font-heading)" }}>
+                        {new Date(note.note_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </p>
+                      <p className="text-xs text-white/55">{authorName}</p>
+                      <p className="text-[10px] text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+                        → {subjectName}
+                      </p>
+                    </div>
+                    {/* Content */}
+                    <p className="flex-1 text-sm text-white/60 leading-relaxed whitespace-pre-wrap">{note.note_text}</p>
+                    {/* Delete */}
+                    <button
+                      onClick={() => deleteNote.mutate(note.id)}
+                      disabled={deleteNote.isPending}
+                      className="shrink-0 self-start mt-0.5 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/5"
+                      style={{ color: "rgba(220,80,80,0.5)" }}
+                      title="Delete note"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )
+              })}
+              <div className="px-5 py-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                <span className="text-[10px]" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.3 }}>
+                  {filtered.length} note{filtered.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminTraining() {
@@ -1135,6 +1532,12 @@ export default function AdminTraining() {
 
           {/* Shared journal feed */}
           <SharedJournalFeed entries={journal} techMap={techMap} loading={lj} />
+
+          {/* Manager Assignments — Super Admin CRUD */}
+          <ManagerAssignmentsPanel profiles={profiles} myProfileId={me?.id ?? ""} />
+
+          {/* Manager Notes org-wide feed */}
+          <ManagerNotesAdminFeed profiles={profiles} />
         </>
       )}
 

@@ -7,6 +7,7 @@
 
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
+import { localToday } from "@/shared/lib/dates"
 import type { AircraftDocumentRow, AuditProfileGroup, MmMelTracking, MmCampaignRevisionChange, CampaignSummary } from "./types"
 
 // ── Colors ──────────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ export function generateMmAuditPdf(data: PdfReportData, mode: PdfExportMode, sin
     doc.line(M, 38, PW - M, 38)
   }
 
-  const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC"
+  const timestamp = new Date().toLocaleString("en-US", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZoneName: "short" })
   const campaignName = data.campaign?.name ?? "Ad-hoc Review"
   const periodStr = data.campaign ? `${data.campaign.period_start} to ${data.campaign.period_end}` : "N/A"
 
@@ -572,7 +573,7 @@ export function generateMmAuditPdf(data: PdfReportData, mode: PdfExportMode, sin
   }
 
   function finalize() {
-    const date = new Date().toISOString().slice(0, 10)
+    const date = localToday()
     const campaign = campaignName.replace(/\s/g, "_")
     const suffix =
       mode === "summary" ? "_Summary" :

@@ -30,7 +30,9 @@ const coreValues = [
 ]
 
 const bulletinItems = [
-  { date: "Apr 4", text: "Records Vault (aircraft records intelligence layer) and Beet Box (full MRO suite) are now in active development." },
+  { date: "Apr 8", text: "Aircraft profiles now support photos — upload, crop, and rate any aircraft. Each photo credits the photographer. Profile pictures upgraded across the portal." },
+  { date: "Apr 7", text: "Work Orders: Tool Calibration module, work order sign-off flow, and Records Vault OCR search are live." },
+  { date: "Apr 4", text: "Records Vault (aircraft records intelligence layer) and Work Orders (full MRO suite) are now in active development." },
   { date: "Apr 3", text: "14-Day Check is live — standing inspection links for each aircraft, mobile photo capture, and a full MC review dashboard with fleet status at a glance." },
   { date: "Apr 3", text: "External Requests is live. Send structured requests to anyone outside the platform and collect responses through a secure, no-login portal." },
   { date: "Apr 3", text: "MM Revision & Audit Tracking is now live under Compliance. Quarterly audit campaigns replace the spreadsheet — review the entire fleet by type group, track revision changes, and generate PDF reports ready for the FSDO." },
@@ -191,8 +193,8 @@ function CoreValueModal({
 /* ─── Component ─────────────────────────────────────────────────── */
 
 export default function Dashboard() {
-  const { profile } = useAuth()
-  const firstName = profile?.first_name ?? profile?.full_name?.split(" ")[0] ?? "there"
+  const { profile, isFirstLogin } = useAuth()
+  const firstName = profile?.display_name?.split(" ")[0] ?? profile?.full_name?.split(" ")[0] ?? "there"
   const [openValue, setOpenValue] = useState<(typeof coreValues)[number] | null>(null)
 
   return (
@@ -213,7 +215,7 @@ export default function Dashboard() {
               className="text-[2.6rem] leading-none text-foreground"
               style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
             >
-              Welcome back, {firstName.toUpperCase()}
+              {isFirstLogin ? "Welcome," : "Welcome back,"} {firstName.toUpperCase()}
             </h1>
             <div
               className="mt-2 mb-2"

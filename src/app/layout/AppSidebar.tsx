@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react"
 import { NavLink, useLocation, useNavigate } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { useMmFleetOverview as useMmFleetOverviewForBadge } from "@/features/mm-audit/useMmAuditData"
 import { supabase } from "@/lib/supabase"
+import { amIAPeopleManager } from "@/features/my-journey/services/managerAssignments"
 import {
   Home,
   Plane,
@@ -52,6 +54,7 @@ type SidebarItem = {
   exact?: boolean
   section: AppSection
   superAdminOnly?: boolean
+  managersOnly?: boolean
 }
 
 type SidebarItemGroup = {
@@ -63,9 +66,23 @@ type SidebarItemGroup = {
 type SidebarSection = {
   title: string
   adminOnly?: boolean
+  superAdminOnly?: boolean
+  managersOnly?: boolean
   items: SidebarItem[]
   groups?: SidebarItemGroup[]
 }
+
+/**
+ * SIDEBAR STRUCTURE SYNC
+ * ──────────────────────
+ * When you add or modify sidebar items, update FOUR files:
+ * 1. Add/update the item here with its AppSection
+ * 2. Add to APP_SECTIONS (entities/supabase.ts)
+ * 3. Add rule() in HARDCODED_RULES (pages/admin/PermissionsIndex.tsx)
+ * 4. Add to PERMISSION_GROUPS (pages/admin/Users.tsx)
+ *
+ * This keeps the sidebar, permissions index, and module access dialog all in sync.
+ */
 
 const sidebarSections: SidebarSection[] = [
   {
@@ -81,11 +98,12 @@ const sidebarSections: SidebarSection[] = [
     items: [
       { name: "Discrepancy Intelligence", path: "/app/discrepancy-intelligence", icon: Activity,      section: "Discrepancy Intelligence"  },
       { name: "Records Vault",            path: "/app/records-vault",            icon: BookOpen,     section: "Records Vault"             },
-      { name: "Beet Box",               path: "/app/beet-box",                 icon: BeetIcon,      section: "Beet Box"                  },
+      { name: "Work Orders",             path: "/app/beet-box",                 icon: BeetIcon,      section: "Work Orders"               },
       { name: "My Journey™",             path: "/app/journey",                  icon: Compass,       section: "My Journey"                },
-      { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "Training"                  },
+      { name: "My Training",             path: "/app/training",                 icon: GraduationCap, section: "My Training"                },
       { name: "Maintenance Vendors",     path: "/app/vendor-map",               icon: MapPin,        section: "Vendor Map"                },
       { name: "14-Day Check",           path: "/app/14-day-check",             icon: CalendarClock, section: "14-Day Check"              },
+      { name: "Projects",               path: "/app/projects",                 icon: Kanban,        section: "Projects"                  },
       { name: "Compliance",              path: "/app/compliance",                icon: ClipboardList, section: "Compliance"                },
       { name: "Safety's House",          path: "/app/safety",                   icon: ShieldCheck,   section: "Safety"                    },
     ],
@@ -105,15 +123,21 @@ const sidebarSections: SidebarSection[] = [
           { name: "Maintenance Planning", path: "/app/planning",     icon: ClipboardList, section: "Maintenance Planning" },
           { name: "Ten or More",          path: "/app/ten-or-more",  icon: ShieldCheck,   section: "Ten or More"          },
           { name: "Terminal-OGD",         path: "/app/terminal-ogd", icon: Building,      section: "Terminal-OGD"         },
-          { name: "Projects",             path: "/app/projects",     icon: Kanban,        section: "Projects"             },
           { name: "Docs & Links",         path: "/app/docs",         icon: FileText,      section: "Docs & Links"         },
         ],
       },
     ],
   },
   {
+    title: "Supervisors",
+    managersOnly: true,
+    items: [
+      { name: "My Team", path: "/app/journey?tab=team", icon: Users, section: "My Journey" },
+    ],
+  },
+  {
     title: "Administration",
-    adminOnly: true,
+    superAdminOnly: true,
     items: [
       { name: "Users",                   path: "/app/admin/users",       icon: Users,         section: "Dashboard"                   },
       { name: "Team Training & Journey", path: "/app/admin/training",    icon: GraduationCap, section: "Dashboard", superAdminOnly: true },
@@ -137,7 +161,19 @@ export function AppSidebar() {
 
   const isAdmin = profile?.role === "Super Admin" || profile?.role === "Admin"
   const isSuperAdmin = profile?.role === "Super Admin"
-  const visibleSections = sidebarSections.filter(s => !s.adminOnly || isAdmin)
+
+  const { data: isPeopleManager = false } = useQuery({
+    queryKey: ["am-i-a-people-manager"],
+    queryFn: amIAPeopleManager,
+    enabled: !!profile?.id && !isSuperAdmin, // Super Admin always gets My Team
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const visibleSections = sidebarSections.filter(s =>
+    (!s.adminOnly || isAdmin) &&
+    (!s.superAdminOnly || isSuperAdmin) &&
+    (!s.managersOnly || isSuperAdmin || isPeopleManager || hasAccess("My Team"))
+  )
 
   function hasAccess(section: AppSection) {
     if (isAdmin) return true
@@ -153,9 +189,16 @@ export function AppSidebar() {
   }
 
   function renderItem(item: SidebarItem, indented = false) {
+    // Split off any query string from the item path for matching
+    const [itemBasePath, itemQuery] = item.path.split("?")
     const isActive = item.exact
-      ? location.pathname === item.path
-      : location.pathname.startsWith(item.path)
+      ? location.pathname === itemBasePath
+      : itemQuery
+        // Item has a query param — match pathname + that specific param
+        ? location.pathname === itemBasePath && location.search.includes(itemQuery)
+        // No query param — match only if pathname matches and there's no conflicting tab param
+        : location.pathname.startsWith(itemBasePath) &&
+          (!location.search.includes("tab=") || item.path.includes("?tab="))
     const accessible = hasAccess(item.section)
 
     return (
@@ -186,7 +229,7 @@ export function AppSidebar() {
               {!collapsed && <span className="truncate tracking-wide flex-1">{item.name}</span>}
               {!collapsed && item.name === "Compliance" && <ComplianceBadge />}
               {!collapsed && item.name === "Site Suggestions" && <SuggestionsBadge />}
-              {!collapsed && (item.name === "Beet Box" || item.name === "Records Vault") && (
+              {!collapsed && (item.name === "Work Orders" || item.name === "Records Vault" || item.name === "Projects") && (
                 <span
                   className="flex-shrink-0 text-[8px] font-bold tracking-widest px-1 py-0.5 rounded"
                   style={{
@@ -395,7 +438,7 @@ function SuggestionsBadge() {
       const { count: n } = await supabase
         .from("site_suggestions")
         .select("id", { count: "exact", head: true })
-        .eq("status", "open")
+        .in("status", ["open", "needs_info"])
       setCount(n ?? 0)
     }
 

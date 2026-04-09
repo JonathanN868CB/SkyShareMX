@@ -3,33 +3,7 @@ import { supabase } from "@/lib/supabase"
 
 const db = supabase as any
 
-// ─── System categorization by keyword matching on title ──────────────────────
-const SYSTEM_KEYWORDS: [string, string[]][] = [
-  ["De-Ice / Anti-Ice", ["de-ice", "deice", "de ice", "anti-ice", "boot", "ice detect"]],
-  ["Avionics", ["ehsi", "adahrs", "cas ", "autopilot", "fms", "gps", "transponder", "display", "pusher"]],
-  ["Fuel System", ["fuel", "contamination"]],
-  ["Landing Gear / Tires", ["tire", "nosewheel", "shimmy", "brake", "gear door", "blown out"]],
-  ["Propulsion", ["engine", "prop ", "propeller", "torque", "pt6", "prop de"]],
-  ["Cabin / Interior", ["cabin", "door", "seat", "drawer", "latch", "panel", "interior", "armrest", "carpet"]],
-  ["Comms / Connectivity", ["vccs", "radio", "com ", "intercom", "wifi", "internet", "satcom"]],
-  ["Environmental", ["temp", "heating", "cooling", "bleed", "pressur", "aoa"]],
-  ["Airframe", ["bird strike", "corrosion", "crack", "leak", "dent", "window", "dv window"]],
-  ["Electrical / Lighting", ["light", "lamp", "battery", "generator", "alternator", "wire", "gauge"]],
-]
-
-function categorizeTitle(title: string): string {
-  const lower = title.toLowerCase()
-  for (const [category, keywords] of SYSTEM_KEYWORDS) {
-    if (keywords.some(kw => lower.includes(kw))) return category
-  }
-  return "Other"
-}
-
 // ─── Types ───────────────────────────────────────────────────────────────────
-export interface SystemCount {
-  name: string
-  count: number
-}
 
 export interface AircraftRate {
   tail: string
@@ -39,20 +13,56 @@ export interface AircraftRate {
 export interface QuarterBucket {
   label: string
   count: number
+  yr: number
+  q: number   // 1–4
+}
+
+// Per-aircraft stats anchored to operational hours (max - min airframe_hours)
+export interface AircraftStat {
+  tail: string
+  make: string
+  modelFamily: string
+  disCount: number
+  acqHours: number            // hours at first recorded discrepancy — our baseline
+  currentHours: number
+  opsHours: number            // hours under our operation = current - acq
+  openCount: number
+  deferredCount: number
+  melCount: number
+  activeCatA: number          // currently deferred Cat A MEL items
+  activeCatB: number          // currently deferred Cat B MEL items
+  avgResolutionDays: number | null
+  rate: number | null         // dis per 100 ops hours; null if opsHours < 200
+}
+
+// Aggregated rate for a manufacturer or model family
+export interface GroupRate {
+  label: string
+  disCount: number
+  opsHours: number
+  rate: number                // dis per 100 ops hours
+  aircraftCount: number
 }
 
 export interface FleetStats {
-  fleetDisPerKHours: number
-  criticalMelCount: number
-  topSystem: SystemCount | null
-  systemBreakdown: SystemCount[]
+  // Rates — all based on operational hours under our care, per 100 hours
+  fleetDisPer100h: number
+  totalOpsHours: number
+  // Resolution
   avgResolutionDays: number | null
+  // Best / worst by rate
   bestAircraft: AircraftRate | null
   worstAircraft: AircraftRate | null
+  // Cross-fleet comparisons
+  byManufacturer: GroupRate[]   // one row per make, sorted by rate desc
+  byModelFamily: GroupRate[]    // one row per model_family, sorted by rate desc
+  // Quarterly trend
   quarterlyTrend: QuarterBucket[]
+  // Per-aircraft detail
+  perAircraftStats: AircraftStat[]
+  // Totals
   totalRecords: number
   aircraftCount: number
-  totalFleetHours: number
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -60,145 +70,133 @@ export function useFleetStats() {
   return useQuery<FleetStats>({
     queryKey: ["fleet-stats"],
     queryFn: async () => {
-      const [discResult, regResult] = await Promise.all([
-        db
-          .from("discrepancies")
-          .select("aircraft_id, found_at, signoff_date, airframe_hours, has_mel, mel_category, title"),
-        db
-          .from("aircraft_registrations")
-          .select("aircraft_id, registration")
-          .eq("is_current", true),
+
+      // ── Per-aircraft aggregates + quarterly trend (two lightweight RPCs) ──
+      const [analyticsResult, trendResult] = await Promise.all([
+        db.rpc("get_fleet_analytics"),
+        db.rpc("get_quarterly_dis_trend"),
       ])
-      if (discResult.error) throw discResult.error
-      if (regResult.error) throw regResult.error
+      if (analyticsResult.error) throw analyticsResult.error
+      if (trendResult.error)    throw trendResult.error
 
-      const discs: any[] = discResult.data ?? []
-      const regs: any[] = regResult.data ?? []
+      const analyticsRows: any[] = analyticsResult.data ?? []
+      const trendRows:     any[] = trendResult.data    ?? []
 
-      // Build aircraft_id → current tail lookup
-      const regMap = new Map<string, string>()
-      for (const r of regs) regMap.set(r.aircraft_id, r.registration)
+      // ── Build per-aircraft stats ──────────────────────────────────────────
+      const MIN_OPS_HOURS = 200
+      const perAircraftStats: AircraftStat[] = analyticsRows.map((r: any) => {
+        const opsHours = Number(r.ops_hours ?? 0)
+        return {
+          tail:               r.registration,
+          make:               r.make ?? "",
+          modelFamily:        r.model_family ?? "",
+          disCount:           Number(r.dis_count ?? 0),
+          acqHours:           Number(r.acq_hours ?? 0),
+          currentHours:       Number(r.current_hours ?? 0),
+          opsHours,
+          openCount:          Number(r.open_count ?? 0),
+          deferredCount:      Number(r.deferred_count ?? 0),
+          melCount:           Number(r.mel_count ?? 0),
+          activeCatA:         Number(r.active_cat_a ?? 0),
+          activeCatB:         Number(r.active_cat_b ?? 0),
+          avgResolutionDays:  r.avg_resolution_days != null ? Number(r.avg_resolution_days) : null,
+          rate:               opsHours >= MIN_OPS_HOURS
+                                ? (Number(r.dis_count) / opsHours) * 100
+                                : null,
+        }
+      })
 
-      // ── Per-aircraft aggregation ───────────────────────────────────────
-      const byAircraft = new Map<string, { count: number; maxHours: number; tail: string }>()
-      for (const d of discs) {
-        const tail = regMap.get(d.aircraft_id) ?? "Unknown"
-        const ex = byAircraft.get(d.aircraft_id)
-        const hrs = d.airframe_hours ? Number(d.airframe_hours) : 0
-        if (ex) {
-          ex.count++
-          if (hrs > ex.maxHours) ex.maxHours = hrs
-        } else {
-          byAircraft.set(d.aircraft_id, { count: 1, maxHours: hrs, tail })
+      // ── Fleet-wide totals ─────────────────────────────────────────────────
+      const totalOpsHours = Math.round(perAircraftStats.reduce((s, ac) => s + ac.opsHours, 0))
+      const totalRecords  = perAircraftStats.reduce((s, ac) => s + ac.disCount, 0)
+
+      // ── Fleet reliability rate (rated aircraft only) ──────────────────────
+      const ratedAircraft = perAircraftStats.filter(ac => ac.rate !== null)
+      const fleetDisPer100h = ratedAircraft.length > 0
+        ? (ratedAircraft.reduce((s, ac) => s + ac.disCount, 0) /
+           ratedAircraft.reduce((s, ac) => s + ac.opsHours, 0)) * 100
+        : 0
+
+      // ── Best / worst by rate ──────────────────────────────────────────────
+      const sortedByRate  = [...ratedAircraft].sort((a, b) => (a.rate ?? 0) - (b.rate ?? 0))
+      const bestAircraft  = sortedByRate[0]
+        ? { tail: sortedByRate[0].tail,  rate: sortedByRate[0].rate! }
+        : null
+      const worstAircraft = sortedByRate.length > 1
+        ? { tail: sortedByRate[sortedByRate.length - 1].tail, rate: sortedByRate[sortedByRate.length - 1].rate! }
+        : null
+
+      // ── Fleet-wide avg resolution (weighted by dis count per aircraft) ────
+      let resDaySum = 0, resDisSum = 0
+      for (const ac of perAircraftStats) {
+        if (ac.avgResolutionDays !== null && ac.disCount > 0) {
+          resDaySum += ac.avgResolutionDays * ac.disCount
+          resDisSum += ac.disCount
         }
       }
+      const avgResolutionDays = resDisSum > 0 ? resDaySum / resDisSum : null
 
-      // ── Stat 1: Fleet reliability rate (dis per 1K hours) ──────────────
-      let totalDis = 0
-      let totalHours = 0
-      for (const v of byAircraft.values()) {
-        totalDis += v.count
-        totalHours += v.maxHours
+      // ── By manufacturer ──────────────────────────────────────────────────
+      const mfrMap = new Map<string, { dis: number; ops: number; count: number }>()
+      for (const ac of ratedAircraft) {
+        const ex = mfrMap.get(ac.make)
+        if (ex) { ex.dis += ac.disCount; ex.ops += ac.opsHours; ex.count++ }
+        else    mfrMap.set(ac.make, { dis: ac.disCount, ops: ac.opsHours, count: 1 })
       }
-      const fleetDisPerKHours = totalHours > 0 ? (totalDis / totalHours) * 1000 : 0
-
-      // ── Stat 2: Critical MEL count (Category A & B) ────────────────────
-      let criticalMelCount = 0
-      for (const d of discs) {
-        if (d.has_mel && d.mel_category) {
-          const cat = d.mel_category.toLowerCase().replace("category ", "").trim()
-          if (cat === "a" || cat === "b") criticalMelCount++
-        }
-      }
-
-      // ── Stat 3: System breakdown ───────────────────────────────────────
-      const sysCounts = new Map<string, number>()
-      for (const d of discs) {
-        const cat = categorizeTitle(d.title)
-        sysCounts.set(cat, (sysCounts.get(cat) ?? 0) + 1)
-      }
-      const systemBreakdown = Array.from(sysCounts.entries())
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count)
-      const topSystem = systemBreakdown[0] ?? null
-
-      // ── Stat 4: Average resolution time ────────────────────────────────
-      let totalDays = 0
-      let resCount = 0
-      for (const d of discs) {
-        if (d.found_at && d.signoff_date) {
-          const diff =
-            (new Date(d.signoff_date).getTime() - new Date(d.found_at).getTime()) /
-            86_400_000
-          if (diff >= 0 && diff < 365) {
-            totalDays += diff
-            resCount++
-          }
-        }
-      }
-      const avgResolutionDays = resCount > 0 ? totalDays / resCount : null
-
-      // ── Stat 5: Best / worst aircraft by dis per 1K hours ──────────────
-      const rates = Array.from(byAircraft.values())
-        .filter(v => v.maxHours >= 400)
-        .map(v => ({
-          tail: v.tail,
-          rate: v.maxHours > 0 ? (v.count / v.maxHours) * 1000 : 0,
+      const byManufacturer: GroupRate[] = Array.from(mfrMap.entries())
+        .map(([label, v]) => ({
+          label,
+          disCount:     v.dis,
+          opsHours:     Math.round(v.ops),
+          rate:         (v.dis / v.ops) * 100,
+          aircraftCount: v.count,
         }))
-        .sort((a, b) => a.rate - b.rate)
-      const bestAircraft = rates[0] ?? null
-      const worstAircraft = rates.length > 1 ? rates[rates.length - 1] : null
+        .sort((a, b) => b.rate - a.rate)
 
-      // ── Stat 6: Quarterly trend (last 4 quarters) ─────────────────────
+      // ── By model family ──────────────────────────────────────────────────
+      const famMap = new Map<string, { dis: number; ops: number; count: number; make: string }>()
+      for (const ac of ratedAircraft) {
+        const ex = famMap.get(ac.modelFamily)
+        if (ex) { ex.dis += ac.disCount; ex.ops += ac.opsHours; ex.count++ }
+        else    famMap.set(ac.modelFamily, { dis: ac.disCount, ops: ac.opsHours, count: 1, make: ac.make })
+      }
+      const byModelFamily: GroupRate[] = Array.from(famMap.entries())
+        .map(([label, v]) => ({
+          label,
+          disCount:     v.dis,
+          opsHours:     Math.round(v.ops),
+          rate:         (v.dis / v.ops) * 100,
+          aircraftCount: v.count,
+        }))
+        .sort((a, b) => b.rate - a.rate)
+
+      // ── Quarterly trend from RPC ──────────────────────────────────────────
       const now = new Date()
       const currentQ = Math.floor(now.getMonth() / 3)
       const currentY = now.getFullYear()
-      const quarterBuckets: { label: string; start: Date; end: Date; count: number }[] = []
-
+      const quarterBuckets: { label: string; yr: number; q: number; count: number }[] = []
       for (let i = 3; i >= 0; i--) {
-        let q = currentQ - i
-        let y = currentY
-        while (q < 0) {
-          q += 4
-          y--
-        }
-        const startMonth = q * 3
-        const start = new Date(Date.UTC(y, startMonth, 1))
-        const end = new Date(Date.UTC(y, startMonth + 3, 1))
-        quarterBuckets.push({
-          label: `Q${q + 1} '${String(y).slice(2)}`,
-          start,
-          end,
-          count: 0,
-        })
+        let q = currentQ - i, y = currentY
+        while (q < 0) { q += 4; y-- }
+        quarterBuckets.push({ label: `Q${q + 1} '${String(y).slice(2)}`, yr: y, q: q + 1, count: 0 })
       }
-
-      for (const d of discs) {
-        if (!d.found_at) continue
-        const dt = new Date(d.found_at)
-        for (const qb of quarterBuckets) {
-          if (dt >= qb.start && dt < qb.end) {
-            qb.count++
-            break
-          }
-        }
+      for (const row of trendRows) {
+        const b = quarterBuckets.find(b => b.yr === Number(row.yr) && b.q === Number(row.q))
+        if (b) b.count = Number(row.count)
       }
 
       return {
-        fleetDisPerKHours,
-        criticalMelCount,
-        topSystem,
-        systemBreakdown,
+        fleetDisPer100h,
+        totalOpsHours,
         avgResolutionDays,
         bestAircraft,
         worstAircraft,
-        quarterlyTrend: quarterBuckets.map(qb => ({
-          label: qb.label,
-          count: qb.count,
-        })),
-        totalRecords: discs.length,
-        aircraftCount: byAircraft.size,
-        totalFleetHours: Math.round(totalHours),
+        byManufacturer,
+        byModelFamily,
+        quarterlyTrend: quarterBuckets.map(b => ({ label: b.label, count: b.count, yr: b.yr, q: b.q })),
+        perAircraftStats,
+        totalRecords,
+        aircraftCount: perAircraftStats.length,
       }
     },
     staleTime: 5 * 60 * 1000,

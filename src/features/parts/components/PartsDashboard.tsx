@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
-import { AlertTriangle, Package, Search, X, Filter, RotateCcw, ChevronRight } from "lucide-react"
+import { AlertTriangle, Package, Search, X, Filter, RotateCcw, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
@@ -36,7 +36,7 @@ interface ProfileMap {
   [id: string]: string
 }
 
-type SortField = "date_needed" | "created_at" | "job_description" | "status"
+type SortField = "date_needed" | "created_at" | "job_description" | "status" | "work_order"
 type SortDir = "asc" | "desc"
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -194,6 +194,8 @@ export function PartsDashboard() {
           return a.job_description.localeCompare(b.job_description) * dir
         case "status":
           return a.status.localeCompare(b.status) * dir
+        case "work_order":
+          return ((a.work_order ?? "").localeCompare(b.work_order ?? "")) * dir
         default:
           return 0
       }
@@ -243,9 +245,17 @@ export function PartsDashboard() {
     }
   }
 
-  function sortIndicator(field: SortField) {
-    if (sortField !== field) return ""
-    return sortDir === "asc" ? " ↑" : " ↓"
+  function SortIcon({ field }: { field: SortField }) {
+    if (sortField !== field) return <ArrowUpDown className="w-3 h-3 inline-block ml-1 opacity-30" />
+    const Icon = sortDir === "asc" ? ArrowUp : ArrowDown
+    return <Icon className="w-3.5 h-3.5 inline-block ml-1" style={{ color: "var(--skyshare-gold)" }} />
+  }
+
+  function sortHeaderStyle(field: SortField): React.CSSProperties {
+    return {
+      color: sortField === field ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.45)",
+      fontFamily: "var(--font-heading)",
+    }
   }
 
   // ─── Render helpers ─────────────────────────────────────────────────────────
@@ -555,34 +565,38 @@ export function PartsDashboard() {
         ) : (
           <table className="w-full">
             <thead>
-              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
                 <th className="w-10" />
                 <th
-                  className="px-3 py-2 text-left text-xs font-medium cursor-pointer select-none"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                  style={sortHeaderStyle("job_description")}
                   onClick={() => toggleSort("job_description")}
                 >
-                  Job{sortIndicator("job_description")}
+                  Job <SortIcon field="job_description" />
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: "rgba(255,255,255,0.4)" }}>
-                  WO#
+                <th
+                  className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                  style={sortHeaderStyle("work_order")}
+                  onClick={() => toggleSort("work_order")}
+                >
+                  WO# <SortIcon field="work_order" />
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium" style={{ color: "rgba(255,255,255,0.4)" }}>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.45)", fontFamily: "var(--font-heading)" }}>
                   Parts
                 </th>
                 <th
-                  className="px-3 py-2 text-left text-xs font-medium cursor-pointer select-none"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                  style={sortHeaderStyle("status")}
                   onClick={() => toggleSort("status")}
                 >
-                  Status{sortIndicator("status")}
+                  Status <SortIcon field="status" />
                 </th>
                 <th
-                  className="px-3 py-2 text-left text-xs font-medium cursor-pointer select-none"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                  style={sortHeaderStyle("date_needed")}
                   onClick={() => toggleSort("date_needed")}
                 >
-                  Need By{sortIndicator("date_needed")}
+                  Need By <SortIcon field="date_needed" />
                 </th>
                 <th className="w-10" />
               </tr>
@@ -632,6 +646,43 @@ export function PartsDashboard() {
 
               {expandedYears.has(year) && (
                 <table className="w-full">
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)" }}>
+                      <th className="w-10" />
+                      <th
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                        style={sortHeaderStyle("job_description")}
+                        onClick={() => toggleSort("job_description")}
+                      >
+                        Job <SortIcon field="job_description" />
+                      </th>
+                      <th
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                        style={sortHeaderStyle("work_order")}
+                        onClick={() => toggleSort("work_order")}
+                      >
+                        WO# <SortIcon field="work_order" />
+                      </th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: "rgba(255,255,255,0.45)", fontFamily: "var(--font-heading)" }}>
+                        Parts
+                      </th>
+                      <th
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                        style={sortHeaderStyle("status")}
+                        onClick={() => toggleSort("status")}
+                      >
+                        Status <SortIcon field="status" />
+                      </th>
+                      <th
+                        className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none"
+                        style={sortHeaderStyle("date_needed")}
+                        onClick={() => toggleSort("date_needed")}
+                      >
+                        Need By <SortIcon field="date_needed" />
+                      </th>
+                      <th className="w-10" />
+                    </tr>
+                  </thead>
                   <tbody>
                     {records.map(r => renderRow(r))}
                   </tbody>

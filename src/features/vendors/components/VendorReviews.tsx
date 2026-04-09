@@ -3,6 +3,7 @@ import {
   ClipboardCheck, Plus, X, CheckCircle2, XCircle,
   AlertTriangle, Clock, CalendarCheck,
 } from "lucide-react"
+import { localToday } from "@/shared/lib/dates"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/features/auth"
 import { GOLD } from "../constants"
@@ -140,7 +141,7 @@ function ReviewForm({ vendorId, canEditNine, canEditTen, onDone, onCancel }: {
   const [saving, setSaving] = useState(false)
   const [lane, setLane] = useState<"nine" | "ten">(canEditNine ? "nine" : "ten")
   const [reviewType, setReviewType] = useState<ReviewType>("initial_eval")
-  const [reviewDate, setReviewDate] = useState(new Date().toISOString().slice(0, 10))
+  const [reviewDate, setReviewDate] = useState(localToday())
   const [outcome, setOutcome] = useState<ReviewOutcome | "">("")
   const [nextDue, setNextDue] = useState("")
   const [notes, setNotes] = useState("")

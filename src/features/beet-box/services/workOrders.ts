@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase"
 import type {
   WorkOrder, WOItem, WOItemPart, WOItemLabor,
-  WOStatusChange, WOStatus, WOItemStatus, Mechanic,
+  WOStatusChange, WOStatus, WOItemStatus, Mechanic, CertType, AuditEntry,
 } from "../types"
 import { buildAircraftRef } from "./aircraft"
 
@@ -20,6 +20,30 @@ export async function getMyProfileId(): Promise<string | null> {
   return data?.id ?? null
 }
 
+export async function getMyProfile(): Promise<{ id: string; name: string; certType: CertType | null; certNumber: string | null } | null> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, full_name, display_name, email")
+    .eq("user_id", user.id)
+    .maybeSingle()
+  if (!profile) return null
+  const { data: certRows } = await supabase
+    .from("bb_mechanic_certs")
+    .select("cert_type, cert_number")
+    .eq("profile_id", profile.id)
+    .eq("is_primary", true)
+    .limit(1)
+  const cert = certRows?.[0] ?? null
+  return {
+    id: profile.id,
+    name: profile.full_name ?? profile.display_name ?? profile.email ?? "Unknown",
+    certType: (cert?.cert_type as CertType) ?? null,
+    certNumber: cert?.cert_number ?? null,
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function fetchAircraftMaps(aircraftIds: string[]) {
@@ -28,7 +52,7 @@ async function fetchAircraftMaps(aircraftIds: string[]) {
   const [{ data: acRows }, { data: regRows }] = await Promise.all([
     supabase
       .from("aircraft")
-      .select("id, make, model_full, serial_number")
+      .select("id, make, model_full, serial_number, engine_manufacturer, engine_model")
       .in("id", aircraftIds),
     supabase
       .from("aircraft_registrations")
@@ -38,7 +62,7 @@ async function fetchAircraftMaps(aircraftIds: string[]) {
   ])
 
   const acMap = new Map(
-    (acRows ?? []).map((r) => [r.id, { make: r.make, modelFull: r.model_full, serialNumber: r.serial_number }])
+    (acRows ?? []).map((r) => [r.id, { make: r.make, modelFull: r.model_full, serialNumber: r.serial_number, engineManufacturer: r.engine_manufacturer ?? null, engineModel: r.engine_model ?? null }])
   )
   const regMap = new Map(
     (regRows ?? []).map((r) => [r.aircraft_id, r.registration])
@@ -54,13 +78,9 @@ export async function getWorkOrders(filters?: {
 }): Promise<WorkOrder[]> {
   let query = supabase
     .from("bb_work_orders")
-    .select(`
-      *,
-      bb_work_order_mechanics ( profile_id,
-        profiles!bb_work_order_mechanics_profile_id_fkey ( id, full_name, display_name, email )
-      )
-    `)
+    .select("*")
     .order("opened_at", { ascending: false })
+    .range(0, 9999)
 
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
@@ -86,11 +106,8 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
     .from("bb_work_orders")
     .select(`
       *,
-      bb_work_order_mechanics (
-        profile_id,
-        profiles!bb_work_order_mechanics_profile_id_fkey ( id, full_name, display_name, email )
-      ),
-      bb_work_order_status_history ( * )
+      bb_work_order_status_history ( * ),
+      bb_work_order_audit_trail ( * )
     `)
     .eq("id", id)
     .maybeSingle()
@@ -120,6 +137,9 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
   wo.statusHistory = ((row.bb_work_order_status_history ?? []) as any[])
     .sort((a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime())
     .map(mapStatusHistoryRow)
+  wo.auditTrail = ((row.bb_work_order_audit_trail ?? []) as any[])
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map(mapAuditEntryRow)
 
   return wo
 }
@@ -127,9 +147,7 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 export async function createWorkOrder(payload: {
-  woType: string
   description?: string
-  priority?: WorkOrder["priority"]
   aircraftId?: string
   guestRegistration?: string
   guestSerial?: string
@@ -138,23 +156,22 @@ export async function createWorkOrder(payload: {
   notes?: string
   openedBy: string
 }): Promise<WorkOrder> {
-  // Generate WO number: WO-YYYY-NNNN
-  const year = new Date().getFullYear()
+  // Generate WO number: YY-NNNN (e.g. 26-0025)
+  const yy = String(new Date().getFullYear()).slice(-2)
   const { count } = await supabase
     .from("bb_work_orders")
     .select("id", { count: "exact", head: true })
 
   const seq = String((count ?? 0) + 1).padStart(4, "0")
-  const woNumber = `WO-${year}-${seq}`
+  const woNumber = `${yy}-${seq}`
 
   const { data, error } = await supabase
     .from("bb_work_orders")
     .insert({
       wo_number: woNumber,
-      wo_type: payload.woType,
       description: payload.description ?? null,
-      priority: payload.priority ?? "routine",
       aircraft_id: payload.aircraftId ?? null,
+      wo_type: "—",
       guest_registration: payload.guestRegistration ?? null,
       guest_serial: payload.guestSerial ?? null,
       meter_at_open: payload.meterAtOpen ?? null,
@@ -220,11 +237,13 @@ export async function updateWorkOrderStatus(
 export async function updateWorkOrder(
   id: string,
   payload: Partial<{
-    woType: string
     description: string
-    priority: WorkOrder["priority"]
+    aircraftId: string | null
+    guestRegistration: string | null
+    guestSerial: string | null
     meterAtOpen: number
     meterAtClose: number
+    timesSnapshot: Record<string, unknown> | null
     discrepancyRef: string
     notes: string
   }>
@@ -232,34 +251,18 @@ export async function updateWorkOrder(
   const { error } = await supabase
     .from("bb_work_orders")
     .update({
-      ...(payload.woType !== undefined && { wo_type: payload.woType }),
       ...(payload.description !== undefined && { description: payload.description }),
-      ...(payload.priority !== undefined && { priority: payload.priority }),
+      ...(payload.aircraftId !== undefined && { aircraft_id: payload.aircraftId }),
+      ...(payload.guestRegistration !== undefined && { guest_registration: payload.guestRegistration }),
+      ...(payload.guestSerial !== undefined && { guest_serial: payload.guestSerial }),
       ...(payload.meterAtOpen !== undefined && { meter_at_open: payload.meterAtOpen }),
       ...(payload.meterAtClose !== undefined && { meter_at_close: payload.meterAtClose }),
+      ...(payload.timesSnapshot !== undefined && { times_snapshot: payload.timesSnapshot }),
       ...(payload.discrepancyRef !== undefined && { discrepancy_ref: payload.discrepancyRef }),
       ...(payload.notes !== undefined && { notes: payload.notes }),
     })
     .eq("id", id)
 
-  if (error) throw error
-}
-
-// ─── Assign / Remove Mechanic ─────────────────────────────────────────────────
-
-export async function assignMechanic(workOrderId: string, profileId: string, assignedBy: string): Promise<void> {
-  const { error } = await supabase
-    .from("bb_work_order_mechanics")
-    .upsert({ work_order_id: workOrderId, profile_id: profileId, assigned_by: assignedBy })
-  if (error) throw error
-}
-
-export async function removeMechanic(workOrderId: string, profileId: string): Promise<void> {
-  const { error } = await supabase
-    .from("bb_work_order_mechanics")
-    .delete()
-    .eq("work_order_id", workOrderId)
-    .eq("profile_id", profileId)
   if (error) throw error
 }
 
@@ -278,6 +281,7 @@ export async function upsertWOItem(
     serial_number: item.serialNumber ?? null,
     discrepancy: item.discrepancy ?? "",
     corrective_action: item.correctiveAction ?? "",
+    ref_code: item.refCode ?? "",
     mechanic_id: item.mechanicId ?? null,
     estimated_hours: item.estimatedHours ?? 0,
     labor_rate: item.laborRate ?? 125,
@@ -309,8 +313,10 @@ export async function updateItemStatus(itemId: string, status: WOItemStatus): Pr
 export async function updateWOItemFields(
   itemId: string,
   fields: Partial<{
+    category: string
     discrepancy: string
     correctiveAction: string
+    refCode: string
     estimatedHours: number
     laborRate: number
     shippingCost: number
@@ -321,8 +327,10 @@ export async function updateWOItemFields(
   }>
 ): Promise<void> {
   const payload: Record<string, unknown> = {}
+  if (fields.category           !== undefined) payload.category              = fields.category
   if (fields.discrepancy        !== undefined) payload.discrepancy           = fields.discrepancy
   if (fields.correctiveAction   !== undefined) payload.corrective_action     = fields.correctiveAction
+  if (fields.refCode            !== undefined) payload.ref_code              = fields.refCode
   if (fields.estimatedHours     !== undefined) payload.estimated_hours       = fields.estimatedHours
   if (fields.laborRate          !== undefined) payload.labor_rate            = fields.laborRate
   if (fields.shippingCost       !== undefined) payload.shipping_cost         = fields.shippingCost
@@ -375,12 +383,55 @@ export async function addItemPart(
       description: part.description,
       qty: part.qty,
       unit_price: part.unitPrice,
+      catalog_id: part.catalogId ?? null,
+      inventory_part_id: part.inventoryPartId ?? null,
+      serial_number: part.serialNumber ?? null,
+      condition: part.condition ?? null,
     })
     .select()
     .single()
 
   if (error) throw error
-  return { id: data.id, itemId: data.item_id, partNumber: data.part_number, description: data.description, qty: data.qty, unitPrice: data.unit_price }
+  return {
+    id: data.id, itemId: data.item_id, partNumber: data.part_number,
+    description: data.description, qty: data.qty, unitPrice: data.unit_price,
+    catalogId: data.catalog_id ?? null, inventoryPartId: data.inventory_part_id ?? null,
+    serialNumber: data.serial_number ?? null, condition: data.condition ?? null,
+  }
+}
+
+export async function issuePartFromInventory(
+  itemId: string,
+  inv: { id: string; partNumber: string; description: string; unitCost: number; catalogId: string | null; condition: string },
+  qty: number,
+  woNumber: string,
+  performedBy: { id: string; name: string }
+): Promise<WOItemPart> {
+  // 1. Add part to WO item
+  const saved = await addItemPart(itemId, {
+    partNumber: inv.partNumber,
+    description: inv.description,
+    qty,
+    unitPrice: inv.unitCost,
+    catalogId: inv.catalogId,
+    inventoryPartId: inv.id,
+    serialNumber: null,
+    condition: inv.condition,
+  })
+
+  // 2. Create "issue" transaction (negative qty = removing from stock)
+  const { recordTransaction } = await import("./inventory")
+  await recordTransaction(inv.id, {
+    type: "issue",
+    qty: -qty,
+    unitCost: inv.unitCost,
+    performedBy: performedBy.id,
+    performedName: performedBy.name,
+    woRef: woNumber,
+    notes: `Issued to WO ${woNumber}`,
+  })
+
+  return saved
 }
 
 export async function removeItemPart(partId: string): Promise<void> {
@@ -442,6 +493,51 @@ export async function deleteWorkOrder(id: string): Promise<void> {
   if (error) throw error
 }
 
+// ─── Delete all items on a WO (used by rebuild flow) ─────────────────────────
+
+export async function deleteAllWOItems(workOrderId: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_work_order_items")
+    .delete()
+    .eq("work_order_id", workOrderId)
+  if (error) throw error
+}
+
+// ─── Audit Trail ─────────────────────────────────────────────────────────────
+
+export async function addAuditEntry(
+  workOrderId: string,
+  entry: {
+    entryType: string
+    actorId?: string | null
+    actorName?: string | null
+    summary: string
+    detail?: string | null
+    fieldName?: string | null
+    oldValue?: string | null
+    newValue?: string | null
+    itemId?: string | null
+    itemNumber?: number | null
+  }
+): Promise<void> {
+  const { error } = await supabase
+    .from("bb_work_order_audit_trail")
+    .insert({
+      work_order_id: workOrderId,
+      entry_type:    entry.entryType,
+      actor_id:      entry.actorId   ?? null,
+      actor_name:    entry.actorName ?? null,
+      summary:       entry.summary,
+      detail:        entry.detail    ?? null,
+      field_name:    entry.fieldName ?? null,
+      old_value:     entry.oldValue  ?? null,
+      new_value:     entry.newValue  ?? null,
+      item_id:       entry.itemId    ?? null,
+      item_number:   entry.itemNumber ?? null,
+    })
+  if (error) throw error
+}
+
 // ─── Row mappers ─────────────────────────────────────────────────────────────
 
 function mapWorkOrderRow(
@@ -449,17 +545,6 @@ function mapWorkOrderRow(
   acMap: Map<string, any>,
   regMap: Map<string, string>
 ): WorkOrder {
-  const mechanics: Mechanic[] = (row.bb_work_order_mechanics ?? []).map((m: any) => {
-    const p = m.profiles
-    return {
-      id: p?.id ?? m.profile_id,
-      name: p?.full_name ?? p?.display_name ?? p?.email ?? "",
-      email: p?.email ?? "",
-      certType: null,
-      certNumber: null,
-    }
-  })
-
   return {
     id: row.id,
     woNumber: row.wo_number,
@@ -468,8 +553,6 @@ function mapWorkOrderRow(
     guestSerial: row.guest_serial,
     aircraft: buildAircraftRef(row.aircraft_id, row.guest_registration, row.guest_serial, acMap, regMap),
     status: row.status as WOStatus,
-    priority: row.priority,
-    woType: row.wo_type,
     description: row.description,
     openedBy: row.opened_by,
     openedByName: null,
@@ -477,11 +560,12 @@ function mapWorkOrderRow(
     closedAt: row.closed_at,
     meterAtOpen: row.meter_at_open,
     meterAtClose: row.meter_at_close,
+    timesSnapshot: row.times_snapshot ?? null,
     discrepancyRef: row.discrepancy_ref,
     notes: row.notes,
-    mechanics,
     items: [],
     statusHistory: [],
+    auditTrail: [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -499,6 +583,7 @@ function mapItemRow(row: any): WOItem {
     serialNumber: row.serial_number,
     discrepancy: row.discrepancy,
     correctiveAction: row.corrective_action,
+    refCode: row.ref_code ?? "",
     mechanicId: row.mechanic_id,
     mechanicName: null,
     estimatedHours: row.estimated_hours,
@@ -517,6 +602,10 @@ function mapItemRow(row: any): WOItem {
       description: p.description,
       qty: p.qty,
       unitPrice: p.unit_price,
+      catalogId: p.catalog_id ?? null,
+      inventoryPartId: p.inventory_part_id ?? null,
+      serialNumber: p.serial_number ?? null,
+      condition: p.condition ?? null,
     })),
     labor: (row.bb_work_order_item_labor ?? []).map(mapLaborRow),
     createdAt: row.created_at,
@@ -548,4 +637,83 @@ function mapStatusHistoryRow(row: any): WOStatusChange {
     changedAt: row.changed_at,
     notes: row.notes,
   }
+}
+
+function mapAuditEntryRow(row: any): AuditEntry {
+  return {
+    id:          row.id,
+    workOrderId: row.work_order_id,
+    entryType:   row.entry_type,
+    actorId:     row.actor_id,
+    actorName:   row.actor_name,
+    summary:     row.summary,
+    detail:      row.detail,
+    fieldName:   row.field_name,
+    oldValue:    row.old_value,
+    newValue:    row.new_value,
+    itemId:      row.item_id,
+    itemNumber:  row.item_number,
+    createdAt:   row.created_at,
+  }
+}
+
+// ─── SOP ↔ WO Item Linking ──────────────────────────────────────────────────
+
+export interface WOItemSOP {
+  id: string
+  itemId: string
+  sopId: string
+  sopNumber: string
+  sopTitle: string
+  linkedBy: string | null
+  linkedAt: string
+  notes: string | null
+}
+
+export async function getItemSOPs(itemId: string): Promise<WOItemSOP[]> {
+  const { data, error } = await supabase
+    .from("bb_wo_item_sops")
+    .select("id, item_id, sop_id, linked_by, linked_at, notes, bb_sops!inner(sop_number, title)")
+    .eq("item_id", itemId)
+    .order("linked_at", { ascending: false })
+
+  if (error) throw error
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    itemId: row.item_id,
+    sopId: row.sop_id,
+    sopNumber: row.bb_sops?.sop_number ?? "",
+    sopTitle: row.bb_sops?.title ?? "",
+    linkedBy: row.linked_by,
+    linkedAt: row.linked_at,
+    notes: row.notes,
+  }))
+}
+
+export async function linkSOPToItem(
+  itemId: string,
+  sopId: string,
+  linkedBy: string,
+  notes?: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("bb_wo_item_sops")
+    .insert({
+      item_id: itemId,
+      sop_id: sopId,
+      linked_by: linkedBy,
+      notes: notes ?? null,
+    })
+
+  if (error) throw error
+}
+
+export async function unlinkSOPFromItem(linkId: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_wo_item_sops")
+    .delete()
+    .eq("id", linkId)
+
+  if (error) throw error
 }

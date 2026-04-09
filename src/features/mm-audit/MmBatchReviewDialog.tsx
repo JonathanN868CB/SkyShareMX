@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react"
+import { localToday } from "@/shared/lib/dates"
 import { useCreateAuditRecordBatch, type WorkspaceDocGroup } from "./useMmAuditData"
 
 const C = "#a78bfa"
@@ -31,7 +32,7 @@ export default function MmBatchReviewDialog({ groups, campaignId, onClose, onSuc
   const revisionChanges = groups.filter(g => g.has_revision_change)
 
   const handleConfirm = () => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localToday()
     batchMut.mutate(
       {
         records: pendingItems.map(item => ({

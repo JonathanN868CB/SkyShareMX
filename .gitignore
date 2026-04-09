@@ -30,6 +30,10 @@ dist-ssr
 .env.local
 .envrc
 .envrc.local
+*-env-import.env
 
 # Local Netlify folder
 .netlify
+
+# Claude Code
+.claude/

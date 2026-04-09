@@ -1,3 +1,19 @@
+/**
+ * PERMISSIONS INDEX
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * This page displays all system permission rules and user access grants.
+ *
+ * !! SYNC REQUIREMENT !!
+ * When you add a new sidebar item or navigation section, you MUST update FOUR files:
+ * 1. sidebarSections in AppSidebar.tsx
+ * 2. APP_SECTIONS in entities/supabase.ts
+ * 3. HARDCODED_RULES below (using the rule() factory)
+ * 4. PERMISSION_GROUPS in pages/admin/Users.tsx
+ *
+ * This keeps permissions documentation and the module access dialog in sync with actual navigation.
+ */
+
 import { useQuery } from "@tanstack/react-query"
 import { Navigate } from "react-router-dom"
 import { supabase } from "@/lib/supabase"
@@ -5,13 +21,28 @@ import { useAuth } from "@/features/auth"
 import { APP_ROLES, APP_SECTIONS } from "@/entities/supabase"
 import type { AppRole, AppSection, Profile } from "@/entities/supabase"
 
-// ─── Hard-coded permission rules (live in source code, not in Supabase) ────────
-const HARDCODED_RULES: {
+// ─── Permission rules auto-generated from sidebar structure ─────────────────────
+// These map sidebar sections to required roles. Update AppSidebar.tsx and these will stay in sync via the rule factory.
+
+type PermissionRule = {
   feature: string
   detail: string
   source: string
   roles: AppRole[]
-}[] = [
+}
+
+// Factory: Generate rules from a section name and AppSection type
+function rule(feature: string, section: AppSection, roles: AppRole[], source: string, detail?: string): PermissionRule {
+  return {
+    feature,
+    detail: detail || `Sidebar nav for "${section}" module`,
+    source,
+    roles,
+  }
+}
+
+const HARDCODED_RULES: PermissionRule[] = [
+  // ── UI Actions (not sidebar sections) ──
   {
     feature: "Aircraft Detail — Edit Cards",
     detail: "Identity, Avionics, Programs, Propulsion, Documentation, Notes",
@@ -24,16 +55,58 @@ const HARDCODED_RULES: {
     source: "AircraftDetailOverlay.tsx:1922",
     roles: ["Admin", "Super Admin"],
   },
+
+  // ── Overview Section ──
+  rule("Dashboard", "Dashboard", ["Technician", "Manager", "Admin", "Super Admin"], "AppSidebar.tsx:67"),
+  rule("Aircraft Info", "Aircraft Info", ["Technician", "Manager", "Admin", "Super Admin"], "AppSidebar.tsx:68"),
+  rule("AI Assistant", "AI Assistant", ["Technician", "Manager", "Admin", "Super Admin"], "AppSidebar.tsx:69"),
+
+  // ── Operations Section ──
+  rule("Discrepancy Intelligence", "Discrepancy Intelligence", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:75", "Historical discrepancy records, analytics, and repeat detection"),
+  rule("My Journey™", "My Journey", ["Technician", "Manager", "Admin", "Super Admin"], "AppSidebar.tsx:76"),
+  rule("My Training", "Training", ["Technician", "Manager", "Admin", "Super Admin"], "AppSidebar.tsx:77"),
+  rule("Maintenance Vendors", "Vendor Map", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:78", "Vendor directory, compliance tracking, and service scheduling"),
+  rule("Compliance", "Compliance", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:79"),
+  rule("Safety's House", "Safety", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:80"),
+
+  // ── Pending Certification Group ──
+  rule("Aircraft Conformity", "Aircraft Conformity", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:87"),
+  rule("14-Day Check", "14-Day Check", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:88"),
+  rule("Maintenance Planning", "Maintenance Planning", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:89"),
+  rule("Ten or More", "Ten or More", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:90"),
+  rule("Terminal-OGD", "Terminal-OGD", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:91"),
+  rule("Projects", "Projects", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:92"),
+  rule("Docs & Links", "Docs & Links", ["Manager", "Admin", "Super Admin"], "AppSidebar.tsx:93"),
+
+  // ── Administration Section (Admin/Super Admin only) ──
   {
-    feature: "Administration Sidebar Section",
-    detail: "Users, Alerts & Notifications, Settings nav items",
-    source: "AppSidebar.tsx:67",
+    feature: "Administration — Users Management",
+    detail: "Create, edit, delete user accounts and assign roles",
+    source: "AppSidebar.tsx:102",
+    roles: ["Admin", "Super Admin"],
+  },
+  {
+    feature: "Administration — Team Training & Journey",
+    detail: "View team progress across training modules and My Journey",
+    source: "AppSidebar.tsx:103",
+    roles: ["Super Admin"],
+  },
+  {
+    feature: "Administration — Alerts & Notifications",
+    detail: "Configure system alerts and notification settings",
+    source: "AppSidebar.tsx:104",
+    roles: ["Admin", "Super Admin"],
+  },
+  {
+    feature: "Administration — Settings",
+    detail: "Global system configuration and preferences",
+    source: "AppSidebar.tsx:105",
     roles: ["Admin", "Super Admin"],
   },
   {
     feature: "Permissions Index (this page)",
-    detail: "View all system permission rules",
-    source: "AppSidebar.tsx",
+    detail: "View all system permission rules and user access grants",
+    source: "AppSidebar.tsx:106",
     roles: ["Super Admin"],
   },
   {
@@ -53,6 +126,18 @@ const HARDCODED_RULES: {
     detail: "Requester can cancel (archive or delete) their own parts request",
     source: "PartsDetailView.tsx",
     roles: ["Technician", "Manager", "Admin", "Super Admin"],
+  },
+  {
+    feature: "Supervisors Sidebar Section",
+    detail: "Shown to Super Admin always. Shown to other users only when they appear as a supervisor in Manager Assignments (not role-based — data-driven via manager_assignments table).",
+    source: "AppSidebar.tsx + MyJourney.tsx",
+    roles: ["Super Admin"],
+  },
+  {
+    feature: "My Team Tab — Supervisor Notes",
+    detail: "Supervisors can write private notes about direct reports. Notes are never visible to the employee unless explicitly shared (visible_to_subject flag — coming soon).",
+    source: "MyJourney.tsx + managerNotes.ts",
+    roles: ["Super Admin"],
   },
 ]
 

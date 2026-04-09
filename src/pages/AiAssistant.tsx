@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react"
-import { Send, ShieldAlert, Award, Database, Wrench, FileText, BookOpen } from "lucide-react"
+import { Send, ShieldAlert, Award, Database, Wrench, FileText, BookOpen, GraduationCap } from "lucide-react"
+import { useAuth } from "@/features/auth"
+import DwightSchoolOfThought from "./DwightSchoolOfThought"
 
 // ── Keyframe styles injected once ────────────────────────────
 const COST_METER_STYLES = `
@@ -50,6 +52,10 @@ type Message = {
 }
 
 export default function AiAssistant() {
+  const { profile } = useAuth()
+  const isSuperAdmin = profile?.role === "Super Admin"
+  const isManager = isSuperAdmin || profile?.role === "Admin" || profile?.role === "Manager"
+  const [showSchool, setShowSchool] = useState(false)
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
@@ -59,6 +65,14 @@ export default function AiAssistant() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const opening = useMemo(() => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)], [])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, loading])
+
+  if (showSchool && isManager) {
+    return <DwightSchoolOfThought onBack={() => setShowSchool(false)} isSuperAdmin={isSuperAdmin} />
+  }
 
   function toggleSource(source: ContextSource) {
     setContextSources(prev => {
@@ -76,10 +90,6 @@ export default function AiAssistant() {
   const sessionCost = (sessionTokens.input * 0.0000008) + (sessionTokens.output * 0.000004)
   const totalTokens = sessionTokens.input + sessionTokens.output
   const costDisplay = sessionCost < 0.0001 ? "<$0.0001" : `$${sessionCost.toFixed(4)}`
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, loading])
 
   async function send() {
     const text = input.trim()
@@ -215,6 +225,28 @@ export default function AiAssistant() {
               Schrute Farms Quality
             </span>
           </div>
+
+          {/* School of Thought — Manager+ only */}
+          {isManager && (
+            <button
+              onClick={() => setShowSchool(true)}
+              className="flex flex-col items-center justify-center px-5 py-5 gap-2 flex-shrink-0 text-center border-l border-border hover:bg-white/[0.02] transition-colors"
+              title="Dwight School of Thought"
+            >
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center"
+                style={{ background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.25)" }}
+              >
+                <GraduationCap className="w-5 h-5" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+              </div>
+              <span
+                className="text-[10.5px] leading-tight text-center text-muted-foreground"
+                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.12em", textTransform: "uppercase", maxWidth: "70px" }}
+              >
+                School of Thought
+              </span>
+            </button>
+          )}
 
         </div>
 

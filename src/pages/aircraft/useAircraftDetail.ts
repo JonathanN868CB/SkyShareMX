@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
 import type { AircraftDetailData, AvionicsService, CMMDocument, DataField, GroupCMM, NavSubscription } from "./fleetData"
+import type { AircraftPhoto, AircraftPhotoRating } from "@/entities/supabase"
 
 // aircraft_details table was created after the last type generation.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -31,17 +32,18 @@ export function useAircraftDetail(tailNumber: string, fallback: AircraftDetailDa
       if (!data) return { ...fallback, cmms: fallback.cmms ?? [] }
 
       return {
-        identity:         arr<DataField>(data.identity,         fallback.identity),
-        powerplant:       arr<DataField>(data.powerplant,        fallback.powerplant),
-        apu:              data.apu !== null && data.apu !== undefined
-                            ? arr<DataField>(data.apu, fallback.apu ?? [])
-                            : fallback.apu,
-        programs:         arr<DataField>(data.programs,         fallback.programs),
-        navSubscriptions: arr<NavSubscription>(data.nav_subscriptions, fallback.navSubscriptions),
-        documentation:    arr<DataField>(data.documentation,    fallback.documentation),
-        cmms:             (data.cmms as CMMDocument[]) ?? [],
-        avionics:         arr<AvionicsService>(data.avionics,   fallback.avionics),
-        notes:            data.notes ?? fallback.notes,
+        identity:          arr<DataField>(data.identity,         fallback.identity),
+        powerplant:        arr<DataField>(data.powerplant,        fallback.powerplant),
+        apu:               data.apu !== null && data.apu !== undefined
+                             ? arr<DataField>(data.apu, fallback.apu ?? [])
+                             : fallback.apu,
+        programs:          arr<DataField>(data.programs,         fallback.programs),
+        navSubscriptions:  arr<NavSubscription>(data.nav_subscriptions, fallback.navSubscriptions),
+        documentation:     arr<DataField>(data.documentation,    fallback.documentation),
+        cmms:              (data.cmms as CMMDocument[]) ?? [],
+        avionics:          arr<AvionicsService>(data.avionics,   fallback.avionics),
+        notes:             data.notes ?? fallback.notes,
+        hobbsDifferential: data.hobbs_differential != null ? Number(data.hobbs_differential) : null,
       } satisfies AircraftDetailData
     },
     staleTime: 30_000,
@@ -61,17 +63,18 @@ export function useUpsertAircraftDetail() {
       detail: AircraftDetailData
     }) => {
       const { error } = await db.from("aircraft_details").upsert({
-        tail_number:       tailNumber,
-        identity:          detail.identity,
-        powerplant:        detail.powerplant,
-        apu:               detail.apu,
-        programs:          detail.programs,
-        nav_subscriptions: detail.navSubscriptions,
-        documentation:     detail.documentation,
-        cmms:              detail.cmms ?? [],
-        avionics:          detail.avionics ?? [],
-        notes:             detail.notes,
-        updated_at:        new Date().toISOString(),
+        tail_number:        tailNumber,
+        identity:           detail.identity,
+        powerplant:         detail.powerplant,
+        apu:                detail.apu,
+        programs:           detail.programs,
+        nav_subscriptions:  detail.navSubscriptions,
+        documentation:      detail.documentation,
+        cmms:               detail.cmms ?? [],
+        avionics:           detail.avionics ?? [],
+        notes:              detail.notes,
+        hobbs_differential: detail.hobbsDifferential ?? null,
+        updated_at:         new Date().toISOString(),
       })
       if (error) throw error
     },
@@ -150,6 +153,113 @@ export function useDeleteGroupCMM() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["group_cmms"] })
+    },
+  })
+}
+
+// ─── Aircraft Photo ────────────────────────────────────────────────────────────
+
+export function useAircraftPhoto(tailNumber: string) {
+  return useQuery<AircraftPhoto | null>({
+    queryKey: ["aircraft_photo", tailNumber],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from("aircraft_photos")
+        .select("*")
+        .eq("tail_number", tailNumber)
+        .maybeSingle()
+      if (error) throw error
+      return data ?? null
+    },
+    staleTime: 30_000,
+  })
+}
+
+export function useUpsertAircraftPhoto() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({
+      tailNumber,
+      file,
+      photographerName,
+      profileId,
+    }: {
+      tailNumber: string
+      file: File
+      photographerName: string
+      profileId: string
+    }) => {
+      const ext = file.name.split(".").pop() ?? "jpg"
+      const storagePath = `${tailNumber}/${Date.now()}.${ext}`
+
+      const { error: uploadError } = await supabase.storage
+        .from("aircraft-photos")
+        .upload(storagePath, file, { upsert: true, contentType: file.type })
+      if (uploadError) throw uploadError
+
+      const { data: urlData } = supabase.storage
+        .from("aircraft-photos")
+        .getPublicUrl(storagePath)
+
+      const { error: dbError } = await db.from("aircraft_photos").upsert({
+        tail_number:       tailNumber,
+        storage_path:      storagePath,
+        photo_url:         urlData.publicUrl,
+        uploaded_by:       profileId,
+        photographer_name: photographerName,
+        uploaded_at:       new Date().toISOString(),
+      })
+      if (dbError) throw dbError
+    },
+    onSuccess: (_, { tailNumber }) => {
+      qc.invalidateQueries({ queryKey: ["aircraft_photo", tailNumber] })
+    },
+  })
+}
+
+// ─── Aircraft Photo Ratings ────────────────────────────────────────────────────
+
+export function useAircraftPhotoRatings(tailNumber: string) {
+  return useQuery<{ ratings: AircraftPhotoRating[]; avg: number; myRating: number | null; count: number }>({
+    queryKey: ["aircraft_photo_ratings", tailNumber],
+    queryFn: async () => {
+      const [ratingsRes, profileRes] = await Promise.all([
+        db.from("aircraft_photo_ratings").select("*").eq("tail_number", tailNumber),
+        db.from("profiles").select("id").eq("user_id", (await supabase.auth.getUser()).data.user?.id ?? "").maybeSingle(),
+      ])
+      if (ratingsRes.error) throw ratingsRes.error
+      const ratings: AircraftPhotoRating[] = ratingsRes.data ?? []
+      const myProfileId: string | null = profileRes.data?.id ?? null
+      const avg = ratings.length ? ratings.reduce((s, r) => s + r.rating, 0) / ratings.length : 0
+      const myRating = myProfileId ? (ratings.find(r => r.profile_id === myProfileId)?.rating ?? null) : null
+      return { ratings, avg, myRating, count: ratings.length }
+    },
+    staleTime: 30_000,
+  })
+}
+
+export function useUpsertAircraftPhotoRating() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({
+      tailNumber,
+      profileId,
+      rating,
+    }: {
+      tailNumber: string
+      profileId: string
+      rating: number
+    }) => {
+      const { error } = await db.from("aircraft_photo_ratings").upsert({
+        tail_number: tailNumber,
+        profile_id:  profileId,
+        rating,
+        rated_at:    new Date().toISOString(),
+      })
+      if (error) throw error
+    },
+    onSuccess: (_, { tailNumber }) => {
+      qc.invalidateQueries({ queryKey: ["aircraft_photo_ratings", tailNumber] })
     },
   })
 }

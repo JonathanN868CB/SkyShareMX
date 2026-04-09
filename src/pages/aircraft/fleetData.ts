@@ -34,6 +34,8 @@ export interface DataField {
   provider?: string     // e.g. "Pratt & Whitney Canada"
   contractNumber?: string
   expiry?: string       // e.g. "2026-08" or "Aug 2026"
+  // Library link — when set, this slot is owned by mm_source_documents (compliance library)
+  libraryManualId?: string
 }
 
 // Nav database subscription — special frequent-use data (28-day cycle)
@@ -114,6 +116,7 @@ export interface AircraftDetailData {
   cmms: CMMDocument[]             // component maintenance manual library
   avionics: AvionicsService[]     // flexible avionics & connectivity services
   notes: string
+  hobbsDifferential: number | null  // Hobbs meter offset: A/F TT = Hobbs + hobbsDifferential
 }
 
 // ─── Directory (flat base records) ───────────────────────────────────────────
@@ -397,6 +400,7 @@ function makeDetail({
     cmms: [],
     avionics: [],
     notes: "",
+    hobbsDifferential: null,
   }
 }
 

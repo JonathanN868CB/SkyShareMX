@@ -18,18 +18,26 @@ const PODetail           = lazy(() => import("@/features/beet-box/modules/purcha
 const POCreate           = lazy(() => import("@/features/beet-box/modules/purchase-orders/POCreate"))
 const ToolDashboard      = lazy(() => import("@/features/beet-box/modules/tool-calibration/ToolDashboard"))
 const ToolDetail         = lazy(() => import("@/features/beet-box/modules/tool-calibration/ToolDetail"))
+const ToolCreate         = lazy(() => import("@/features/beet-box/modules/tool-calibration/ToolCreate"))
 const InvoiceDashboard   = lazy(() => import("@/features/beet-box/modules/invoicing/InvoiceDashboard"))
 const InvoiceDetail      = lazy(() => import("@/features/beet-box/modules/invoicing/InvoiceDetail"))
-const LogbookDashboard   = lazy(() => import("@/features/beet-box/modules/logbook/LogbookDashboard"))
-const LogbookDetail      = lazy(() => import("@/features/beet-box/modules/logbook/LogbookDetail"))
 const SOPDashboard       = lazy(() => import("@/features/beet-box/modules/sops/SOPDashboard"))
 const SOPDetail          = lazy(() => import("@/features/beet-box/modules/sops/SOPDetail"))
 const TrainingDashboard  = lazy(() => import("@/features/beet-box/modules/training/TrainingDashboard"))
 const TrainingDetail     = lazy(() => import("@/features/beet-box/modules/training/TrainingDetail"))
 const SettingsDashboard  = lazy(() => import("@/features/beet-box/modules/settings/SettingsDashboard"))
+const FlatRatesManager   = lazy(() => import("@/features/beet-box/modules/managers/FlatRatesManager"))
+const CannedActionsManager = lazy(() => import("@/features/beet-box/modules/managers/CannedActionsManager"))
 const BeetBoxParts       = lazy(() => import("@/pages/Parts"))
 const BeetBoxPartsNew    = lazy(() => import("@/pages/PartsNew"))
 const BeetBoxPartsDetail = lazy(() => import("@/pages/PartsDetail"))
+const CatalogBrowser     = lazy(() => import("@/features/beet-box/modules/catalog/CatalogBrowser"))
+const CatalogDetail      = lazy(() => import("@/features/beet-box/modules/catalog/CatalogDetail"))
+const PartsOverview      = lazy(() => import("@/features/beet-box/modules/parts-overview/PartsOverview"))
+const ReportsDashboard   = lazy(() => import("@/features/beet-box/modules/reports/ReportsDashboard"))
+const ComplianceDash     = lazy(() => import("@/features/beet-box/modules/compliance/ComplianceDashboard"))
+const SuppliersList      = lazy(() => import("@/features/beet-box/modules/suppliers/SuppliersList"))
+const SupplierDetail     = lazy(() => import("@/features/beet-box/modules/suppliers/SupplierDetail"))
 
 const Layout = lazy(() => import("./layout/Layout").then(m => ({ default: m.Layout })))
 const Login = lazy(() => import("@/pages/Login"))
@@ -50,14 +58,13 @@ const VendorDetailPage = lazy(() => import("@/pages/VendorDetailPage"))
 const Compliance   = lazy(() => import("@/pages/Compliance"))
 const SafetyHouse  = lazy(() => import("@/pages/SafetyHouse"))
 const DiscrepancyIntelligence = lazy(() => import("@/pages/DiscrepancyIntelligence"))
-const Parts = lazy(() => import("@/pages/Parts"))
-const PartsNew = lazy(() => import("@/pages/PartsNew"))
-const PartsDetail = lazy(() => import("@/pages/PartsDetail"))
 const ExternalRequests = lazy(() => import("@/pages/external-requests/ExternalRequestsPage"))
 const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/ExternalRequestDetailPage"))
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
 const FourteenDayCheckResponse = lazy(() => import("@/pages/fourteen-day-check/FourteenDayCheckResponse"))
-const FourteenDayCheck = lazy(() => import("@/pages/FourteenDayCheck"))
+const FourteenDayCheck         = lazy(() => import("@/pages/FourteenDayCheck"))
+const InspectionTemplatesPage  = lazy(() => import("@/pages/InspectionTemplatesPage"))
+const MaintenancePlanning = lazy(() => import("@/pages/MaintenancePlanning"))
 const RecordsVaultApp      = lazy(() => import("@/features/records-vault/RecordsVaultApp").then(m => ({ default: m.RecordsVaultApp })))
 const RecordsVaultRedirect = lazy(() => import("@/features/records-vault/RecordsVaultApp").then(m => ({ default: m.RecordsVaultRedirect })))
 const RecordsVaultSearch   = lazy(() => import("@/features/records-vault/pages/RecordsVaultSearchPage"))
@@ -65,6 +72,7 @@ const RecordsVaultBrowse   = lazy(() => import("@/features/records-vault/pages/R
 const RecordsVaultTimeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultTimelinePage"))
 const RecordsVaultPipeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultPipelinePage"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
+const ProjectsApp = lazy(() => import("@/features/projects/ProjectsApp"))
 
 const fallback = (
   <div className="min-h-screen flex items-center justify-center bg-background">
@@ -125,17 +133,16 @@ const routes: RouteObject[] = [
       { path: "dev/access-denied", element: wrap(<AccessDenied name="Aircraft Conformity" />) },
       { path: "ai-assistant", element: wrap(<AiAssistant />) },
       { path: "conformity",  element: wrap(<ComingSoon name="Aircraft Conformity" />) },
-      { path: "14-day-check", element: wrap(<FourteenDayCheck />) },
-      { path: "planning",    element: wrap(<ComingSoon name="Maintenance Planning" />) },
+      { path: "14-day-check",           element: wrap(<FourteenDayCheck />) },
+      { path: "14-day-check/templates", element: wrap(<InspectionTemplatesPage />) },
+      { path: "planning",    element: wrap(<MaintenancePlanning />) },
       { path: "ten-or-more", element: wrap(<ComingSoon name="Ten or More" />) },
       { path: "terminal-ogd", element: wrap(<ComingSoon name="Terminal-OGD" />) },
-      { path: "projects",    element: wrap(<ComingSoon name="Projects" />) },
+      { path: "projects",           element: wrap(<ProjectsApp />) },
+      { path: "projects/:boardId",  element: wrap(<ProjectsApp />) },
       { path: "compliance",   element: wrap(<Compliance />) },
       { path: "safety",       element: wrap(<SafetyHouse />) },
       { path: "discrepancy-intelligence", element: wrap(<DiscrepancyIntelligence />) },
-      { path: "parts",        element: wrap(<Parts />) },
-      { path: "parts/new",    element: wrap(<PartsNew />) },
-      { path: "parts/:id",    element: wrap(<PartsDetail />) },
       { path: "external-requests",     element: wrap(<ExternalRequests />) },
       { path: "external-requests/:id", element: wrap(<ExternalRequestDetail />) },
       { path: "training",    element: wrap(<MyTraining />) },
@@ -190,19 +197,27 @@ const routes: RouteObject[] = [
       { path: "purchase-orders/new",              element: wrap(<POCreate />) },
       { path: "purchase-orders/:id",              element: wrap(<PODetail />) },
       { path: "tool-calibration",                 element: wrap(<ToolDashboard />) },
+      { path: "tool-calibration/new",             element: wrap(<ToolCreate />) },
       { path: "tool-calibration/:id",             element: wrap(<ToolDetail />) },
       { path: "invoicing",                        element: wrap(<InvoiceDashboard />) },
       { path: "invoicing/:id",                    element: wrap(<InvoiceDetail />) },
-      { path: "logbook",                          element: wrap(<LogbookDashboard />) },
-      { path: "logbook/:id",                      element: wrap(<LogbookDetail />) },
       { path: "sop-library",                      element: wrap(<SOPDashboard />) },
       { path: "sop-library/:id",                  element: wrap(<SOPDetail />) },
       { path: "training",                         element: wrap(<TrainingDashboard />) },
       { path: "training/:id",                     element: wrap(<TrainingDetail />) },
       { path: "settings",                         element: wrap(<SettingsDashboard />) },
+      { path: "flat-rates",                       element: wrap(<FlatRatesManager />) },
+      { path: "canned-actions",                   element: wrap(<CannedActionsManager />) },
       { path: "parts",                            element: wrap(<BeetBoxParts />) },
       { path: "parts/new",                        element: wrap(<BeetBoxPartsNew />) },
       { path: "parts/:id",                        element: wrap(<BeetBoxPartsDetail />) },
+      { path: "catalog",                          element: wrap(<CatalogBrowser />) },
+      { path: "catalog/:id",                      element: wrap(<CatalogDetail />) },
+      { path: "parts-overview",                   element: wrap(<PartsOverview />) },
+      { path: "reports",                          element: wrap(<ReportsDashboard />) },
+      { path: "compliance",                       element: wrap(<ComplianceDash />) },
+      { path: "suppliers",                        element: wrap(<SuppliersList />) },
+      { path: "suppliers/:id",                    element: wrap(<SupplierDetail />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────

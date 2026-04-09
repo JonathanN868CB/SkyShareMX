@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect } from "react"
-import { AlertTriangle, Bell, Camera, Check, LogOut, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { AlertTriangle, Award, Bell, Camera, Check, LogOut, MessageSquare, Moon, Search, Settings, Sun, Trash2, User, UserPlus, Users } from "lucide-react"
+import { getMechanicCerts, upsertMechanicCert } from "@/features/beet-box/services/mechanics"
+import type { MechanicCert } from "@/features/beet-box/types"
 import { SuggestionWidget } from "@/features/site-suggestions"
 import { useNavigate } from "react-router-dom"
 import { useTheme } from "next-themes"
@@ -74,6 +76,13 @@ function NotifIcon({ type }: { type: string }) {
       </div>
     )
   }
+  if (type === "suggestion_replied") {
+    return (
+      <div style={{ ...style, background: "rgba(129,140,248,0.15)", color: "#818cf8" }}>
+        <MessageSquare size={13} />
+      </div>
+    )
+  }
   return (
     <div style={{ ...style, background: "rgba(255,255,255,0.06)", color: "hsl(var(--muted-foreground))" }}>
       <Bell size={13} />
@@ -84,43 +93,71 @@ function NotifIcon({ type }: { type: string }) {
 function NotificationRow({
   notif,
   onRead,
+  onDelete,
+  onClose,
 }: {
   notif: AppNotification
   onRead: (id: string) => void
+  onDelete: (id: string) => void
+  onClose: () => void
 }) {
+  const navigate = useNavigate()
+  const link = (notif.metadata?.link as string | undefined) ??
+    (notif.type === "new_user" ? "/app/admin/users" : null)
+
+  function handleClick() {
+    if (!notif.read) onRead(notif.id)
+    if (link) { onClose(); navigate(link) }
+  }
+
   return (
-    <button
-      onClick={() => { if (!notif.read) onRead(notif.id) }}
-      className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-white/5"
-      style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", cursor: notif.read ? "default" : "pointer" }}
+    <div
+      className="flex items-start group transition-colors hover:bg-white/5"
+      style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
     >
-      <NotifIcon type={notif.type} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span
-            className="text-xs font-semibold truncate"
-            style={{ color: notif.read ? "hsl(var(--muted-foreground))" : "hsl(var(--foreground))" }}
-          >
-            {notif.title}
-          </span>
-          {!notif.read && (
+      <button
+        onClick={handleClick}
+        className="flex-1 flex items-start gap-3 px-4 py-3 text-left min-w-0"
+        style={{ cursor: (link || !notif.read) ? "pointer" : "default" }}
+      >
+        <NotifIcon type={notif.type} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
             <span
-              className="shrink-0 w-1.5 h-1.5 rounded-full"
-              style={{ background: "var(--skyshare-gold)" }}
-            />
-          )}
+              className="text-xs font-semibold truncate"
+              style={{ color: notif.read ? "hsl(var(--muted-foreground))" : "hsl(var(--foreground))" }}
+            >
+              {notif.title}
+            </span>
+            {!notif.read && (
+              <span
+                className="shrink-0 w-1.5 h-1.5 rounded-full"
+                style={{ background: "var(--skyshare-gold)" }}
+              />
+            )}
+          </div>
+          <p
+            className="text-xs mt-0.5 leading-snug"
+            style={{ color: "hsl(var(--muted-foreground))", opacity: notif.read ? 0.55 : 0.85 }}
+          >
+            {notif.message}
+          </p>
+          <span className="text-[10px] mt-1 block" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>
+            {timeAgo(notif.created_at)}
+          </span>
         </div>
-        <p
-          className="text-xs mt-0.5 leading-snug"
-          style={{ color: "hsl(var(--muted-foreground))", opacity: notif.read ? 0.55 : 0.85 }}
-        >
-          {notif.message}
-        </p>
-        <span className="text-[10px] mt-1 block" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>
-          {timeAgo(notif.created_at)}
-        </span>
-      </div>
-    </button>
+      </button>
+      <button
+        onClick={e => { e.stopPropagation(); onDelete(notif.id) }}
+        className="shrink-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity px-3 self-stretch"
+        style={{ color: "hsl(var(--muted-foreground))" }}
+        title="Dismiss"
+        onMouseEnter={e => (e.currentTarget.style.color = "hsl(var(--foreground))")}
+        onMouseLeave={e => (e.currentTarget.style.color = "hsl(var(--muted-foreground))")}
+      >
+        ×
+      </button>
+    </div>
   )
 }
 
@@ -138,9 +175,59 @@ function ProfileSettingsDialog({
   const [avatarInitials, setAvatarInitials] = useState(profile?.avatar_initials ?? "")
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(profile?.avatar_url ?? "")
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Mechanic cert state ────────────────────────────────────────────────────
+  const [existingCert, setExistingCert]   = useState<MechanicCert | null>(null)
+  const [certType, setCertType]           = useState<MechanicCert["certType"]>("A&P")
+  const [certNumber, setCertNumber]       = useState("")
+  const [certSaving, setCertSaving]       = useState(false)
+  const [certSaved, setCertSaved]         = useState(false)
+  const [certError, setCertError]         = useState<string | null>(null)
+
+  const certChanged = certType !== (existingCert?.certType ?? "A&P") || certNumber !== (existingCert?.certNumber ?? "")
+
+  // Load cert whenever profile becomes available (covers page-refresh race where
+  // the drawer opens before auth finishes, causing handleOpenChange to skip loadCert).
+  useEffect(() => {
+    if (profile?.id) loadCert(profile.id)
+  }, [profile?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadCert(profileId: string) {
+    const certs = await getMechanicCerts(profileId)
+    const primary = certs.find(c => c.isPrimary) ?? certs[0] ?? null
+    setExistingCert(primary)
+    setCertType(primary?.certType ?? "A&P")
+    setCertNumber(primary?.certNumber ?? "")
+  }
+
+  async function handleSaveCert() {
+    if (!profile || !certNumber.trim()) return
+    setCertSaving(true)
+    setCertError(null)
+    try {
+      await upsertMechanicCert({
+        id: existingCert?.id,
+        profileId: profile.id,
+        certType,
+        certNumber: certNumber.trim(),
+        issuedDate: existingCert?.issuedDate ?? null,
+        isPrimary: true,
+        notes: existingCert?.notes ?? null,
+      })
+      await loadCert(profile.id)
+      setCertSaved(true)
+      setTimeout(() => setCertSaved(false), 2000)
+    } catch (err) {
+      setCertError(err instanceof Error ? err.message : "Failed to save certificate")
+    } finally {
+      setCertSaving(false)
+    }
+  }
 
   // Reset local state when dialog opens
   const handleOpenChange = (v: boolean) => {
@@ -150,6 +237,9 @@ function ProfileSettingsDialog({
       setAvatarInitials(profile.avatar_initials ?? "")
       setAvatarPreviewUrl(profile.avatar_url ?? "")
       setSaved(false)
+      setSaveError(null)
+      setCertError(null)
+      loadCert(profile.id)
     }
     onOpenChange(v)
   }
@@ -167,10 +257,19 @@ function ProfileSettingsDialog({
     if (!file || !user) return
 
     // Validate file
-    if (!file.type.startsWith("image/")) return
-    if (file.size > 2 * 1024 * 1024) return // 2MB max
+    if (!file.type.startsWith("image/")) {
+      setUploadError("File must be an image.")
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("File must be 10 MB or smaller.")
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      return
+    }
 
     setUploading(true)
+    setUploadError(null)
     const ext = file.name.split(".").pop() || "jpg"
     const path = `${user.id}/avatar.${ext}`
 
@@ -178,7 +277,9 @@ function ProfileSettingsDialog({
       .from("avatars")
       .upload(path, file, { upsert: true })
 
-    if (!error) {
+    if (error) {
+      setUploadError(error.message || "Upload failed. Please try again.")
+    } else {
       const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path)
       // Add cache-bust so the browser picks up the new image
       setAvatarPreviewUrl(`${urlData.publicUrl}?t=${Date.now()}`)
@@ -195,7 +296,8 @@ function ProfileSettingsDialog({
   async function handleSave() {
     if (!profile) return
     setSaving(true)
-    await supabase
+    setSaveError(null)
+    const { error } = await supabase
       .from("profiles")
       .update({
         display_name: displayName.trim() || null,
@@ -204,16 +306,35 @@ function ProfileSettingsDialog({
         avatar_url: avatarPreviewUrl || null,
       })
       .eq("id", profile.id)
+    if (error) {
+      setSaveError(error.message)
+      setSaving(false)
+      return
+    }
     await refreshProfile()
     setSaving(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
+  const saveButtonStyle: React.CSSProperties = {
+    background: hasChanges ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
+    color: hasChanges ? "#111" : "hsl(var(--muted-foreground))",
+    fontFamily: "var(--font-heading)",
+    animation: hasChanges ? "profile-save-pulse 1.8s ease-in-out infinite" : "none",
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md" style={{ background: "hsl(0 0% 9%)", border: "1px solid rgba(255,255,255,0.08)" }}>
-        <DialogHeader>
+      <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]" style={{ background: "hsl(0 0% 9%)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <style>{`
+          @keyframes profile-save-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(212,160,23,0.5); }
+            50%       { box-shadow: 0 0 0 7px rgba(212,160,23,0); }
+          }
+        `}</style>
+
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2" style={{ fontFamily: "var(--font-heading)" }}>
             <Settings size={16} style={{ color: "var(--skyshare-gold)" }} />
             Profile Settings
@@ -223,7 +344,7 @@ function ProfileSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 pt-2">
+        <div className="space-y-6 pt-2 overflow-y-auto flex-1 pr-1">
 
           {/* ── Avatar preview + upload ── */}
           <div className="flex items-center gap-4">
@@ -272,14 +393,6 @@ function ProfileSettingsDialog({
                 {profile?.role}
               </p>
               <div className="flex items-center gap-2 mt-2">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="text-[10px] px-2 py-1 rounded transition-colors hover:bg-white/10"
-                  style={{ color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.3)" }}
-                >
-                  {uploading ? "Uploading..." : "Upload Photo"}
-                </button>
                 {avatarPreviewUrl && (
                   <button
                     onClick={handleRemoveAvatar}
@@ -290,11 +403,16 @@ function ProfileSettingsDialog({
                   </button>
                 )}
               </div>
+              {uploadError && (
+                <p className="text-[10px] mt-1" style={{ color: "#f87171" }}>
+                  ✗ {uploadError}
+                </p>
+              )}
             </div>
           </div>
 
           {/* ── Display Name ── */}
-          <div>
+          <div style={{ position: "relative" }}>
             <label className="text-[10px] font-bold uppercase tracking-widest mb-1.5 block" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
               Display Name
             </label>
@@ -304,6 +422,14 @@ function ProfileSettingsDialog({
               placeholder={profile?.full_name ?? "Enter a display name"}
               className="h-9 text-sm bg-white/5 border-white/10"
             />
+            <Button
+              onClick={handleSave}
+              disabled={!hasChanges || saving}
+              className="absolute right-0 h-6 px-3 text-[10px] font-bold uppercase tracking-wider"
+              style={{ ...saveButtonStyle, borderRadius: 4, top: -15 }}
+            >
+              {saved ? "Saved ✓" : saving ? "Saving..." : "Save Changes"}
+            </Button>
             <p className="text-[10px] mt-1.5" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.5 }}>
               This is cosmetic only. Your account identity remains {profile?.full_name} ({profile?.email}).
             </p>
@@ -348,6 +474,89 @@ function ProfileSettingsDialog({
                   )}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* ── Mechanic Certificate ── */}
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5 block" style={{ color: "hsl(var(--muted-foreground))", fontFamily: "var(--font-heading)" }}>
+              <Award size={11} style={{ color: "var(--skyshare-gold)" }} />
+              Mechanic Certificate
+            </label>
+            <div className="rounded-md p-3 space-y-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              {/* Cert type */}
+              <div>
+                <p className="text-[10px] mb-1" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>Certificate Type</p>
+                <div className="flex gap-1.5 flex-wrap">
+                  {(["A&P", "IA", "A&P/IA", "Avionics", "Other"] as MechanicCert["certType"][]).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setCertType(t)}
+                      className="px-3 py-1 rounded text-xs font-semibold transition-all"
+                      style={{
+                        background: certType === t ? "var(--skyshare-gold)" : "rgba(255,255,255,0.05)",
+                        color: certType === t ? "#111" : "rgba(255,255,255,0.5)",
+                        border: certType === t ? "1px solid transparent" : "1px solid rgba(255,255,255,0.08)",
+                        fontFamily: "var(--font-heading)",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Cert number */}
+              <div>
+                <p className="text-[10px] mb-1" style={{ color: "hsl(var(--muted-foreground))", opacity: 0.6 }}>Certificate Number</p>
+                <div className="flex gap-2 items-center">
+                  <Input
+                    value={certNumber}
+                    onChange={e => {
+                      // Allow only alphanumeric characters (A&P numbers can contain letters)
+                      const sanitized = e.target.value.replace(/[^a-zA-Z0-9]/g, "")
+                      setCertNumber(sanitized)
+                    }}
+                    placeholder="e.g. 3444980"
+                    className="h-9 text-sm bg-white/5 border-white/10 font-mono flex-1"
+                    autoComplete="off"
+                  />
+                  <Button
+                    onClick={handleSaveCert}
+                    disabled={!certChanged || certSaving || !certNumber.trim()}
+                    className="h-9 px-4 text-xs font-bold uppercase tracking-wider shrink-0"
+                    style={{
+                      background: certChanged && certNumber.trim() ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
+                      color: certChanged && certNumber.trim() ? "#111" : "hsl(var(--muted-foreground))",
+                      fontFamily: "var(--font-heading)",
+                    }}
+                  >
+                    {certSaved ? <Check size={14} /> : certSaving ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+              </div>
+              {/* Preview */}
+              {existingCert && (
+                <p className="text-[10px]" style={{ color: "rgba(52,211,153,0.7)" }}>
+                  ✓ Certificate on file: {existingCert.certType} {existingCert.certNumber}
+                  {" — "}will appear on logbook entries you sign
+                </p>
+              )}
+              {!existingCert && (
+                <p className="text-[10px]" style={{ color: "rgba(255,255,255,0.25)" }}>
+                  No certificate on file yet. This populates the signature block on logbook entries.
+                </p>
+              )}
+              {certNumber && /[^a-zA-Z0-9]/.test(certNumber.replace(/^\s+|\s+$/g, '')) && (
+                <p className="text-[10px]" style={{ color: "#fbbf24" }}>
+                  ⚠ Only alphanumeric characters allowed (special characters will be removed)
+                </p>
+              )}
+              {certError && (
+                <p className="text-[10px]" style={{ color: "#f87171" }}>
+                  ✗ {certError}
+                </p>
+              )}
             </div>
           </div>
 
@@ -403,19 +612,22 @@ function ProfileSettingsDialog({
           </div>
 
           {/* ── Save ── */}
-          <div className="flex justify-end">
-            <Button
-              onClick={handleSave}
-              disabled={!hasChanges || saving}
-              className="h-8 px-5 text-xs font-bold uppercase tracking-wider"
-              style={{
-                background: hasChanges ? "var(--skyshare-gold)" : "rgba(255,255,255,0.06)",
-                color: hasChanges ? "#111" : "hsl(var(--muted-foreground))",
-                fontFamily: "var(--font-heading)",
-              }}
-            >
-              {saved ? "Saved" : saving ? "Saving..." : "Save Changes"}
-            </Button>
+          <div className="space-y-2">
+            {saveError && (
+              <p className="text-[10px] text-right" style={{ color: "#f87171" }}>
+                ✗ {saveError}
+              </p>
+            )}
+            <div className="flex justify-end">
+              <Button
+                onClick={handleSave}
+                disabled={!hasChanges || saving}
+                className="h-8 px-5 text-xs font-bold uppercase tracking-wider"
+                style={saveButtonStyle}
+              >
+                {saved ? "Saved" : saving ? "Saving..." : "Save Changes"}
+              </Button>
+            </div>
           </div>
 
         </div>
@@ -428,8 +640,9 @@ function ProfileSettingsDialog({
 export function Topbar() {
   const { profile, user, signOut } = useAuth()
   const { theme, setTheme } = useTheme()
-  const { notifications, unreadCount, markRead, markAllRead } = useNotifications()
+  const { notifications, unreadCount, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [notifOpen, setNotifOpen] = useState(false)
   const [aogCount, setAogCount] = useState(0)
   const navigate = useNavigate()
 
@@ -472,7 +685,7 @@ export function Topbar() {
             variant="ghost"
             size="sm"
             className="h-8 px-2 gap-1.5 hover:bg-accent"
-            onClick={() => navigate("/app/parts")}
+            onClick={() => navigate("/app/beet-box/parts")}
             title={`${aogCount} active AOG request${aogCount > 1 ? "s" : ""}`}
           >
             <AlertTriangle className="h-3.5 w-3.5" style={{ color: "rgba(255,80,80,0.9)" }} />
@@ -486,7 +699,7 @@ export function Topbar() {
         )}
 
         {/* Notifications bell */}
-        <Popover>
+        <Popover open={notifOpen} onOpenChange={setNotifOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -513,7 +726,7 @@ export function Topbar() {
           <PopoverContent
             align="end"
             sideOffset={8}
-            className="p-0 w-80 border-white/10"
+            className="p-0 w-96 border-white/10"
             style={{ background: "hsl(0 0% 11%)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
           >
             {/* Header */}
@@ -537,16 +750,29 @@ export function Topbar() {
                   </span>
                 )}
               </div>
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllRead}
-                  className="text-[10px] transition-colors"
-                  style={{ color: "var(--skyshare-gold)", letterSpacing: "0.04em" }}
-                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
-                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-                >
-                  Mark all read
-                </button>
+              {notifications.length > 0 && (
+                <div className="flex items-center gap-3">
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={markAllRead}
+                      className="text-[10px] transition-opacity"
+                      style={{ color: "var(--skyshare-gold)", letterSpacing: "0.04em" }}
+                      onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
+                      onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                  <button
+                    onClick={clearAll}
+                    className="text-[10px] transition-opacity"
+                    style={{ color: "hsl(var(--muted-foreground))", letterSpacing: "0.04em" }}
+                    onMouseEnter={e => (e.currentTarget.style.opacity = "0.6")}
+                    onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                  >
+                    Clear all
+                  </button>
+                </div>
               )}
             </div>
 
@@ -561,7 +787,7 @@ export function Topbar() {
                 </div>
               ) : (
                 notifications.map(n => (
-                  <NotificationRow key={n.id} notif={n} onRead={markRead} />
+                  <NotificationRow key={n.id} notif={n} onRead={markRead} onDelete={deleteOne} onClose={() => setNotifOpen(false)} />
                 ))
               )}
             </div>
@@ -602,7 +828,7 @@ export function Topbar() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2.5 rounded-sm px-2 py-1.5 hover:bg-accent transition-colors outline-none">
-              <Avatar className="h-7 w-7">
+              <Avatar className="h-[30px] w-[30px]">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt="" className="h-full w-full object-cover rounded-full" />
                 ) : (
