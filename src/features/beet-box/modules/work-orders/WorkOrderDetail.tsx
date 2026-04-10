@@ -499,6 +499,7 @@ function MechanicSelect({ mechanics, value, onChange }: { mechanics: Mechanic[];
 interface ItemDetailPanelProps {
   item: WOItem
   isLocked: boolean
+  isQuote: boolean
   sectionColor: string
   aircraftModel: string        // for library "Add to Library"
   mechanicName: string         // for library created_by_name
@@ -531,7 +532,7 @@ interface ItemDetailPanelProps {
 }
 
 function ItemDetailPanel({
-  item, isLocked, sectionColor, aircraftModel, mechanicName, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
+  item, isLocked, isQuote, sectionColor, aircraftModel, mechanicName, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
   mechanics, inventoryParts, onNavigatePO, onShowPartsOverview, allItems, itemPartsOnOrder,
   pullPartNumber, onPullHandled,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart, onAddFromInventory,
@@ -606,7 +607,8 @@ function ItemDetailPanel({
   return (
     <div className="flex flex-col h-full">
 
-      {/* ── Status selector + sign-off ────────────────────────────────── */}
+      {/* ── Status selector + sign-off — WORK ORDER ONLY ─────────────── */}
+      {!isQuote && (
       <div
         className="px-4 py-2.5 flex items-center justify-start gap-1.5 flex-shrink-0"
         style={{ background: "hsl(0,0%,10%)", borderBottom: "1px solid hsl(0,0%,17%)" }}
@@ -784,6 +786,34 @@ function ItemDetailPanel({
           </div>
         )}
       </div>
+      )}
+
+      {/* ── Quote toolbar (estimate-only) ────────────────────────────── */}
+      {isQuote && (
+        <div
+          className="px-4 py-2.5 flex items-center gap-2 flex-shrink-0"
+          style={{ background: "hsl(0,0%,10%)", borderBottom: "1px solid hsl(0,0%,17%)" }}
+        >
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-purple-300/70">Quote Line Item</span>
+          <span className="text-white/25 text-xs">·</span>
+          <span className="text-white/40 text-xs">Estimate labor hours and parts — nothing here is clocked, issued, or ordered</span>
+          {/* Add to Library still useful on quotes (flat rates + canned actions) */}
+          {item.refCode?.trim() && item.correctiveAction?.trim() && (
+            <>
+              <div className="w-px h-5 mx-1 self-center" style={{ background: "hsl(0,0%,26%)" }} />
+              <button
+                onClick={() => { setShowLibModal(true); setLibSaved(false); setLibSaveError(null) }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-all"
+                style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.25)", color: "rgba(212,160,23,0.7)" }}
+                title="Save corrective action or flat rate to library"
+              >
+                <Library className="w-3.5 h-3.5" />
+                Add to Library
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Sign-off error strip ─────────────────────────────────────── */}
       {signOffError && (
@@ -1015,8 +1045,63 @@ function ItemDetailPanel({
 
           </div>{/* end left column */}
 
-          {/* Right column (25%): Labor */}
+          {/* Right column (25%): Labor (WO) or Estimated Labor (Quote) */}
           <div style={{ width: "25%", minWidth: 0 }}>
+            {isQuote ? (
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{ border: "1px solid rgba(96,165,250,0.25)", borderLeft: "3px solid rgba(96,165,250,0.6)" }}
+              >
+                <div
+                  className="px-3 py-2.5 flex items-center gap-2"
+                  style={{
+                    background: "linear-gradient(to right, rgba(96,165,250,0.08), rgba(96,165,250,0.02))",
+                    borderBottom: "1px solid rgba(96,165,250,0.15)",
+                  }}
+                >
+                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#93c5fd" }}>
+                    Estimated Labor
+                  </span>
+                </div>
+                <div className="px-3 py-3 space-y-2.5">
+                  <div>
+                    <label className="text-white/45 text-[10px] uppercase tracking-wider block mb-1">Hours</label>
+                    <input
+                      type="number" step="0.25" min="0" placeholder="0.0"
+                      disabled={isLocked}
+                      className="w-full px-2.5 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30 tabular-nums"
+                      value={item.estimatedHours || ""}
+                      onChange={e => {
+                        const v = parseFloat(e.target.value) || 0
+                        onPatch({ estimatedHours: v })
+                      }}
+                      onBlur={() => onPersist({ estimatedHours: item.estimatedHours })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-white/45 text-[10px] uppercase tracking-wider block mb-1">Rate ($/hr)</label>
+                    <input
+                      type="number" step="5" min="0" placeholder="125"
+                      disabled={isLocked}
+                      className="w-full px-2.5 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30 tabular-nums"
+                      value={item.laborRate || ""}
+                      onChange={e => {
+                        const v = parseFloat(e.target.value) || 0
+                        onPatch({ laborRate: v })
+                      }}
+                      onBlur={() => onPersist({ laborRate: item.laborRate })}
+                    />
+                  </div>
+                  <div className="pt-2 mt-1 flex items-baseline justify-between" style={{ borderTop: "1px dashed rgba(96,165,250,0.2)" }}>
+                    <span className="text-white/45 text-[10px] uppercase tracking-wider">Est. Labor</span>
+                    <span className="text-sm font-bold tabular-nums" style={{ color: "#93c5fd" }}>
+                      ${(item.estimatedHours * item.laborRate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div
               className="rounded-xl overflow-hidden"
               style={{ border: "1px solid rgba(96,165,250,0.2)", borderLeft: "3px solid rgba(96,165,250,0.5)" }}
@@ -1129,6 +1214,7 @@ function ItemDetailPanel({
               )}
               </div>{/* end labor inner */}
             </div>{/* end labor card */}
+            )}
           </div>{/* end right column */}
         </div>{/* end discrepancy + labor row */}
 
@@ -1365,30 +1451,34 @@ function ItemDetailPanel({
               <div className="flex items-center gap-2">
                 {!noPartsRequired && !showInventoryPicker && addingPartToItem !== item.id && (
                   <>
-                    <Button
-                      size="sm" variant="ghost"
-                      onClick={() => setShowInventoryPicker(true)}
-                      className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
-                    >
-                      <Warehouse className="w-3 h-3 mr-1" /> From Inventory
-                    </Button>
+                    {!isQuote && (
+                      <Button
+                        size="sm" variant="ghost"
+                        onClick={() => setShowInventoryPicker(true)}
+                        className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
+                      >
+                        <Warehouse className="w-3 h-3 mr-1" /> From Inventory
+                      </Button>
+                    )}
                     <Button
                       size="sm" variant="ghost"
                       onClick={() => { setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
                       className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
                     >
-                      <Plus className="w-3 h-3 mr-1" /> Add Part
+                      <Plus className="w-3 h-3 mr-1" /> {isQuote ? "Add Estimated Part" : "Add Part"}
                     </Button>
                   </>
                 )}
-                <Button
-                  size="sm"
-                  onClick={onNavigatePO}
-                  className="h-7 px-3 text-xs font-semibold"
-                  style={{ background: "rgba(212,160,23,0.12)", color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.25)" }}
-                >
-                  <ShoppingCart className="w-3 h-3 mr-1" /> Order Parts
-                </Button>
+                {!isQuote && (
+                  <Button
+                    size="sm"
+                    onClick={onNavigatePO}
+                    className="h-7 px-3 text-xs font-semibold"
+                    style={{ background: "rgba(212,160,23,0.12)", color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.25)" }}
+                  >
+                    <ShoppingCart className="w-3 h-3 mr-1" /> Order Parts
+                  </Button>
+                )}
               </div>
             )}
           </div>{/* end parts header */}
@@ -1424,6 +1514,16 @@ function ItemDetailPanel({
                   <span className="text-white font-mono flex-shrink-0 w-32 truncate">{p.partNumber}</span>
                   <span className="text-white/70 flex-1 truncate">{p.description}</span>
                   <span className="text-white/60 flex-shrink-0 font-medium">Qty: {p.qty}</span>
+                  {isQuote && (
+                    <>
+                      <span className="text-white/50 text-xs flex-shrink-0 tabular-nums">
+                        @ ${(p.unitPrice ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-white font-semibold flex-shrink-0 tabular-nums w-24 text-right">
+                        ${((p.unitPrice ?? 0) * (p.qty ?? 0)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </>
+                  )}
                   {!isLocked && (
                     <button
                       onClick={() => onDeletePart(p.id)}
@@ -1441,21 +1541,28 @@ function ItemDetailPanel({
             </div>
           ) : !isLocked && addingPartToItem !== item.id && !showInventoryPicker ? (
             <div className="text-center py-4 mb-4">
-              <p className="text-white/25 text-sm italic mb-3">No parts logged yet</p>
+              <p className="text-white/25 text-sm italic mb-3">
+                {isQuote ? "No estimated parts yet" : "No parts logged yet"}
+              </p>
               <div className="flex items-center justify-center gap-3">
-                <button
-                  onClick={() => setShowInventoryPicker(true)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02]"
-                  style={{ background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.3)", color: "rgba(212,160,23,0.9)" }}
-                >
-                  <Warehouse className="w-3.5 h-3.5" /> Pull from Inventory
-                </button>
+                {!isQuote && (
+                  <button
+                    onClick={() => setShowInventoryPicker(true)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02]"
+                    style={{ background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.3)", color: "rgba(212,160,23,0.9)" }}
+                  >
+                    <Warehouse className="w-3.5 h-3.5" /> Pull from Inventory
+                  </button>
+                )}
                 <button
                   onClick={() => { setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all text-white/50 hover:text-white/80"
-                  style={{ background: "hsl(0,0%,15%)", border: "1px solid hsl(0,0%,24%)" }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all"
+                  style={isQuote
+                    ? { background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", color: "rgba(196,181,253,0.9)" }
+                    : { background: "hsl(0,0%,15%)", border: "1px solid hsl(0,0%,24%)", color: "rgba(255,255,255,0.5)" }
+                  }
                 >
-                  <Plus className="w-3.5 h-3.5" /> Add Manually
+                  <Plus className="w-3.5 h-3.5" /> {isQuote ? "Add Estimated Part" : "Add Manually"}
                 </button>
               </div>
             </div>
@@ -2969,6 +3076,51 @@ export default function WorkOrderDetail() {
         </div>
       </div>
 
+      {/* ── QUOTE TOTALS STRIP ──────────────────────────────────────────────── */}
+      {wo.woType === "quote" && (() => {
+        const estLabor = wo.items.reduce(
+          (s, i) => s + (i.estimatedHours ?? 0) * (i.laborRate ?? 0),
+          0,
+        )
+        const estParts = wo.items.reduce(
+          (s, i) => s + i.parts.reduce((ps, p) => ps + (p.unitPrice ?? 0) * (p.qty ?? 0), 0),
+          0,
+        )
+        const estTotal = estLabor + estParts
+        const fmt = (n: number) =>
+          n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        return (
+          <div
+            className="flex-shrink-0 flex items-stretch"
+            style={{
+              background: "linear-gradient(to right, hsl(263,25%,10%), hsl(263,20%,9%))",
+              borderBottom: "1px solid rgba(167,139,250,0.2)",
+            }}
+          >
+            <div className="px-5 py-2.5 flex items-center gap-2 flex-shrink-0" style={{ borderRight: "1px solid rgba(167,139,250,0.15)" }}>
+              <FileText className="w-3.5 h-3.5 text-purple-300/70" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-purple-300/80">Quote Estimate</span>
+            </div>
+            <div className="flex-1 flex items-center gap-6 px-6 py-2.5">
+              <div className="flex items-baseline gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-white/40">Est. Labor</span>
+                <span className="text-sm font-bold tabular-nums text-blue-300">${fmt(estLabor)}</span>
+              </div>
+              <div className="w-px h-6 self-center" style={{ background: "rgba(255,255,255,0.08)" }} />
+              <div className="flex items-baseline gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-white/40">Est. Parts</span>
+                <span className="text-sm font-bold tabular-nums" style={{ color: "rgba(212,160,23,0.95)" }}>${fmt(estParts)}</span>
+              </div>
+              <div className="flex-1" />
+              <div className="flex items-baseline gap-2 px-4 py-1 rounded-lg" style={{ background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)" }}>
+                <span className="text-[10px] uppercase tracking-wider text-purple-300/80">Grand Total</span>
+                <span className="text-base font-black tabular-nums text-white">${fmt(estTotal)}</span>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* ── CONTENT ──────────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 flex overflow-hidden relative">
 
@@ -3343,6 +3495,7 @@ export default function WorkOrderDetail() {
                 <ItemDetailPanel
                   item={selectedItem}
                   isLocked={isLocked}
+                  isQuote={wo.woType === "quote"}
                   sectionColor={SECTION_COLORS[selectedItem.logbookSection]}
                   aircraftModel={[aircraft?.make, aircraft?.modelFull].filter(Boolean).join(" ")}
                   mechanicName={myProfile?.name ?? ""}

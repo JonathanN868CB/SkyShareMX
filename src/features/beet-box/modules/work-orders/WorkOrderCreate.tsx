@@ -5,7 +5,7 @@ import {
   ArrowLeft, Upload, FileSpreadsheet, X, AlertTriangle,
   CheckCircle2, ClipboardList, GripVertical, Check,
   Trash2, Pencil, TriangleAlert, ShieldAlert, PackageCheck,
-  ChevronDown, ChevronRight, Plus, Zap, BookText,
+  ChevronDown, ChevronRight, Plus, Zap, BookText, Clock, FileText,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
@@ -1297,47 +1297,83 @@ export default function WorkOrderCreate() {
 
             {/* Right: stat cards */}
             <div className="flex items-center gap-3 flex-shrink-0">
-              {[
-                {
-                  icon: PackageCheck,
-                  value: selectedCount,
-                  label: "Tasks Selected",
-                  color: "rgba(212,160,23,0.9)",
-                  bg:    "rgba(212,160,23,0.1)",
-                  border:"rgba(212,160,23,0.25)",
-                },
-                {
-                  icon: TriangleAlert,
-                  value: dueSoonCount,
-                  label: "Due < 14 Days",
-                  color: "#fbbf24",
-                  bg:    "rgba(251,191,36,0.08)",
-                  border:"rgba(251,191,36,0.2)",
-                  hidden: dueSoonCount === 0 || !!parsed?.isFresh,
-                },
-                {
-                  icon: ShieldAlert,
-                  value: overdueCount,
-                  label: "Overdue",
-                  color: "#f87171",
-                  bg:    "rgba(239,68,68,0.1)",
-                  border:"rgba(239,68,68,0.25)",
-                  hidden: overdueCount === 0 || !!parsed?.isFresh,
-                },
-              ].filter(s => !s.hidden).map(stat => {
-                const Icon = stat.icon
-                return (
-                  <div
-                    key={stat.label}
-                    className="flex flex-col items-center px-4 py-3 rounded-xl min-w-[80px]"
-                    style={{ background: stat.bg, border: `1px solid ${stat.border}` }}
-                  >
-                    <Icon className="w-4 h-4 mb-1.5" style={{ color: stat.color }} />
-                    <span className="text-2xl font-bold leading-none" style={{ color: stat.color }}>{stat.value}</span>
-                    <span className="text-white/35 text-[10px] mt-1 text-center leading-tight">{stat.label}</span>
-                  </div>
-                )
-              })}
+              {(() => {
+                // Quote mode: show Est. Labor / Est. Parts / Est. Total instead of due/overdue
+                if (isQuoteMode) {
+                  const selectedTasks = parsed?.tasks.filter(t => t.selected) ?? []
+                  let estLabor = 0
+                  for (const t of selectedTasks) {
+                    const lib = libCache[t.importId]
+                    if (lib?.applyFR && lib.frHours != null && lib.frRate != null) {
+                      estLabor += lib.frHours * lib.frRate
+                    }
+                  }
+                  const estParts = 0 // parts not estimable pre-creation
+                  const estTotal = estLabor + estParts
+                  const fmt = (n: number) =>
+                    "$" + Math.round(n).toLocaleString("en-US")
+                  return [
+                    { icon: PackageCheck, value: selectedCount,        label: "Tasks Selected", color: "rgba(212,160,23,0.9)", bg: "rgba(212,160,23,0.1)", border: "rgba(212,160,23,0.25)", large: false },
+                    { icon: Clock,        value: fmt(estLabor) as any, label: "Est. Labor",     color: "#93c5fd",              bg: "rgba(96,165,250,0.1)", border: "rgba(96,165,250,0.25)", large: false },
+                    { icon: FileText,     value: fmt(estTotal) as any, label: "Est. Total",     color: "#c4b5fd",              bg: "rgba(167,139,250,0.12)", border: "rgba(167,139,250,0.35)", large: true },
+                  ].map(stat => {
+                    const Icon = stat.icon
+                    return (
+                      <div
+                        key={stat.label}
+                        className="flex flex-col items-center px-4 py-3 rounded-xl min-w-[90px]"
+                        style={{ background: stat.bg, border: `1px solid ${stat.border}` }}
+                      >
+                        <Icon className="w-4 h-4 mb-1.5" style={{ color: stat.color }} />
+                        <span className={cn("font-bold leading-none tabular-nums", stat.large ? "text-xl" : "text-lg")} style={{ color: stat.color }}>{stat.value}</span>
+                        <span className="text-white/35 text-[10px] mt-1 text-center leading-tight">{stat.label}</span>
+                      </div>
+                    )
+                  })
+                }
+                // Work order mode: due/overdue as before
+                return [
+                  {
+                    icon: PackageCheck,
+                    value: selectedCount,
+                    label: "Tasks Selected",
+                    color: "rgba(212,160,23,0.9)",
+                    bg:    "rgba(212,160,23,0.1)",
+                    border:"rgba(212,160,23,0.25)",
+                  },
+                  {
+                    icon: TriangleAlert,
+                    value: dueSoonCount,
+                    label: "Due < 14 Days",
+                    color: "#fbbf24",
+                    bg:    "rgba(251,191,36,0.08)",
+                    border:"rgba(251,191,36,0.2)",
+                    hidden: dueSoonCount === 0 || !!parsed?.isFresh,
+                  },
+                  {
+                    icon: ShieldAlert,
+                    value: overdueCount,
+                    label: "Overdue",
+                    color: "#f87171",
+                    bg:    "rgba(239,68,68,0.1)",
+                    border:"rgba(239,68,68,0.25)",
+                    hidden: overdueCount === 0 || !!parsed?.isFresh,
+                  },
+                ].filter(s => !s.hidden).map(stat => {
+                  const Icon = stat.icon
+                  return (
+                    <div
+                      key={stat.label}
+                      className="flex flex-col items-center px-4 py-3 rounded-xl min-w-[80px]"
+                      style={{ background: stat.bg, border: `1px solid ${stat.border}` }}
+                    >
+                      <Icon className="w-4 h-4 mb-1.5" style={{ color: stat.color }} />
+                      <span className="text-2xl font-bold leading-none" style={{ color: stat.color }}>{stat.value}</span>
+                      <span className="text-white/35 text-[10px] mt-1 text-center leading-tight">{stat.label}</span>
+                    </div>
+                  )
+                })
+              })()}
             </div>
           </div>
 
@@ -1865,7 +1901,7 @@ export default function WorkOrderCreate() {
                   transition: "all 0.2s ease",
                 }}
               >
-                {submitting ? "Saving…" : isRebuild ? "Rebuild Work Order →" : "Commit to Work Order →"}
+                {submitting ? "Saving…" : isRebuild ? "Rebuild Work Order →" : isQuoteMode ? "Create Quote →" : "Commit to Work Order →"}
               </Button>
             </div>
           </div>
