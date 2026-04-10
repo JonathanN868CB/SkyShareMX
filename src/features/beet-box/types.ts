@@ -8,6 +8,11 @@ export type WOStatus =
   | "draft" | "open" | "waiting_on_parts" | "in_review"
   | "billing" | "completed" | "void"
 
+export type WOType = "work_order" | "quote"
+
+export type QuoteStatus =
+  | "draft" | "sent" | "approved" | "declined" | "expired" | "converted"
+
 export type WOItemStatus =
   | "pending" | "in_progress" | "done" | "needs_review" | "cut_short"
 
@@ -97,6 +102,8 @@ export interface Mechanic {
 export interface WorkOrder {
   id: string
   woNumber: string
+  // Discriminator: 'work_order' (normal WO) or 'quote' (customer estimate)
+  woType: WOType
   // Aircraft (fleet or guest)
   aircraftId: string | null
   guestRegistration: string | null
@@ -114,6 +121,13 @@ export interface WorkOrder {
   timesSnapshot: Record<string, number | null | string[]> | null
   discrepancyRef: string | null
   notes: string | null
+  // Quote-only fields (null when woType === 'work_order')
+  quoteStatus: QuoteStatus | null
+  quoteSentAt: string | null
+  quoteExpiresAt: string | null
+  // Bidirectional link between a quote and the WO it was converted into
+  sourceQuoteId: string | null     // set on WOs that originated from a quote
+  convertedToWoId: string | null   // set on quotes that have been converted
   // Loaded relations
   items: WOItem[]
   statusHistory: WOStatusChange[]

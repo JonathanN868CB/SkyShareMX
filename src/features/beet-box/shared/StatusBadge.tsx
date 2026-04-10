@@ -1,7 +1,8 @@
 import { cn } from "@/shared/lib/utils"
-import type { WOStatus, POStatus, ToolStatus, InvoiceStatus } from "../types"
+import type { WOStatus, QuoteStatus, POStatus, ToolStatus, InvoiceStatus } from "../types"
 import {
   WO_STATUS_LABELS,
+  QUOTE_STATUS_LABELS,
   PO_STATUS_LABELS,
   TOOL_STATUS_LABELS,
   INVOICE_STATUS_LABELS,
@@ -17,6 +18,15 @@ const WO_BADGE_STYLES: Record<WOStatus, string> = {
   billing:          "bg-orange-900/40 text-orange-300 border border-orange-800/60",
   completed:        "bg-emerald-900/40 text-emerald-300 border border-emerald-800/60",
   void:             "bg-red-900/20 text-red-400/70 border border-red-900/40",
+}
+
+const QUOTE_BADGE_STYLES: Record<QuoteStatus, string> = {
+  draft:     "bg-zinc-800 text-zinc-300 border border-zinc-700",
+  sent:      "bg-blue-900/40 text-blue-300 border border-blue-800/60",
+  approved:  "bg-emerald-900/40 text-emerald-300 border border-emerald-800/60",
+  declined:  "bg-red-900/40 text-red-300 border border-red-800/60",
+  expired:   "bg-amber-900/40 text-amber-300 border border-amber-800/60",
+  converted: "bg-purple-900/40 text-purple-300 border border-purple-800/60",
 }
 
 const PO_BADGE_STYLES: Record<POStatus, string> = {
@@ -49,6 +59,14 @@ export function WOStatusBadge({ status, className }: { status: WOStatus; classNa
   return (
     <span className={cn(BASE, WO_BADGE_STYLES[status], className)}>
       {WO_STATUS_LABELS[status]}
+    </span>
+  )
+}
+
+export function QuoteStatusBadge({ status, className }: { status: QuoteStatus; className?: string }) {
+  return (
+    <span className={cn(BASE, QUOTE_BADGE_STYLES[status], className)}>
+      {QUOTE_STATUS_LABELS[status]}
     </span>
   )
 }

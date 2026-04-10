@@ -1,5 +1,5 @@
 // ─── Beet Box Display Constants ───────────────────────────────────────────────
-import type { WOStatus, POStatus, InvoiceStatus, ToolStatus, TrainingStatus } from "./types"
+import type { WOStatus, QuoteStatus, POStatus, InvoiceStatus, ToolStatus, TrainingStatus } from "./types"
 
 export const WO_STATUS_LABELS: Record<WOStatus, string> = {
   draft:            "Draft",
@@ -9,6 +9,15 @@ export const WO_STATUS_LABELS: Record<WOStatus, string> = {
   billing:          "Billing",
   completed:        "Completed",
   void:             "Void",
+}
+
+export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
+  draft:     "Draft",
+  sent:      "Sent",
+  approved:  "Approved",
+  declined:  "Declined",
+  expired:   "Expired",
+  converted: "Converted",
 }
 
 export const PO_STATUS_LABELS: Record<POStatus, string> = {

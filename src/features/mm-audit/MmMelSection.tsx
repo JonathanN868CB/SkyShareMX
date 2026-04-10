@@ -253,7 +253,7 @@ function MelEditDialog({
             <select
               value={form.document_type}
               onChange={e => setForm(f => ({ ...f, document_type: e.target.value as "mmel" | "policy_letter" }))}
-              className="w-full rounded px-2.5 py-1.5 text-xs outline-none cursor-pointer"
+              className="w-full rounded px-2.5 py-1.5 text-xs outline-none cursor-pointer [&>option]:bg-[#1e1e2e] [&>option]:text-white"
               style={inputStyle}
               disabled={!!row}
             >

@@ -525,12 +525,12 @@ function AircraftDocRow({
       <tr style={{ borderBottom: `1px solid ${rgba(0.05)}`, background: rgba(0.04) }}>
         <td className={cellStyle} style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{link.registration}</td>
         <td className={cellStyle}>
-          <select value={form.assembly_type} onChange={e => setForm(f => ({ ...f, assembly_type: e.target.value }))} style={selectStyle}>
+          <select value={form.assembly_type} onChange={e => setForm(f => ({ ...f, assembly_type: e.target.value }))} style={selectStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
             {ASSEMBLY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </td>
         <td className={cellStyle}>
-          <select value={form.requirement_type} onChange={e => setForm(f => ({ ...f, requirement_type: e.target.value }))} style={selectStyle}>
+          <select value={form.requirement_type} onChange={e => setForm(f => ({ ...f, requirement_type: e.target.value }))} style={selectStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
             {REQUIREMENT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </td>
@@ -661,7 +661,7 @@ function AddAircraftDocRow({
       <div className="grid grid-cols-3 gap-2">
         <div>
           <label className="block mb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: rgba(0.5), fontFamily: "var(--font-heading)" }}>Aircraft</label>
-          <select value={form.aircraft_id} onChange={e => setForm(f => ({ ...f, aircraft_id: e.target.value }))} style={inputStyle} disabled={loadingAircraft}>
+          <select value={form.aircraft_id} onChange={e => setForm(f => ({ ...f, aircraft_id: e.target.value }))} style={inputStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white" disabled={loadingAircraft}>
             <option value="">— Select —</option>
             {(allAircraft ?? []).map(a => (
               <option key={a.aircraft_id} value={a.aircraft_id}>{a.registration} · {a.model_full}</option>
@@ -670,13 +670,13 @@ function AddAircraftDocRow({
         </div>
         <div>
           <label className="block mb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: rgba(0.5), fontFamily: "var(--font-heading)" }}>Assembly</label>
-          <select value={form.assembly_type} onChange={e => setForm(f => ({ ...f, assembly_type: e.target.value }))} style={inputStyle}>
+          <select value={form.assembly_type} onChange={e => setForm(f => ({ ...f, assembly_type: e.target.value }))} style={inputStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
             {ASSEMBLY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
         <div>
           <label className="block mb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: rgba(0.5), fontFamily: "var(--font-heading)" }}>Req Type</label>
-          <select value={form.requirement_type} onChange={e => setForm(f => ({ ...f, requirement_type: e.target.value }))} style={inputStyle}>
+          <select value={form.requirement_type} onChange={e => setForm(f => ({ ...f, requirement_type: e.target.value }))} style={inputStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
             {REQUIREMENT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </div>

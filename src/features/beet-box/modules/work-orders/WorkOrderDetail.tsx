@@ -22,20 +22,21 @@ import {
   getLogbookEntries, getOrCreateDraftLogbookEntry, createComponentInstallEntry, upsertEntrySignatory, addSignatoryLine, removeItemLogbookLines, updateLogbookEntry,
   addAuditEntry, deleteWorkOrder,
   upsertFlatRate, upsertCorrectiveAction,
+  updateQuoteStatus, convertQuoteToWorkOrder,
 } from "../../services"
 import { autoGenerateInvoice } from "../../services/automation"
-import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS } from "../../constants"
+import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS, QUOTE_STATUS_LABELS } from "../../constants"
 import type {
   WorkOrder, WOStatus, WOItem, WOItemPart,
   WOItemLabor, WOItemStatus, LogbookSection,
   InventoryPart, Mechanic, LogbookEntry, AuditEntry, AuditEntryType,
-  AircraftTimesSnapshot,
+  AircraftTimesSnapshot, QuoteStatus,
 } from "../../types"
 import { TimesEditModal } from "./TimesEditModal"
 import { PartsRequestForm } from "@/features/parts/components/PartsRequestForm"
 import { STATUS_CONFIG, LINE_STATUS_CONFIG } from "@/features/parts/constants"
 import { supabase } from "@/lib/supabase"
-import { WOStatusBadge } from "../../shared/StatusBadge"
+import { WOStatusBadge, QuoteStatusBadge } from "../../shared/StatusBadge"
 import { useAuth } from "@/features/auth"
 
 // ─── Status pipeline ──────────────────────────────────────────────────────────
@@ -57,6 +58,33 @@ const STATUS_GLOW_COLOR: Record<WOStatus, string> = {
   billing:          "rgba(253,186,116,0.55)",
   completed:        "rgba(110,231,183,0.55)",
   void:             "rgba(252,165,165,0.55)",
+}
+
+// ─── Quote status pipeline ────────────────────────────────────────────────────
+const QUOTE_NEXT_STATUS: Partial<Record<QuoteStatus, QuoteStatus>> = {
+  draft: "sent", sent: "approved",
+}
+const QUOTE_NEXT_STATUS_LABEL: Partial<Record<QuoteStatus, string>> = {
+  draft: "Mark as Sent", sent: "Mark Approved",
+}
+const QUOTE_PREV_STATUS: Partial<Record<QuoteStatus, QuoteStatus>> = {
+  sent: "draft", approved: "sent", declined: "sent", expired: "sent",
+}
+const QUOTE_STATUS_GLOW_COLOR: Record<QuoteStatus, string> = {
+  draft:     "rgba(161,161,170,0.55)",
+  sent:      "rgba(147,197,253,0.55)",
+  approved:  "rgba(110,231,183,0.55)",
+  declined:  "rgba(252,165,165,0.55)",
+  expired:   "rgba(252,211,77,0.55)",
+  converted: "rgba(216,180,254,0.55)",
+}
+const QUOTE_STATUS_CONFIG: Record<QuoteStatus, { text: string; bg: string; border: string; glow: string }> = {
+  draft:     { text: "#a1a1aa", bg: "rgba(113,113,122,0.18)", border: "rgba(161,161,170,0.55)", glow: "rgba(161,161,170,0.2)" },
+  sent:      { text: "#93c5fd", bg: "rgba(96,165,250,0.14)",  border: "rgba(147,197,253,0.55)", glow: "rgba(147,197,253,0.2)" },
+  approved:  { text: "#6ee7b7", bg: "rgba(110,231,183,0.13)", border: "rgba(110,231,183,0.55)", glow: "rgba(110,231,183,0.2)" },
+  declined:  { text: "#fca5a5", bg: "rgba(252,165,165,0.13)", border: "rgba(252,165,165,0.55)", glow: "rgba(252,165,165,0.2)" },
+  expired:   { text: "#fcd34d", bg: "rgba(252,211,77,0.13)",  border: "rgba(252,211,77,0.55)",  glow: "rgba(252,211,77,0.2)"  },
+  converted: { text: "#d8b4fe", bg: "rgba(216,180,254,0.13)", border: "rgba(216,180,254,0.55)", glow: "rgba(216,180,254,0.2)" },
 }
 
 // ─── Section config ───────────────────────────────────────────────────────────
@@ -484,10 +512,11 @@ interface ItemDetailPanelProps {
   mechanics: Mechanic[]
   inventoryParts: InventoryPart[]
   onNavigatePO: () => void
+  onShowPartsOverview: () => void
+  allItems: WOItem[]
+  itemPartsOnOrder: { requestId: string; status: string; partNumber: string; description: string | null; quantity: number; lineStatus: string }[]
   pullPartNumber?: string
   onPullHandled?: () => void
-  partsOnOrder: { id: string; status: string; createdAt: string; lines: { id: string; partNumber: string; description: string | null; quantity: number; lineStatus: string }[] }[]
-  onPullToWO: (partNumber: string) => void
   addingPartToItem: string | null
   setAddingPartToItem: (id: string | null) => void
   newPart: { partNumber: string; description: string; qty: string; unitPrice: string }
@@ -503,13 +532,11 @@ interface ItemDetailPanelProps {
 
 function ItemDetailPanel({
   item, isLocked, sectionColor, aircraftModel, mechanicName, onPatch, onPersist, onSignOff, signOffError, onClearSignOffError, onDeleteLabor, onDeletePart,
-  mechanics, inventoryParts, onNavigatePO,
+  mechanics, inventoryParts, onNavigatePO, onShowPartsOverview, allItems, itemPartsOnOrder,
   pullPartNumber, onPullHandled,
-  partsOnOrder, onPullToWO,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart, onAddFromInventory,
   addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
 }: ItemDetailPanelProps) {
-  const navigate = useNavigate()
   const discRef = useRef<HTMLTextAreaElement>(null)
   const corrRef = useRef<HTMLTextAreaElement>(null)
   const savedOnFocus = useRef<Partial<WOItem>>({})
@@ -621,6 +648,30 @@ function ItemDetailPanel({
             </button>
           </>
         )}
+
+        {/* ── Parts Overview ── */}
+        {(() => {
+          const totalWOParts = allItems.reduce((s, i) => s + i.parts.length, 0)
+          return (
+            <>
+              <div className="w-px h-5 mx-1 self-center" style={{ background: "hsl(0,0%,26%)" }} />
+              <button
+                onClick={onShowPartsOverview}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-all"
+                style={{ background: "rgba(212,160,23,0.07)", border: "1px solid rgba(212,160,23,0.25)", color: "rgba(212,160,23,0.7)" }}
+                title="View all parts across this work order"
+              >
+                <Package className="w-3.5 h-3.5" />
+                Parts Overview
+                {totalWOParts > 0 && (
+                  <span className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.8)" }}>
+                    {totalWOParts}
+                  </span>
+                )}
+              </button>
+            </>
+          )
+        })()}
 
         {/* ── Sign-off — right side ── */}
         {item.signOffRequired && (
@@ -746,8 +797,11 @@ function ItemDetailPanel({
       {/* ── Scrollable body ───────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Task / Discrepancy + Work Performed — boxed cards */}
-        <div className="px-5 pt-5 pb-5 space-y-4" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
+        {/* Task / Discrepancy + Work Performed + Labor — side by side */}
+        <div className="px-5 pt-5 pb-5 flex items-start gap-4" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
+
+          {/* Left column (75%): Discrepancy + Work Performed */}
+          <div className="space-y-4" style={{ width: "75%", minWidth: 0 }}>
 
           {/* Task / Discrepancy box — with section + task metadata in header */}
           <div
@@ -755,30 +809,42 @@ function ItemDetailPanel({
             style={{ border: "1px solid rgba(251,146,60,0.35)", borderLeft: "4px solid rgba(251,146,60,0.7)" }}
           >
             <div
-              className="px-4 py-3 flex items-center gap-3 flex-wrap"
+              className="px-4 py-3 flex items-center gap-3"
               style={{
                 background: "linear-gradient(to right, rgba(251,146,60,0.1), rgba(251,146,60,0.04))",
                 borderBottom: "1px solid rgba(251,146,60,0.2)",
               }}
             >
               <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(251,146,60,0.9)" }} />
-              <span className="text-sm font-bold uppercase tracking-widest" style={{ color: "rgba(251,146,60,0.9)" }}>Item / Discrepancy</span>
+              <span className="text-sm font-bold uppercase tracking-widest flex-shrink-0" style={{ color: "rgba(251,146,60,0.9)" }}>Item / Discrepancy</span>
               <span
-                className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded"
+                className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded flex-shrink-0"
                 style={{ background: sectionColor + "22", color: sectionColor }}
               >
                 {item.logbookSection}
               </span>
+              {/* Editable task name */}
+              <input
+                type="text"
+                value={item.category}
+                onChange={e => onPatch({ category: e.target.value })}
+                onFocus={() => { savedOnFocus.current.category = item.category }}
+                onBlur={e => {
+                  const trimmed = e.target.value.trim()
+                  if (trimmed) onPersist({ category: trimmed }, { category: savedOnFocus.current.category })
+                }}
+                disabled={isLocked}
+                className="flex-1 min-w-0 text-sm font-medium text-white bg-transparent rounded px-2 py-0.5 focus:outline-none focus:bg-white/[0.06] truncate disabled:opacity-60"
+                placeholder="Task name…"
+              />
+              {/* Task number + P/N — right side */}
               {item.taskNumber && (
-                <span className="text-white/30 text-xs font-mono">#{item.taskNumber}</span>
+                <span className="text-white/30 text-xs font-mono flex-shrink-0">#{item.taskNumber}</span>
               )}
               {item.partNumber && (
-                <span className="text-white/20 text-xs font-mono">
+                <span className="text-white/20 text-xs font-mono flex-shrink-0">
                   P/N {item.partNumber}{item.serialNumber ? ` · S/N ${item.serialNumber}` : ""}
                 </span>
-              )}
-              {clockedTotal > 0 && (
-                <span className="text-white/35 text-xs ml-auto">{clockedTotal.toFixed(1)} hrs</span>
               )}
             </div>
             {!isLocked && (
@@ -824,7 +890,7 @@ function ItemDetailPanel({
               onFocus={() => { savedOnFocus.current.discrepancy = item.discrepancy }}
               onBlur={e => onPersist({ discrepancy: e.target.value }, { discrepancy: savedOnFocus.current.discrepancy })}
               disabled={isLocked}
-              rows={6}
+              rows={3}
               placeholder="Describe the discrepancy or task…"
               className="w-full px-5 py-4 text-white text-base leading-relaxed resize-none focus:outline-none placeholder:text-white/20 disabled:opacity-60"
               style={{ background: "hsl(0,0%,11%)" }}
@@ -845,13 +911,6 @@ function ItemDetailPanel({
             >
               <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: "rgba(52,211,153,0.9)" }} />
               <span className="text-sm font-bold uppercase tracking-widest" style={{ color: "rgba(52,211,153,0.9)" }}>Work Performed</span>
-              <div
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded font-medium"
-                style={{ background: "rgba(110,231,183,0.1)", color: "#6ee7b7" }}
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                Logbook entry
-              </div>
               {item.signedOffBy && (
                 <span className="text-emerald-400 text-sm font-medium">✓ Signed by {item.signedOffBy}</span>
               )}
@@ -913,168 +972,378 @@ function ItemDetailPanel({
             />
           </div>
 
-        </div>
+            {/* ── P/N cross-check warning ─────────────────────────────────── */}
+            {unloggedMentionedParts.length > 0 && (
+              <div
+                className="rounded-xl overflow-hidden"
+                style={{ border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.06)" }}
+              >
+                <div className="px-4 py-2.5 flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "rgba(251,191,36,0.9)" }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold" style={{ color: "rgba(251,191,36,0.9)" }}>
+                      Part{unloggedMentionedParts.length > 1 ? "s" : ""} mentioned in corrective action but not logged
+                    </p>
+                    <div className="mt-2 space-y-1.5">
+                      {unloggedMentionedParts.map(inv => (
+                        <div key={inv.id} className="flex items-center gap-3 flex-wrap">
+                          <span className="font-mono text-sm text-white/80">{inv.partNumber}</span>
+                          <span className="text-white/45 text-sm truncate">{inv.description}</span>
+                          {inv.qtyOnHand > 0 && (
+                            <span className="text-emerald-400/70 text-xs">{inv.qtyOnHand} on hand</span>
+                          )}
+                          {!isLocked && (
+                            <button
+                              onClick={() => addFromInventory(inv)}
+                              className="text-xs font-semibold px-2.5 py-1 rounded transition-all"
+                              style={{
+                                background: "rgba(251,191,36,0.15)",
+                                color: "rgba(251,191,36,0.9)",
+                                border: "1px solid rgba(251,191,36,0.3)",
+                              }}
+                            >
+                              + Add to Parts
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
-        {/* ── P/N cross-check warning ───────────────────────────────────────── */}
-        {unloggedMentionedParts.length > 0 && (
-          <div
-            className="mx-5 mt-1 mb-0 rounded-xl overflow-hidden"
-            style={{ border: "1px solid rgba(251,191,36,0.4)", background: "rgba(251,191,36,0.06)" }}
-          >
-            <div className="px-4 py-2.5 flex items-start gap-3">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "rgba(251,191,36,0.9)" }} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold" style={{ color: "rgba(251,191,36,0.9)" }}>
-                  Part{unloggedMentionedParts.length > 1 ? "s" : ""} mentioned in corrective action but not logged
-                </p>
-                <div className="mt-2 space-y-1.5">
-                  {unloggedMentionedParts.map(inv => (
-                    <div key={inv.id} className="flex items-center gap-3 flex-wrap">
-                      <span className="font-mono text-sm text-white/80">{inv.partNumber}</span>
-                      <span className="text-white/45 text-sm truncate">{inv.description}</span>
-                      {inv.qtyOnHand > 0 && (
-                        <span className="text-emerald-400/70 text-xs">{inv.qtyOnHand} on hand</span>
-                      )}
+          </div>{/* end left column */}
+
+          {/* Right column (25%): Labor */}
+          <div style={{ width: "25%", minWidth: 0 }}>
+            <div
+              className="rounded-xl overflow-hidden"
+              style={{ border: "1px solid rgba(96,165,250,0.2)", borderLeft: "3px solid rgba(96,165,250,0.5)" }}
+            >
+              {/* Labor header */}
+              <div
+                className="px-3 py-2.5 flex items-center justify-between"
+                style={{
+                  background: "linear-gradient(to right, rgba(96,165,250,0.07), rgba(96,165,250,0.02))",
+                  borderBottom: "1px solid rgba(96,165,250,0.15)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#93c5fd" }}>Labor</span>
+                  {clockedTotal > 0 && (
+                    <span className="text-white/40 text-xs">{clockedTotal.toFixed(1)}h</span>
+                  )}
+                </div>
+                {!isLocked && addingLaborToItem !== item.id && (
+                  <button
+                    onClick={() => {
+                      setAddingLaborToItem(item.id)
+                      setNewLabor({ mechName: "", hours: "", date: localToday() })
+                    }}
+                    className="text-white/40 hover:text-white text-[10px] font-semibold px-2 py-1 rounded border border-white/10 hover:border-white/25 transition-all"
+                  >
+                    <Plus className="w-3 h-3 inline mr-0.5" />Log
+                  </button>
+                )}
+              </div>
+              <div className="px-3 py-2.5">
+
+              {/* Labor entries */}
+              {laborEntries.length > 0 && (
+                <div className="space-y-1.5 mb-3">
+                  {laborEntries.map(e => (
+                    <div
+                      key={e.id}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs"
+                      style={{ background: "hsl(220,15%,11%)", borderLeft: "2px solid rgba(96,165,250,0.5)" }}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <span className="text-white block truncate">{e.mechanicName}</span>
+                        <span className="text-white/40">{new Date(e.clockedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                      </div>
+                      <span className="text-white/70 font-mono flex-shrink-0">{e.hours.toFixed(1)}h</span>
                       {!isLocked && (
                         <button
-                          onClick={() => addFromInventory(inv)}
-                          className="text-xs font-semibold px-2.5 py-1 rounded transition-all"
-                          style={{
-                            background: "rgba(251,191,36,0.15)",
-                            color: "rgba(251,191,36,0.9)",
-                            border: "1px solid rgba(251,191,36,0.3)",
-                          }}
+                          onClick={() => onDeleteLabor(e.id)}
+                          className="text-white/20 hover:text-red-400 transition-colors flex-shrink-0"
                         >
-                          + Add to Parts
+                          <X className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
                   ))}
                 </div>
+              )}
+
+              {laborEntries.length === 0 && (
+                <p className="text-white/25 text-xs italic mb-2">No time logged.</p>
+              )}
+
+              {/* Log time form */}
+              {addingLaborToItem === item.id && (
+                <div className="p-3 rounded-xl space-y-2.5" style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}>
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1">Mechanic</label>
+                      <MechanicSelect
+                        mechanics={mechanics}
+                        value={newLabor.mechName}
+                        onChange={name => setNewLabor(n => ({ ...n, mechName: name }))}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1">Hours</label>
+                        <input
+                          type="number" step="0.5" min="0.5" placeholder="0.0"
+                          className="w-full px-2.5 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                          value={newLabor.hours}
+                          onChange={e => setNewLabor(n => ({ ...n, hours: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1">Date</label>
+                        <input
+                          type="date"
+                          className="w-full px-2.5 py-2 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30"
+                          value={newLabor.date}
+                          onChange={e => setNewLabor(n => ({ ...n, date: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm" onClick={onAddLabor}
+                      disabled={!newLabor.mechName || !newLabor.hours}
+                      style={{ background: "var(--skyshare-gold)", color: "#000" }}
+                      className="font-bold h-8 px-4 text-xs"
+                    >
+                      Add
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setAddingLaborToItem(null)} className="text-white/40 h-8 px-3 text-xs">Cancel</Button>
+                  </div>
+                </div>
+              )}
+              </div>{/* end labor inner */}
+            </div>{/* end labor card */}
+          </div>{/* end right column */}
+        </div>{/* end discrepancy + labor row */}
+
+        {/* Parts */}
+        <div className="px-5 pt-3 pb-1" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
+
+        {/* ── Elevated Inventory Picker Panel ───────────────────────────────── */}
+        {showInventoryPicker && (
+          <div
+            className="mb-4 rounded-2xl overflow-hidden"
+            style={{
+              border: "1px solid rgba(212,160,23,0.4)",
+              background: "hsl(0,0%,9%)",
+              boxShadow: "0 8px 40px rgba(212,160,23,0.08), 0 0 0 1px rgba(212,160,23,0.12), inset 0 1px 0 rgba(255,255,255,0.04)",
+            }}
+          >
+            {/* Picker header */}
+            <div
+              className="px-5 py-3.5 flex items-center gap-3"
+              style={{
+                background: "linear-gradient(135deg, rgba(212,160,23,0.12), rgba(212,160,23,0.04))",
+                borderBottom: "1px solid rgba(212,160,23,0.25)",
+              }}
+            >
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid rgba(212,160,23,0.3)" }}>
+                <Warehouse className="w-4 h-4" style={{ color: "var(--skyshare-gold)" }} />
+              </div>
+              <div>
+                <span className="text-sm font-bold uppercase tracking-wider block" style={{ color: "rgba(212,160,23,0.95)" }}>
+                  Pull from Inventory
+                </span>
+                <span className="text-[10px] text-white/30">Search and add parts from stock</span>
+              </div>
+              <div className="flex-1" />
+              <button
+                onClick={() => { setShowInventoryPicker(false); setInvSearch(""); setInvResults([]) }}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/[0.06] transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Search input */}
+            <div className="px-5 py-3 flex items-center gap-3" style={{ borderBottom: "1px solid hsl(0,0%,16%)" }}>
+              <Search className="w-4.5 h-4.5 text-white/25 flex-shrink-0" />
+              <input
+                autoFocus
+                placeholder="Search by part number or description…"
+                className="flex-1 bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none"
+                value={invSearch}
+                onChange={e => setInvSearch(e.target.value)}
+              />
+              {invLoading && <Loader2 className="w-4 h-4 text-amber-400/50 animate-spin flex-shrink-0" />}
+            </div>
+            {/* Results */}
+            <div className="max-h-64 overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(212,160,23,0.25) transparent" }}>
+              {invLoading ? (
+                <p className="px-5 py-6 text-white/25 text-sm italic text-center">Searching inventory…</p>
+              ) : invResults.length === 0 ? (
+                <p className="px-5 py-6 text-white/25 text-sm italic text-center">No matching parts</p>
+              ) : (
+                invResults.map(inv => {
+                  const alreadyAdded = item.parts.some(p => p.partNumber.toLowerCase() === inv.partNumber.toLowerCase())
+                  return (
+                    <div
+                      key={inv.id}
+                      className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-white/[0.03]"
+                      style={{ borderBottom: "1px solid hsl(0,0%,14%)" }}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm text-white/90">{inv.partNumber}</span>
+                          {inv.qtyOnHand <= 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171" }}>Out of stock</span>
+                          )}
+                          {inv.qtyOnHand > 0 && (
+                            <span className="text-[10px] text-emerald-400/70">{inv.qtyOnHand} on hand</span>
+                          )}
+                        </div>
+                        <p className="text-white/40 text-xs truncate mt-0.5">{inv.description}</p>
+                      </div>
+                      <span className="text-white/30 text-xs font-mono flex-shrink-0">${inv.unitCost.toFixed(2)}</span>
+                      {alreadyAdded ? (
+                        <span className="text-emerald-400/60 text-xs flex-shrink-0 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Added</span>
+                      ) : (
+                        <button
+                          onClick={() => addFromInventory(inv)}
+                          className="flex-shrink-0 text-xs font-bold px-4 py-2 rounded-lg transition-all hover:scale-[1.03]"
+                          style={{ background: "rgba(212,160,23,0.2)", color: "rgba(212,160,23,0.95)", border: "1px solid rgba(212,160,23,0.35)" }}
+                        >
+                          + Add
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+            {/* Footer */}
+            <div
+              className="px-5 py-3 flex items-center justify-between"
+              style={{ borderTop: "1px solid hsl(0,0%,16%)", background: "hsl(0,0%,8%)" }}
+            >
+              <span className="text-white/20 text-xs">{invResults.length} result{invResults.length !== 1 ? "s" : ""}</span>
+              <button
+                onClick={() => { setShowInventoryPicker(false); setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
+                className="text-xs font-medium transition-colors flex items-center gap-1"
+                style={{ color: "rgba(212,160,23,0.7)" }}
+              >
+                Enter manually instead <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Elevated Manual Add Part Panel ─────────────────────────────────── */}
+        {addingPartToItem === item.id && !showInventoryPicker && (
+          <div
+            className="mb-4 rounded-2xl overflow-hidden"
+            style={{
+              border: "1px solid rgba(212,160,23,0.3)",
+              background: "hsl(0,0%,9%)",
+              boxShadow: "0 8px 40px rgba(212,160,23,0.06), 0 0 0 1px rgba(212,160,23,0.1), inset 0 1px 0 rgba(255,255,255,0.04)",
+            }}
+          >
+            <div
+              className="px-5 py-3.5 flex items-center gap-3"
+              style={{
+                background: "linear-gradient(135deg, rgba(212,160,23,0.1), rgba(212,160,23,0.03))",
+                borderBottom: "1px solid rgba(212,160,23,0.2)",
+              }}
+            >
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.25)" }}>
+                <Plus className="w-4 h-4" style={{ color: "var(--skyshare-gold)" }} />
+              </div>
+              <div>
+                <span className="text-sm font-bold uppercase tracking-wider block" style={{ color: "rgba(212,160,23,0.95)" }}>
+                  Add Part Manually
+                </span>
+                <span className="text-[10px] text-white/30">Enter part details by hand</span>
+              </div>
+              <div className="flex-1" />
+              <button
+                onClick={() => setShowInventoryPicker(true)}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
+                style={{ background: "rgba(212,160,23,0.1)", color: "rgba(212,160,23,0.8)", border: "1px solid rgba(212,160,23,0.2)" }}
+              >
+                <Warehouse className="w-3 h-3" /> Search inventory
+              </button>
+              <button
+                onClick={() => setAddingPartToItem(null)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/[0.06] transition-all ml-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1.5">Part Number</label>
+                  <input
+                    autoFocus
+                    placeholder="e.g. MS28775-228"
+                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                    value={newPart.partNumber}
+                    onChange={e => setNewPart(n => ({ ...n, partNumber: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1.5">Description</label>
+                  <input
+                    placeholder="Part description"
+                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                    value={newPart.description}
+                    onChange={e => setNewPart(n => ({ ...n, description: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1.5">Qty</label>
+                  <input
+                    type="number" min="1"
+                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30"
+                    value={newPart.qty}
+                    onChange={e => setNewPart(n => ({ ...n, qty: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-white/50 text-[10px] uppercase tracking-wider block mb-1.5">Unit Price</label>
+                  <input
+                    type="number" step="0.01" placeholder="0.00"
+                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
+                    value={newPart.unitPrice}
+                    onChange={e => setNewPart(n => ({ ...n, unitPrice: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm" onClick={onAddPart}
+                  disabled={!newPart.partNumber || !newPart.unitPrice}
+                  style={{ background: "var(--skyshare-gold)", color: "#000" }}
+                  className="font-bold h-10 px-6 text-sm"
+                >
+                  Add Part
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setAddingPartToItem(null)} className="text-white/40 h-10 px-4 text-sm">Cancel</Button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Labor */}
-        <div className="px-5 pt-4 pb-1" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
+        {/* ── Parts card (list + header) ─────────────────────────────────────── */}
         <div
           className="rounded-xl overflow-hidden"
-          style={{ border: "1px solid rgba(96,165,250,0.2)", borderLeft: "3px solid rgba(96,165,250,0.5)" }}
-        >
-          {/* Labor header */}
-          <div
-            className="px-4 py-2.5 flex items-center justify-between"
-            style={{
-              background: "linear-gradient(to right, rgba(96,165,250,0.07), rgba(96,165,250,0.02))",
-              borderBottom: "1px solid rgba(96,165,250,0.15)",
-            }}
-          >
-            <div className="flex items-center gap-2">
-              <Clock className="w-3.5 h-3.5 text-blue-400" />
-              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#93c5fd" }}>Labor</span>
-              {clockedTotal > 0 && (
-                <span className="text-white/40 text-xs">{clockedTotal.toFixed(1)} hrs</span>
-              )}
-            </div>
-            {!isLocked && addingLaborToItem !== item.id && (
-              <Button
-                size="sm" variant="ghost"
-                onClick={() => {
-                  setAddingLaborToItem(item.id)
-                  setNewLabor({ mechName: "", hours: "", date: localToday() })
-                }}
-                className="text-white/40 hover:text-white border border-white/10 hover:border-white/25 h-7 px-3 text-xs"
-              >
-                <Plus className="w-3 h-3 mr-1" /> Log Time
-              </Button>
-            )}
-          </div>
-          <div className="px-4 py-3">
-
-          {/* Labor entries */}
-          {laborEntries.length > 0 && (
-            <div className="space-y-2 mb-4">
-              {laborEntries.map(e => (
-                <div
-                  key={e.id}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg"
-                  style={{ background: "hsl(220,15%,11%)", borderLeft: "3px solid rgba(96,165,250,0.5)" }}
-                >
-                  <div className="w-2.5 h-2.5 rounded-full bg-blue-400 flex-shrink-0" />
-                  <span className="text-white text-sm flex-1">{e.mechanicName}</span>
-                  <span className="text-white/70 text-sm font-mono">{e.hours.toFixed(1)} hrs</span>
-                  <span className="text-white/40 text-sm">{new Date(e.clockedAt).toLocaleDateString()}</span>
-                  {!isLocked && (
-                    <button
-                      onClick={() => onDeleteLabor(e.id)}
-                      className="text-white/20 hover:text-red-400 transition-colors ml-1"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {laborEntries.length === 0 && (
-            <p className="text-white/25 text-sm italic mb-2">No time logged yet.</p>
-          )}
-
-          {/* Log time form */}
-          {addingLaborToItem === item.id && (
-            <div className="p-4 rounded-xl space-y-3" style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Mechanic</label>
-                  <MechanicSelect
-                    mechanics={mechanics}
-                    value={newLabor.mechName}
-                    onChange={name => setNewLabor(n => ({ ...n, mechName: name }))}
-                  />
-                </div>
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Hours</label>
-                  <input
-                    type="number" step="0.5" min="0.5" placeholder="0.0"
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
-                    value={newLabor.hours}
-                    onChange={e => setNewLabor(n => ({ ...n, hours: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Date</label>
-                  <input
-                    type="date"
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30"
-                    value={newLabor.date}
-                    onChange={e => setNewLabor(n => ({ ...n, date: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm" onClick={onAddLabor}
-                  disabled={!newLabor.mechName || !newLabor.hours}
-                  style={{ background: "var(--skyshare-gold)", color: "#000" }}
-                  className="font-bold h-10 px-6 text-sm"
-                >
-                  Add
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setAddingLaborToItem(null)} className="text-white/40 h-10 px-4 text-sm">Cancel</Button>
-              </div>
-            </div>
-          )}
-          </div>{/* end labor inner */}
-        </div>{/* end labor card */}
-        </div>{/* end labor outer wrapper */}
-
-        {/* Parts */}
-        <div className="px-5 pt-3 pb-1 flex items-start gap-3" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
-        {/* Left: issued parts */}
-        <div
-          className="flex-1 min-w-0 rounded-xl overflow-hidden"
           style={{ border: "1px solid rgba(212,160,23,0.18)", borderLeft: "3px solid rgba(212,160,23,0.5)" }}
         >
           {/* Parts header */}
@@ -1094,8 +1363,7 @@ function ItemDetailPanel({
             </div>
             {!isLocked && (
               <div className="flex items-center gap-2">
-                {/* Only show these header buttons when parts already exist — empty state handles the zero-parts case */}
-                {!noPartsRequired && item.parts.length > 0 && addingPartToItem !== item.id && !showInventoryPicker && (
+                {!noPartsRequired && !showInventoryPicker && addingPartToItem !== item.id && (
                   <>
                     <Button
                       size="sm" variant="ghost"
@@ -1172,26 +1440,22 @@ function ItemDetailPanel({
               <CheckCircle2 className="w-4 h-4" /> No parts required — confirmed
             </div>
           ) : !isLocked && addingPartToItem !== item.id && !showInventoryPicker ? (
-            /* ── Collapsed empty state with action buttons ── */
-            <div
-              className="flex items-center justify-between px-4 py-3 rounded-xl mb-4"
-              style={{ background: "hsl(0,0%,12%)", border: "1px solid hsl(0,0%,20%)" }}
-            >
-              <span className="text-white/35 text-sm italic">No parts logged yet</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all text-white/60 hover:text-white"
-                  style={{ background: "hsl(0,0%,17%)", border: "1px solid hsl(0,0%,26%)" }}
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Manually
-                </button>
+            <div className="text-center py-4 mb-4">
+              <p className="text-white/25 text-sm italic mb-3">No parts logged yet</p>
+              <div className="flex items-center justify-center gap-3">
                 <button
                   onClick={() => setShowInventoryPicker(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02]"
                   style={{ background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.3)", color: "rgba(212,160,23,0.9)" }}
                 >
                   <Warehouse className="w-3.5 h-3.5" /> Pull from Inventory
+                </button>
+                <button
+                  onClick={() => { setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all text-white/50 hover:text-white/80"
+                  style={{ background: "hsl(0,0%,15%)", border: "1px solid hsl(0,0%,24%)" }}
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Manually
                 </button>
               </div>
             </div>
@@ -1201,223 +1465,53 @@ function ItemDetailPanel({
             </div>
           ) : null}
 
-          {/* ── Inventory picker ─────────────────────────────────────────────── */}
-          {showInventoryPicker && (
-            <div
-              className="rounded-xl overflow-hidden mb-4"
-              style={{ border: "1px solid rgba(212,160,23,0.3)", background: "hsl(0,0%,11%)" }}
-            >
-              {/* Picker header */}
-              <div
-                className="px-4 py-3 flex items-center gap-3"
-                style={{ background: "rgba(212,160,23,0.08)", borderBottom: "1px solid rgba(212,160,23,0.2)" }}
-              >
-                <Warehouse className="w-4 h-4 flex-shrink-0" style={{ color: "var(--skyshare-gold)" }} />
-                <span className="text-sm font-bold uppercase tracking-wider" style={{ color: "rgba(212,160,23,0.9)" }}>
-                  Pull from Inventory
-                </span>
-                <div className="flex-1" />
-                <button onClick={() => { setShowInventoryPicker(false); setInvSearch(""); setInvResults([]) }} className="text-white/30 hover:text-white/70 transition-colors">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              {/* Search input */}
-              <div className="px-4 py-3 flex items-center gap-2.5" style={{ borderBottom: "1px solid hsl(0,0%,18%)" }}>
-                <Search className="w-4 h-4 text-white/30 flex-shrink-0" />
-                <input
-                  autoFocus
-                  placeholder="Search by part number or description…"
-                  className="flex-1 bg-transparent text-white text-sm placeholder:text-white/25 focus:outline-none"
-                  value={invSearch}
-                  onChange={e => setInvSearch(e.target.value)}
-                />
-              </div>
-              {/* Results */}
-              <div className="max-h-56 overflow-y-auto">
-                {invLoading ? (
-                  <p className="px-5 py-4 text-white/30 text-sm italic">Searching...</p>
-                ) : invResults.length === 0 ? (
-                  <p className="px-5 py-4 text-white/30 text-sm italic">No matching parts</p>
-                ) : (
-                  invResults.map(inv => {
-                    const alreadyAdded = item.parts.some(p => p.partNumber.toLowerCase() === inv.partNumber.toLowerCase())
-                    return (
-                      <div
-                        key={inv.id}
-                        className="flex items-center gap-3 px-4 py-3 border-t transition-colors"
-                        style={{ borderColor: "hsl(0,0%,17%)", background: "hsl(0,0%,11%)" }}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm text-white/90">{inv.partNumber}</span>
-                            {inv.qtyOnHand <= 0 && (
-                              <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.12)", color: "#f87171" }}>Out of stock</span>
-                            )}
-                            {inv.qtyOnHand > 0 && (
-                              <span className="text-xs text-emerald-400/70">{inv.qtyOnHand} on hand</span>
-                            )}
-                          </div>
-                          <p className="text-white/45 text-xs truncate mt-0.5">{inv.description}</p>
-                        </div>
-                        <span className="text-white/35 text-xs font-mono flex-shrink-0">${inv.unitCost.toFixed(2)}</span>
-                        {alreadyAdded ? (
-                          <span className="text-emerald-400/70 text-xs flex-shrink-0">✓ Added</span>
-                        ) : (
-                          <button
-                            onClick={() => addFromInventory(inv)}
-                            className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
-                            style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.9)", border: "1px solid rgba(212,160,23,0.3)" }}
-                          >
-                            Add
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-              {/* Footer */}
-              <div
-                className="px-4 py-2.5 flex items-center justify-between"
-                style={{ borderTop: "1px solid hsl(0,0%,17%)", background: "hsl(0,0%,10%)" }}
-              >
-                <span className="text-white/25 text-xs">{invResults.length} part{invResults.length !== 1 ? "s" : ""} shown</span>
-                <button
-                  onClick={() => { setShowInventoryPicker(false); setAddingPartToItem(item.id); setNewPart({ partNumber: "", description: "", qty: "1", unitPrice: "" }) }}
-                  className="text-white/40 hover:text-white/70 text-xs transition-colors"
-                >
-                  Enter manually instead →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Add part form (manual) */}
-          {addingPartToItem === item.id && (
-            <div className="p-4 rounded-xl space-y-3 mb-4" style={{ background: "hsl(0,0%,13%)", border: "1px solid hsl(0,0%,22%)" }}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-white/60 text-xs font-semibold uppercase tracking-wider">Add Part Manually</span>
-                <button onClick={() => setShowInventoryPicker(true)} className="text-xs text-amber-400/70 hover:text-amber-300 transition-colors flex items-center gap-1">
-                  <Warehouse className="w-3 h-3" /> Search inventory instead
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Part Number</label>
-                  <input
-                    placeholder="e.g. MS28775-228"
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
-                    value={newPart.partNumber}
-                    onChange={e => setNewPart(n => ({ ...n, partNumber: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Description</label>
-                  <input
-                    placeholder="Part description"
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
-                    value={newPart.description}
-                    onChange={e => setNewPart(n => ({ ...n, description: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Qty</label>
-                  <input
-                    type="number" min="1"
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white focus:outline-none focus:border-white/30"
-                    value={newPart.qty}
-                    onChange={e => setNewPart(n => ({ ...n, qty: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="text-white/50 text-xs uppercase tracking-wider block mb-1.5">Unit Price</label>
-                  <input
-                    type="number" step="0.01" placeholder="0.00"
-                    className="w-full px-3 py-2.5 rounded-lg text-sm bg-white/[0.06] border border-white/10 text-white placeholder:text-white/25 focus:outline-none focus:border-white/30"
-                    value={newPart.unitPrice}
-                    onChange={e => setNewPart(n => ({ ...n, unitPrice: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm" onClick={onAddPart}
-                  disabled={!newPart.partNumber || !newPart.unitPrice}
-                  style={{ background: "var(--skyshare-gold)", color: "#000" }}
-                  className="font-bold h-10 px-6 text-sm"
-                >
-                  Add Part
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setAddingPartToItem(null)} className="text-white/40 h-10 px-4 text-sm">Cancel</Button>
-              </div>
-            </div>
-          )}
           </div>{/* end parts body */}
         </div>{/* end parts card */}
 
-        {/* Right: Parts on Order for this WO */}
-        <div
-          className="flex-shrink-0 rounded-xl overflow-hidden flex flex-col"
-          style={{ width: 340, border: "1px solid rgba(212,160,23,0.13)", minHeight: 120, maxHeight: 456 }}
-        >
+        {/* Per-item parts on order */}
+        {itemPartsOnOrder.length > 0 && (
           <div
-            className="px-3 py-2 flex items-center gap-1.5 flex-shrink-0"
-            style={{ background: "rgba(212,160,23,0.06)", borderBottom: "1px solid rgba(212,160,23,0.1)" }}
+            className="mt-3 rounded-xl overflow-hidden"
+            style={{ border: "1px solid rgba(251,191,36,0.15)", borderLeft: "3px solid rgba(251,191,36,0.4)" }}
           >
-            <ShoppingCart className="w-3 h-3" style={{ color: "rgba(212,160,23,0.7)" }} />
-            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "rgba(212,160,23,0.7)", fontFamily: "var(--font-heading)" }}>
-              Parts on Order
-            </span>
-            {partsOnOrder.length > 0 && (
-              <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.8)" }}>
-                {partsOnOrder.reduce((s, r) => s + r.lines.length, 0)}
+            <div
+              className="px-4 py-2 flex items-center gap-2"
+              style={{ background: "rgba(251,191,36,0.05)", borderBottom: "1px solid rgba(251,191,36,0.1)" }}
+            >
+              <ShoppingCart className="w-3.5 h-3.5" style={{ color: "rgba(251,191,36,0.7)" }} />
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(251,191,36,0.8)" }}>
+                Parts on Order for This Task
               </span>
-            )}
-          </div>
-          <div className="overflow-y-auto flex-1" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(212,160,23,0.3) transparent" }}>
-            {partsOnOrder.length === 0 ? (
-              <div className="px-3 py-4 text-center">
-                <p className="text-white/20 text-xs italic">No pending requests</p>
-              </div>
-            ) : (
-              partsOnOrder.map(req => {
-                const sc = STATUS_CONFIG[req.status as keyof typeof STATUS_CONFIG]
-                const hasReceived = req.lines.some(l => l.lineStatus === "received")
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(251,191,36,0.12)", color: "rgba(251,191,36,0.8)" }}>
+                {itemPartsOnOrder.length}
+              </span>
+            </div>
+            <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+              {itemPartsOnOrder.map((po, idx) => {
+                const sc = LINE_STATUS_CONFIG[po.lineStatus as keyof typeof LINE_STATUS_CONFIG]
                 return (
-                  <button
-                    key={req.id}
-                    className="w-full px-3 py-2.5 flex items-center gap-3 transition-colors hover:bg-white/[0.04] text-left"
-                    style={{ background: "rgba(255,255,255,0.02)", borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-                    onClick={() => navigate(`/app/beet-box/parts/${req.id}`)}
+                  <div
+                    key={`${po.requestId}-${idx}`}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm"
+                    style={{ background: "hsl(0,0%,10%)" }}
                   >
-                    <span className="text-white/40 text-[10px] flex-shrink-0 underline underline-offset-2 decoration-white/20">
-                      {new Date(req.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                    </span>
-                    <span className="font-mono text-white/75 text-[11px] flex-1 truncate">
-                      {req.lines.map(l => l.partNumber).join(", ")}
-                    </span>
+                    <span className="text-white font-mono flex-shrink-0 w-32 truncate">{po.partNumber}</span>
+                    <span className="text-white/50 flex-1 truncate">{po.description || "—"}</span>
+                    <span className="text-white/40 flex-shrink-0">×{po.quantity}</span>
                     {sc && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0" style={{ background: sc.bg, color: sc.color }}>
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0"
+                        style={{ background: sc.bg, color: sc.color }}
+                      >
                         {sc.label}
                       </span>
                     )}
-                    {hasReceived && (
-                      <span
-                        onClick={e => { e.stopPropagation(); onPullToWO(req.lines.find(l => l.lineStatus === "received")!.partNumber) }}
-                        className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 cursor-pointer transition-colors"
-                        style={{ background: "rgba(212,160,23,0.15)", color: "rgba(212,160,23,0.9)", border: "1px solid rgba(212,160,23,0.3)" }}
-                      >
-                        Pull
-                      </span>
-                    )}
-                  </button>
+                  </div>
                 )
-              })
-            )}
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         </div>{/* end parts outer wrapper */}
 
@@ -1616,9 +1710,20 @@ export default function WorkOrderDetail() {
   const [showCompleteModal, setShowCompleteModal]       = useState(false)
   const [showOpenModal, setShowOpenModal]               = useState(false)
   const [showDeleteDraftModal, setShowDeleteDraftModal] = useState(false)
+  const [showConvertModal, setShowConvertModal]         = useState(false)
+  const [converting, setConverting]                     = useState(false)
   const [deletingDraft, setDeletingDraft]               = useState(false)
   const [timesEditOpen, setTimesEditOpen]               = useState(false)
   const [hobbsDiff, setHobbsDiff]                       = useState<number | null>(null)
+  const [billingClient, setBillingClient] = useState<{
+    name: string
+    address: string | null
+    address2: string | null
+    city: string | null
+    state: string | null
+    zip: string | null
+    taxable: boolean
+  } | null>(null)
   const [notes, setNotes] = useState("")
   const [woDesc, setWoDesc] = useState("")
   const [editingDesc, setEditingDesc] = useState(false)
@@ -1645,21 +1750,24 @@ export default function WorkOrderDetail() {
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [transitionColor, setTransitionColor] = useState<string>("rgba(255,255,255,0.3)")
   const [orderPartsOpen, setOrderPartsOpen] = useState(false)
+  const [orderPartsForItem, setOrderPartsForItem] = useState<{ id: string; itemNumber: number } | null>(null)
   const [partsRequests, setPartsRequests] = useState<{
     id: string
     status: string
     createdAt: string
-    lines: { id: string; partNumber: string; description: string | null; quantity: number; lineStatus: string }[]
+    lines: { id: string; partNumber: string; description: string | null; quantity: number; lineStatus: string; woItemId: string | null }[]
   }[]>([])
   const [partsRequestsKey, setPartsRequestsKey] = useState(0)
   const [pullPartNumber, setPullPartNumber] = useState<string | null>(null)
+  const [partsOverviewOpen, setPartsOverviewOpen] = useState(false)
 
   async function handlePreviewPdf(type: "logbook" | "invoice", woNumber: string) {
     if (type === "logbook" && !logbookPrintRef.current) return
     if (type === "invoice" && !invoicePrintRef.current) return
     setPdfExporting(type)
     try {
-      const filename = `${woNumber}-${type}.pdf`
+      const docLabel = type === "invoice" && wo?.woType === "quote" ? "quote" : type
+      const filename = `${woNumber}-${docLabel}.pdf`
       let blob: Blob
       if (type === "logbook") {
         const pages = Array.from(
@@ -1748,7 +1856,8 @@ export default function WorkOrderDetail() {
   // Auto-create draft logbook entries when the logbook tab is first opened
   useEffect(() => {
     if (activeTab !== "logbook") return
-    if (!wo || draftLogbookEntries.length > 0 || logbookInitRef.current) return
+    if (!wo || wo.woType !== "work_order") return
+    if (draftLogbookEntries.length > 0 || logbookInitRef.current) return
     const sectionsWithItems = [...new Set(wo.items.map(i => i.logbookSection))] as LogbookSection[]
     if (sectionsWithItems.length === 0) return
     logbookInitRef.current = true
@@ -1787,7 +1896,7 @@ export default function WorkOrderDetail() {
     if (!wo?.woNumber || wo.woNumber === "WO-IMPORT") return
     supabase
       .from("parts_requests")
-      .select("id, status, created_at, parts_request_lines(id, part_number, description, quantity, line_status)")
+      .select("id, status, created_at, parts_request_lines(id, part_number, description, quantity, line_status, wo_item_id)")
       .eq("work_order", wo.woNumber)
       .order("created_at", { ascending: false })
       .then(({ data }) => {
@@ -1802,6 +1911,7 @@ export default function WorkOrderDetail() {
             description: l.description,
             quantity: l.quantity,
             lineStatus: l.line_status,
+            woItemId: l.wo_item_id ?? null,
           })),
         })))
       })
@@ -1824,6 +1934,29 @@ export default function WorkOrderDetail() {
       })
       .catch(() => setHobbsDiff(null))
   }, [wo?.id])
+
+  // Fetch billing client for the WO's aircraft (for invoice Bill To section)
+  useEffect(() => {
+    if (!wo?.aircraftId) { setBillingClient(null); return }
+    let cancelled = false
+    ;(async () => {
+      const { data: ac } = await supabase
+        .from("aircraft")
+        .select("client_id")
+        .eq("id", wo.aircraftId!)
+        .maybeSingle()
+      if (cancelled) return
+      if (!ac?.client_id) { setBillingClient(null); return }
+      const { data: c } = await supabase
+        .from("clients")
+        .select("name, address, address2, city, state, zip, taxable")
+        .eq("id", ac.client_id)
+        .maybeSingle()
+      if (cancelled) return
+      setBillingClient(c as typeof billingClient)
+    })()
+    return () => { cancelled = true }
+  }, [wo?.aircraftId])
 
   const [editingItemId, setEditingItemId]     = useState<string | null>(null)
   const [editingCategoryVal, setEditingCategoryVal] = useState("")
@@ -1961,7 +2094,9 @@ export default function WorkOrderDetail() {
   }
 
   const aircraft      = wo.aircraft
-  const isLocked      = wo.status === "completed" || wo.status === "void"
+  const isLocked      = wo.woType === "quote"
+    ? wo.quoteStatus === "converted" || wo.quoteStatus === "declined" || wo.quoteStatus === "expired"
+    : wo.status === "completed" || wo.status === "void"
 
   const totalLabor    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0)
   const totalParts    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0)
@@ -2325,6 +2460,27 @@ export default function WorkOrderDetail() {
 
   async function advanceStatus() {
     if (!wo || isTransitioning) return
+
+    // ── Quote branch ───────────────────────────────────────────────────────
+    if (wo.woType === "quote") {
+      const currentQuote = wo.quoteStatus ?? "draft"
+      const next = QUOTE_NEXT_STATUS[currentQuote]
+      if (!next) return
+      triggerSlide("right")
+      setTransitionColor(QUOTE_STATUS_GLOW_COLOR[next])
+      setIsTransitioning(true)
+      setWO(prev => prev ? { ...prev, quoteStatus: next } : prev)   // optimistic
+      try {
+        const profileId = await getMyProfileId()
+        await updateQuoteStatus(wo.id, next, profileId ?? "", `Advanced to ${QUOTE_STATUS_LABELS[next]}`)
+        auditLog({ entryType: "status_change", summary: `Quote status: ${QUOTE_STATUS_LABELS[currentQuote]} → ${QUOTE_STATUS_LABELS[next]}`, oldValue: currentQuote, newValue: next })
+      } finally {
+        setIsTransitioning(false)
+      }
+      loadWO()
+      return
+    }
+
     const next = NEXT_STATUS[wo.status]
     if (!next) return
     if (wo.status === "draft") { setShowOpenModal(true); return }
@@ -2339,8 +2495,8 @@ export default function WorkOrderDetail() {
       await updateWorkOrderStatus(wo.id, next, profileId ?? "", `Advanced to ${WO_STATUS_LABELS[next]}`)
       auditLog({ entryType: "status_change", summary: `Status: ${WO_STATUS_LABELS[fromStatus]} → ${WO_STATUS_LABELS[next]}`, oldValue: fromStatus, newValue: next })
 
-      // Auto-generate draft invoice when entering "billing"
-      if (next === "billing") {
+      // Auto-generate draft invoice when entering "billing" (work orders only)
+      if (next === "billing" && wo.woType === "work_order") {
         try {
           const fullWO = await getWorkOrderById(wo.id)
           if (fullWO) {
@@ -2359,6 +2515,27 @@ export default function WorkOrderDetail() {
 
   async function regressStatus() {
     if (!wo || isTransitioning) return
+
+    // ── Quote branch ───────────────────────────────────────────────────────
+    if (wo.woType === "quote") {
+      const currentQuote = wo.quoteStatus ?? "draft"
+      const prev = QUOTE_PREV_STATUS[currentQuote]
+      if (!prev) return
+      triggerSlide("left")
+      setTransitionColor(QUOTE_STATUS_GLOW_COLOR[prev])
+      setIsTransitioning(true)
+      setWO(w => w ? { ...w, quoteStatus: prev } : w)   // optimistic
+      try {
+        const profileId = await getMyProfileId()
+        await updateQuoteStatus(wo.id, prev, profileId ?? "", `Returned to ${QUOTE_STATUS_LABELS[prev]}`)
+        auditLog({ entryType: "status_change", summary: `Quote status: ${QUOTE_STATUS_LABELS[currentQuote]} → ${QUOTE_STATUS_LABELS[prev]}`, oldValue: currentQuote, newValue: prev })
+      } finally {
+        setIsTransitioning(false)
+      }
+      loadWO()
+      return
+    }
+
     if (wo.status === "completed" && !isSuperAdmin) return
     const prev = PREV_STATUS[wo.status]
     if (!prev) return
@@ -2404,6 +2581,21 @@ export default function WorkOrderDetail() {
     } finally {
       setDeletingDraft(false)
       setShowDeleteDraftModal(false)
+    }
+  }
+
+  async function handleConvertQuote() {
+    if (!wo || wo.woType !== "quote") return
+    setConverting(true)
+    try {
+      const profileId = await getMyProfileId()
+      const newWoId = await convertQuoteToWorkOrder(wo.id, profileId ?? "")
+      setShowConvertModal(false)
+      navigate(`/app/beet-box/work-orders/${newWoId}`)
+    } catch (err) {
+      console.error("Quote conversion failed:", err)
+    } finally {
+      setConverting(false)
     }
   }
 
@@ -2464,8 +2656,30 @@ export default function WorkOrderDetail() {
                 className="text-white text-xl font-bold tracking-wide leading-none"
                 style={{ fontFamily: "var(--font-display)" }}
               >
-                <span className="text-white/40 font-normal text-base mr-1.5">WO#</span>{wo.woNumber}
+                <span className="text-white/40 font-normal text-base mr-1.5">
+                  {wo.woType === "quote" ? "Quote" : "WO#"}
+                </span>
+                {wo.woNumber}
               </span>
+              {wo.woType === "quote" && wo.quoteStatus && (
+                <QuoteStatusBadge status={wo.quoteStatus} className="mt-0.5" />
+              )}
+              {wo.woType === "quote" && wo.convertedToWoId && (
+                <button
+                  onClick={() => navigate(`/app/beet-box/work-orders/${wo.convertedToWoId}`)}
+                  className="mt-1 text-[10px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
+                >
+                  Converted → open WO
+                </button>
+              )}
+              {wo.woType === "work_order" && wo.sourceQuoteId && (
+                <button
+                  onClick={() => navigate(`/app/beet-box/work-orders/${wo.sourceQuoteId}`)}
+                  className="mt-1 text-[10px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
+                >
+                  From quote ↗
+                </button>
+              )}
               {editingDesc ? (
                 <input
                   autoFocus
@@ -2507,11 +2721,40 @@ export default function WorkOrderDetail() {
                 completed:        { text: "#6ee7b7", bg: "rgba(110,231,183,0.13)", border: "rgba(110,231,183,0.55)", glow: "rgba(110,231,183,0.2)"  },
                 void:             { text: "#fca5a5", bg: "rgba(252,165,165,0.13)", border: "rgba(252,165,165,0.55)", glow: "rgba(252,165,165,0.2)"  },
               }
-              const c       = SC[wo.status]
-              const hasPrev = !!PREV_STATUS[wo.status] && (!isLocked || isSuperAdmin)
-              const hasNext = !!NEXT_STATUS[wo.status]
-              const cp      = hasPrev ? SC[PREV_STATUS[wo.status]!] : null
-              const cn2     = hasNext ? SC[NEXT_STATUS[wo.status]!] : null
+
+              // Pick the right pipeline based on record type
+              const isQuoteMode = wo.woType === "quote"
+              const currentQuoteStatus: QuoteStatus = wo.quoteStatus ?? "draft"
+
+              const c       = isQuoteMode
+                ? QUOTE_STATUS_CONFIG[currentQuoteStatus]
+                : SC[wo.status]
+              const currentLabel = isQuoteMode
+                ? QUOTE_STATUS_LABELS[currentQuoteStatus]
+                : WO_STATUS_LABELS[wo.status]
+
+              const prevKey = isQuoteMode ? QUOTE_PREV_STATUS[currentQuoteStatus] : PREV_STATUS[wo.status]
+              const nextKey = isQuoteMode ? QUOTE_NEXT_STATUS[currentQuoteStatus] : NEXT_STATUS[wo.status]
+
+              const hasPrev = !!prevKey && (!isLocked || isSuperAdmin)
+              const hasNext = !!nextKey
+
+              const cp = hasPrev
+                ? (isQuoteMode ? QUOTE_STATUS_CONFIG[prevKey as QuoteStatus] : SC[prevKey as WOStatus])
+                : null
+              const cn2 = hasNext
+                ? (isQuoteMode ? QUOTE_STATUS_CONFIG[nextKey as QuoteStatus] : SC[nextKey as WOStatus])
+                : null
+
+              const prevLabel = hasPrev
+                ? (isQuoteMode ? QUOTE_STATUS_LABELS[prevKey as QuoteStatus] : WO_STATUS_LABELS[prevKey as WOStatus])
+                : "—"
+              const nextLabel = hasNext
+                ? (isQuoteMode ? QUOTE_STATUS_LABELS[nextKey as QuoteStatus] : WO_STATUS_LABELS[nextKey as WOStatus])
+                : "—"
+              const nextTitle = hasNext
+                ? (isQuoteMode ? (QUOTE_NEXT_STATUS_LABEL[currentQuoteStatus] ?? nextLabel) : NEXT_STATUS_LABEL[wo.status])
+                : undefined
               const dimBorder = "rgba(255,255,255,0.1)"
               return (
                 <div className="flex flex-col items-stretch flex-shrink-0 gap-0">
@@ -2546,11 +2789,11 @@ export default function WorkOrderDetail() {
                       borderBottomLeftRadius: "10px",
                       opacity: hasPrev ? 1 : 0.28,
                     }}
-                    title={hasPrev ? `Back to ${WO_STATUS_LABELS[PREV_STATUS[wo.status]!]}` : undefined}
+                    title={hasPrev ? `Back to ${prevLabel}` : undefined}
                   >
                     <ChevronLeft className="w-5 h-5" style={{ color: cp ? cp.text : "rgba(255,255,255,0.25)" }} />
                     <span className="text-[9px] font-medium uppercase tracking-wider leading-none" style={{ color: cp ? cp.text : "rgba(255,255,255,0.18)" }}>
-                      {hasPrev ? WO_STATUS_LABELS[PREV_STATUS[wo.status]!] : "—"}
+                      {prevLabel}
                     </span>
                   </button>
 
@@ -2582,7 +2825,7 @@ export default function WorkOrderDetail() {
                     <div className="flex flex-col">
                       <span className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-50" style={{ color: c.text }}>Status</span>
                       <span className="text-sm font-bold uppercase tracking-widest leading-tight" style={{ color: c.text, fontFamily: "var(--font-heading)" }}>
-                        {WO_STATUS_LABELS[wo.status]}
+                        {currentLabel}
                       </span>
                     </div>
                   </div>
@@ -2604,11 +2847,11 @@ export default function WorkOrderDetail() {
                       borderBottomRightRadius: "10px",
                       opacity: hasNext && !isTransitioning ? 1 : 0.28,
                     }}
-                    title={hasNext ? NEXT_STATUS_LABEL[wo.status] : undefined}
+                    title={nextTitle}
                   >
                     <ChevronRight className="w-5 h-5" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.25)" }} />
                     <span className="text-[9px] font-medium uppercase tracking-wider leading-none" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.18)" }}>
-                      {hasNext ? WO_STATUS_LABELS[NEXT_STATUS[wo.status]!] : "—"}
+                      {nextLabel}
                     </span>
                   </button>
 
@@ -2618,7 +2861,7 @@ export default function WorkOrderDetail() {
             })()}
 
             {/* Waiting on parts — PO shortcut */}
-            {wo.status === "waiting_on_parts" && (
+            {wo.status === "waiting_on_parts" && wo.woType === "work_order" && (
               <Button
                 variant="ghost" size="sm"
                 onClick={() => navigate("/app/beet-box/purchase-orders")}
@@ -2628,8 +2871,33 @@ export default function WorkOrderDetail() {
               </Button>
             )}
 
+            {/* Convert quote → work order */}
+            {wo.woType === "quote" && wo.quoteStatus === "approved" && (
+              <button
+                onClick={() => setShowConvertModal(true)}
+                className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-semibold transition-all flex-shrink-0"
+                style={{ background: "rgba(110,231,183,0.12)", border: "1px solid rgba(110,231,183,0.45)", color: "#6ee7b7" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(110,231,183,0.22)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(110,231,183,0.12)")}
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" /> Convert to Work Order
+              </button>
+            )}
+
             {/* Status-dependent actions */}
-            {wo.status === "draft" ? (
+            {wo.woType === "quote" ? (
+              wo.quoteStatus === "draft" ? (
+                <button
+                  onClick={() => setShowDeleteDraftModal(true)}
+                  className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium transition-all flex-shrink-0"
+                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "rgba(252,165,165,0.8)" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.16)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
+                >
+                  Delete Draft
+                </button>
+              ) : null
+            ) : wo.status === "draft" ? (
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={() => navigate(`/app/beet-box/work-orders/new?rebuild=${wo.id}`)}
@@ -2665,11 +2933,13 @@ export default function WorkOrderDetail() {
             {/* ── Tabs ── */}
             <div className="flex-1 flex items-center justify-center gap-1">
               {[
-                { id: "items"       as const, label: "Work Items",   icon: FileText    },
-                { id: "notes"       as const, label: "Notes",        icon: StickyNote  },
-                { id: "logbook"     as const, label: "Logbook",      icon: BookOpen    },
-                { id: "invoice"     as const, label: "Invoice",      icon: Receipt     },
-                { id: "audit_trail" as const, label: "Audit Trail",  icon: ShieldCheck },
+                { id: "items"       as const, label: "Work Items",                                      icon: FileText    },
+                { id: "notes"       as const, label: "Notes",                                           icon: StickyNote  },
+                ...(wo.woType === "quote"
+                  ? []
+                  : [{ id: "logbook" as const, label: "Logbook", icon: BookOpen }]),
+                { id: "invoice"     as const, label: wo.woType === "quote" ? "Quote" : "Invoice",       icon: Receipt     },
+                { id: "audit_trail" as const, label: "Audit Trail",                                     icon: ShieldCheck },
               ].map(tab => {
                 const Icon = tab.icon
                 const isActive = activeTab === tab.id
@@ -3085,11 +3355,16 @@ export default function WorkOrderDetail() {
                   onDeletePart={id => removePartEntry(selectedItem.id, id)}
                   mechanics={mechanics}
                   inventoryParts={inventoryParts}
-                  onNavigatePO={() => setOrderPartsOpen(true)}
+                  onNavigatePO={() => { setOrderPartsForItem({ id: selectedItem.id, itemNumber: selectedItem.itemNumber }); setOrderPartsOpen(true) }}
+                  onShowPartsOverview={() => setPartsOverviewOpen(true)}
+                  allItems={wo.items}
+                  itemPartsOnOrder={partsRequests.flatMap(req =>
+                    req.lines
+                      .filter(l => l.woItemId === selectedItem.id)
+                      .map(l => ({ requestId: req.id, status: req.status, partNumber: l.partNumber, description: l.description, quantity: l.quantity, lineStatus: l.lineStatus }))
+                  )}
                   pullPartNumber={pullPartNumber ?? undefined}
                   onPullHandled={() => setPullPartNumber(null)}
-                  partsOnOrder={partsRequests}
-                  onPullToWO={pn => { setPullPartNumber(pn) }}
                   addingPartToItem={addingPartToItem}
                   setAddingPartToItem={setAddingPartToItem}
                   newPart={newPart}
@@ -3581,7 +3856,10 @@ export default function WorkOrderDetail() {
             <div className="flex-1 overflow-y-auto" style={{ background: "hsl(0,0%,14%)" }}>
 
               {/* Toolbar */}
-              <div className="flex items-center justify-end px-6 py-3" style={{ borderBottom: "1px solid hsl(0,0%,20%)" }}>
+              <div className="flex items-center justify-between px-6 py-3" style={{ borderBottom: "1px solid hsl(0,0%,20%)" }}>
+                <span className="text-white/45 text-xs uppercase tracking-wider font-semibold">
+                  {wo.woType === "quote" ? "Customer Quote Preview" : "Customer Invoice Preview"}
+                </span>
                 <Button
                   size="sm" variant="ghost"
                   disabled={pdfExporting === "invoice"}
@@ -3606,7 +3884,9 @@ export default function WorkOrderDetail() {
 
                     {/* Top bar */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: "2px solid #111", paddingBottom: "4px", marginBottom: "12px" }}>
-                      <span style={{ fontWeight: 700, fontSize: "13px" }}>Customer Invoice: {wo.woNumber}</span>
+                      <span style={{ fontWeight: 700, fontSize: "13px" }}>
+                        {wo.woType === "quote" ? "Customer Quote:" : "Customer Invoice:"} {wo.woNumber}
+                      </span>
                       <span style={{ fontSize: "11px", color: "#666" }}>Printed by SkyShare MX (Pg. 1 / 2)</span>
                     </div>
 
@@ -3633,7 +3913,28 @@ export default function WorkOrderDetail() {
                         <p>A/C TT: {acTT}</p>
                         <p>Landings: {lngs}</p>
                         <p>Hobbs: {hobbs}</p>
-                        <p style={{ marginTop: "8px" }}>Bill to: — customer on file —</p>
+                        <div style={{ marginTop: "8px" }}>
+                          {billingClient ? (
+                            <>
+                              <p style={{ fontWeight: 700 }}>
+                                Bill to: {billingClient.name}
+                                {billingClient.taxable && (
+                                  <span style={{ marginLeft: 6, fontSize: "9px", fontWeight: 700, padding: "1px 5px", border: "1px solid #b8860b", color: "#b8860b", borderRadius: 3, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                                    Taxable
+                                  </span>
+                                )}
+                              </p>
+                              {[billingClient.address, billingClient.address2].filter(Boolean).length > 0 && (
+                                <p style={{ color: "#444" }}>{[billingClient.address, billingClient.address2].filter(Boolean).join(", ")}</p>
+                              )}
+                              {[billingClient.city, billingClient.state, billingClient.zip].filter(Boolean).length > 0 && (
+                                <p style={{ color: "#444" }}>{[billingClient.city, billingClient.state, billingClient.zip].filter(Boolean).join(", ")}</p>
+                              )}
+                            </>
+                          ) : (
+                            <p>Bill to: — no client assigned —</p>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -3702,7 +4003,9 @@ export default function WorkOrderDetail() {
 
                     {/* Top bar pg 2 */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: "2px solid #111", paddingBottom: "4px", marginBottom: "14px" }}>
-                      <span style={{ fontWeight: 700, fontSize: "13px" }}>Customer Invoice: {wo.woNumber}</span>
+                      <span style={{ fontWeight: 700, fontSize: "13px" }}>
+                        {wo.woType === "quote" ? "Customer Quote:" : "Customer Invoice:"} {wo.woNumber}
+                      </span>
                       <span style={{ fontSize: "11px", color: "#666" }}>Printed by SkyShare MX (Pg. 2 / 2)</span>
                     </div>
 
@@ -3719,16 +4022,26 @@ export default function WorkOrderDetail() {
                       </div>
                       {/* Right: right-aligned totals column */}
                       <div style={{ textAlign: "right", minWidth: "260px" }}>
-                        {[
-                          { label: "Total Shop Labor:",  val: $f(laborTotal),    bold: false },
-                          { label: "Total Parts:",        val: $f(partsTotal),    bold: false },
-                          { label: "Total Shipping:",     val: $f(shippingTotal), bold: false },
-                          { label: "Additional Charges:", val: $f(shopSupplies),  bold: false },
-                          { label: "Tax:",                val: $f(taxTotal),      bold: false },
-                          { label: "Amount Charged:",     val: $f(amountCharged), bold: false },
-                          { label: "Amount Paid:",        val: "$0.00",           bold: false },
-                          { label: "Amount Due:",         val: $f(amountCharged), bold: true  },
-                        ].map(r => (
+                        {(wo.woType === "quote"
+                          ? [
+                              { label: "Estimated Labor:",    val: $f(laborTotal),    bold: false },
+                              { label: "Estimated Parts:",    val: $f(partsTotal),    bold: false },
+                              { label: "Estimated Shipping:", val: $f(shippingTotal), bold: false },
+                              { label: "Additional Charges:", val: $f(shopSupplies),  bold: false },
+                              { label: "Tax:",                val: $f(taxTotal),      bold: false },
+                              { label: "Estimated Total:",    val: $f(amountCharged), bold: true  },
+                            ]
+                          : [
+                              { label: "Total Shop Labor:",   val: $f(laborTotal),    bold: false },
+                              { label: "Total Parts:",        val: $f(partsTotal),    bold: false },
+                              { label: "Total Shipping:",     val: $f(shippingTotal), bold: false },
+                              { label: "Additional Charges:", val: $f(shopSupplies),  bold: false },
+                              { label: "Tax:",                val: $f(taxTotal),      bold: false },
+                              { label: "Amount Charged:",     val: $f(amountCharged), bold: false },
+                              { label: "Amount Paid:",        val: "$0.00",           bold: false },
+                              { label: "Amount Due:",         val: $f(amountCharged), bold: true  },
+                            ]
+                        ).map(r => (
                           <div key={r.label} style={{ display: "flex", justifyContent: "flex-end", gap: "8px", fontWeight: r.bold ? 700 : 400 }}>
                             <span>{r.label}</span>
                             <span style={{ minWidth: "72px", textAlign: "right" }}>{r.val}</span>
@@ -3738,16 +4051,27 @@ export default function WorkOrderDetail() {
                     </div>
 
                     {/* Important Information */}
-                    <div style={{ textAlign: "center", marginBottom: "16px" }}>
-                      <p style={{ fontWeight: 700, marginBottom: "4px" }}>Important Information</p>
-                      <p>Core fees may apply and the responsibility of the customer.</p>
-                      <p>Credit card convenience fee of 3.5% applies to all invoices $1000.00 or more.</p>
-                    </div>
+                    {wo.woType === "quote" ? (
+                      <div style={{ textAlign: "center", marginBottom: "16px" }}>
+                        <p style={{ fontWeight: 700, marginBottom: "4px" }}>Quote Terms</p>
+                        <p>This quote is an estimate of anticipated charges and is valid for 30 days from the printed date.</p>
+                        <p>Actual costs may vary based on conditions discovered during the course of work.</p>
+                        <p>Core fees may apply and are the responsibility of the customer.</p>
+                      </div>
+                    ) : (
+                      <div style={{ textAlign: "center", marginBottom: "16px" }}>
+                        <p style={{ fontWeight: 700, marginBottom: "4px" }}>Important Information</p>
+                        <p>Core fees may apply and the responsibility of the customer.</p>
+                        <p>Credit card convenience fee of 3.5% applies to all invoices $1000.00 or more.</p>
+                      </div>
+                    )}
 
                     <div style={{ borderTop: "1px solid #555", marginBottom: "10px" }} />
 
                     {/* Signature & Date */}
-                    <p style={{ fontWeight: 700, paddingBottom: "24px" }}>Signature &amp; Date</p>
+                    <p style={{ fontWeight: 700, paddingBottom: "24px" }}>
+                      {wo.woType === "quote" ? "Customer Approval Signature & Date" : "Signature & Date"}
+                    </p>
                   </div>
 
                 </div>
@@ -3764,13 +4088,25 @@ export default function WorkOrderDetail() {
           className="flex-shrink-0 px-6 py-3 flex items-center gap-3"
           style={{ borderTop: "1px solid hsl(0,0%,18%)" }}
         >
-          <WOStatusBadge status={wo.status} />
+          {wo.woType === "quote" && wo.quoteStatus ? (
+            <QuoteStatusBadge status={wo.quoteStatus} />
+          ) : (
+            <WOStatusBadge status={wo.status} />
+          )}
           <span className="text-white/35 text-sm">
-            {wo.status === "completed"
-              ? `Closed ${wo.closedAt ? fmtDate(wo.closedAt) : ""}`
-              : "Work order is void"}
+            {wo.woType === "quote"
+              ? (wo.quoteStatus === "converted"
+                  ? "Quote converted to work order"
+                  : wo.quoteStatus === "declined"
+                    ? "Quote declined"
+                    : wo.quoteStatus === "expired"
+                      ? "Quote expired"
+                      : "")
+              : wo.status === "completed"
+                ? `Closed ${wo.closedAt ? fmtDate(wo.closedAt) : ""}`
+                : "Work order is void"}
           </span>
-          {wo.status === "completed" && (
+          {wo.woType === "work_order" && wo.status === "completed" && (
             <Button
               variant="ghost"
               onClick={() => setActiveTab("logbook")}
@@ -3927,6 +4263,48 @@ export default function WorkOrderDetail() {
         </div>
       )}
 
+      {/* ── CONVERT QUOTE → WORK ORDER MODAL ─────────────────────────────────── */}
+      {showConvertModal && wo && wo.woType === "quote" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.78)" }}>
+          <div className="rounded-2xl p-7 max-w-sm w-full mx-4 space-y-5 max-h-[90vh] overflow-y-auto" style={{ background: "hsl(0,0%,12%)", border: "1px solid rgba(110,231,183,0.3)" }}>
+            <div>
+              <h3 className="text-white text-xl font-bold mb-1" style={{ fontFamily: "var(--font-display)" }}>
+                Convert to Work Order?
+              </h3>
+              <p className="text-white/45 text-sm leading-relaxed">
+                <span className="text-white/70 font-medium">Quote {wo.woNumber}</span> will be marked as converted and a new draft work order will be created with all items, parts, and labor estimates copied over.
+              </p>
+            </div>
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl" style={{ background: "rgba(110,231,183,0.06)", border: "1px solid rgba(110,231,183,0.2)" }}>
+              <ArrowLeftRight className="w-4 h-4 text-emerald-400/80 flex-shrink-0 mt-0.5" />
+              <p className="text-emerald-300/70 text-sm leading-relaxed">
+                The quote will remain in the Quotes list marked <span className="text-emerald-300 font-semibold">converted</span> and linked bidirectionally to the new work order.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                onClick={handleConvertQuote}
+                disabled={converting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all"
+                style={{ background: "rgba(110,231,183,0.15)", border: "1px solid rgba(110,231,183,0.4)", color: "#6ee7b7", opacity: converting ? 0.6 : 1 }}
+                onMouseEnter={e => { if (!converting) e.currentTarget.style.background = "rgba(110,231,183,0.28)" }}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(110,231,183,0.15)")}
+              >
+                {converting ? "Converting…" : "Convert →"}
+              </button>
+              <button
+                onClick={() => setShowConvertModal(false)}
+                disabled={converting}
+                className="px-5 py-2.5 rounded-xl text-sm text-white/45 hover:text-white/70 transition-colors"
+                style={{ border: "1px solid hsl(0,0%,26%)" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── COMPLETE MODAL ───────────────────────────────────────────────────── */}
       {showCompleteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.75)" }}>
@@ -4024,6 +4402,168 @@ export default function WorkOrderDetail() {
         </div>
       )}
 
+      {/* ── Parts Overview Modal ──────────────────────────────────────────── */}
+      {partsOverviewOpen && wo && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0"
+            style={{ background: "rgba(0,0,0,0.6)" }}
+            onClick={() => setPartsOverviewOpen(false)}
+          />
+          <div
+            className="relative rounded-2xl overflow-hidden flex flex-col"
+            style={{ background: "hsl(0,0%,11%)", border: "1px solid rgba(212,160,23,0.25)", width: 720, maxHeight: "80vh", boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}
+          >
+            {/* Header */}
+            <div
+              className="px-6 py-4 flex items-center gap-3 flex-shrink-0"
+              style={{ background: "linear-gradient(to right, rgba(212,160,23,0.1), rgba(212,160,23,0.03))", borderBottom: "1px solid rgba(212,160,23,0.2)" }}
+            >
+              <Package className="w-5 h-5" style={{ color: "var(--skyshare-gold)" }} />
+              <span className="text-base font-bold" style={{ color: "rgba(212,160,23,0.95)", fontFamily: "var(--font-heading)" }}>
+                Parts Overview — {wo.woNumber}
+              </span>
+              <div className="flex-1" />
+              <button onClick={() => setPartsOverviewOpen(false)} className="text-white/30 hover:text-white/70 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(212,160,23,0.3) transparent" }}>
+              {(() => {
+                const itemsWithParts = wo.items.filter(i => i.parts.length > 0)
+                const allParts = wo.items.flatMap(i => i.parts.map(p => ({ ...p, itemNumber: i.itemNumber, itemCategory: i.category })))
+                const totalQty = allParts.reduce((s, p) => s + p.qty, 0)
+                const totalCost = allParts.reduce((s, p) => s + p.qty * p.unitPrice, 0)
+                const $f = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+                if (allParts.length === 0) {
+                  return (
+                    <div className="py-12 text-center">
+                      <Package className="w-8 h-8 mx-auto mb-3 text-white/15" />
+                      <p className="text-white/30 text-sm">No parts have been added to this work order yet.</p>
+                    </div>
+                  )
+                }
+
+                return (
+                  <>
+                    {/* Summary bar */}
+                    <div
+                      className="flex items-center gap-6 px-4 py-3 rounded-xl"
+                      style={{ background: "rgba(212,160,23,0.06)", border: "1px solid rgba(212,160,23,0.15)" }}
+                    >
+                      <div>
+                        <span className="text-white/40 text-[10px] uppercase tracking-wider block">Total Parts</span>
+                        <span className="text-white font-bold text-lg">{totalQty}</span>
+                      </div>
+                      <div>
+                        <span className="text-white/40 text-[10px] uppercase tracking-wider block">Unique P/Ns</span>
+                        <span className="text-white font-bold text-lg">{new Set(allParts.map(p => p.partNumber)).size}</span>
+                      </div>
+                      <div>
+                        <span className="text-white/40 text-[10px] uppercase tracking-wider block">Items w/ Parts</span>
+                        <span className="text-white font-bold text-lg">{itemsWithParts.length} / {wo.items.length}</span>
+                      </div>
+                      <div className="ml-auto text-right">
+                        <span className="text-white/40 text-[10px] uppercase tracking-wider block">Total Cost</span>
+                        <span className="font-bold text-lg" style={{ color: "var(--skyshare-gold)" }}>{$f(totalCost)}</span>
+                      </div>
+                    </div>
+
+                    {/* Parts grouped by item */}
+                    {wo.items.map(item => {
+                      if (item.parts.length === 0) return null
+                      const sectionColor = SECTION_COLORS[item.logbookSection]
+                      return (
+                        <div key={item.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid hsl(0,0%,20%)" }}>
+                          <div
+                            className="px-4 py-2.5 flex items-center gap-2"
+                            style={{ background: "hsl(0,0%,13%)", borderBottom: "1px solid hsl(0,0%,20%)", borderLeft: `3px solid ${sectionColor}` }}
+                          >
+                            <span className="text-white/40 text-xs font-mono">#{item.itemNumber}</span>
+                            <span className="text-white/80 text-sm font-medium">{item.category}</span>
+                            <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: `${sectionColor}20`, color: sectionColor }}>
+                              {item.logbookSection}
+                            </span>
+                            <span className="ml-auto text-white/40 text-xs">{item.parts.length} part{item.parts.length !== 1 ? "s" : ""}</span>
+                          </div>
+                          <div className="divide-y" style={{ borderColor: "hsl(0,0%,17%)" }}>
+                            {item.parts.map(p => (
+                              <div key={p.id} className="flex items-center gap-3 px-4 py-2.5 text-sm" style={{ background: "hsl(0,0%,11%)" }}>
+                                <span className="text-white font-mono flex-shrink-0 w-36 truncate">{p.partNumber}</span>
+                                <span className="text-white/60 flex-1 truncate">{p.description}</span>
+                                <span className="text-white/50 flex-shrink-0">×{p.qty}</span>
+                                <span className="text-white/50 flex-shrink-0 w-20 text-right font-mono">{$f(p.unitPrice)}</span>
+                                <span className="font-medium flex-shrink-0 w-24 text-right font-mono" style={{ color: "var(--skyshare-gold)" }}>
+                                  {$f(p.qty * p.unitPrice)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {/* Parts on Order section */}
+                    {partsRequests.length > 0 && (
+                      <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(251,191,36,0.18)" }}>
+                        <div
+                          className="px-4 py-2.5 flex items-center gap-2"
+                          style={{ background: "rgba(251,191,36,0.06)", borderBottom: "1px solid rgba(251,191,36,0.12)" }}
+                        >
+                          <ShoppingCart className="w-3.5 h-3.5" style={{ color: "rgba(251,191,36,0.7)" }} />
+                          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "rgba(251,191,36,0.8)" }}>Parts on Order</span>
+                          <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(251,191,36,0.12)", color: "rgba(251,191,36,0.8)" }}>
+                            {partsRequests.reduce((s, r) => s + r.lines.length, 0)}
+                          </span>
+                        </div>
+                        <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
+                          {partsRequests.flatMap(req =>
+                            req.lines.map(line => {
+                              const sc = LINE_STATUS_CONFIG[line.lineStatus as keyof typeof LINE_STATUS_CONFIG]
+                              const linkedItem = line.woItemId ? wo.items.find(i => i.id === line.woItemId) : null
+                              return (
+                                <button
+                                  key={`${req.id}-${line.id}`}
+                                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-white/[0.04] text-left"
+                                  style={{ background: "hsl(0,0%,10%)" }}
+                                  onClick={() => { setPartsOverviewOpen(false); navigate(`/app/beet-box/parts/${req.id}`) }}
+                                >
+                                  <span className="text-white font-mono flex-shrink-0 w-32 truncate">{line.partNumber}</span>
+                                  <span className="text-white/50 flex-1 truncate">{line.description || "—"}</span>
+                                  <span className="text-white/40 flex-shrink-0">×{line.quantity}</span>
+                                  {linkedItem ? (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: `${SECTION_COLORS[linkedItem.logbookSection]}20`, color: SECTION_COLORS[linkedItem.logbookSection] }}>
+                                      #{linkedItem.itemNumber}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded flex-shrink-0 text-white/20" style={{ background: "rgba(255,255,255,0.04)" }}>
+                                      WO-wide
+                                    </span>
+                                  )}
+                                  {sc && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0" style={{ background: sc.bg, color: sc.color }}>
+                                      {sc.label}
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* ── Order Parts Slide-Over ────────────────────────────────────────── */}
       {orderPartsOpen && createPortal(
         <div className="fixed inset-0 z-50 flex justify-end">
@@ -4076,9 +4616,11 @@ export default function WorkOrderDetail() {
                     aircraftId:     wo.aircraftId ?? undefined,
                     aircraftTail:   wo.aircraft?.registration ?? wo.guestRegistration ?? undefined,
                     woNumber:       wo.woNumber,
+                    woItemId:       orderPartsForItem?.id ?? undefined,
+                    woItemNumber:   orderPartsForItem?.itemNumber ?? undefined,
                     jobDescription: wo.description ?? undefined,
                   }}
-                  onClose={() => { setOrderPartsOpen(false); setPartsRequestsKey(k => k + 1) }}
+                  onClose={() => { setOrderPartsOpen(false); setOrderPartsForItem(null); setPartsRequestsKey(k => k + 1) }}
                 />
               )}
             </div>

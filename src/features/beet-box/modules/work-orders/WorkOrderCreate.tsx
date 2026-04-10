@@ -358,6 +358,7 @@ export default function WorkOrderCreate() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const rebuildId = searchParams.get("rebuild")   // ?rebuild=<wo_id> → re-enter builder on existing draft
+  const isQuoteMode = searchParams.get("type") === "quote"   // ?type=quote → build a customer quote
 
   const [mode, setMode]   = useState<Mode>("choose")
 
@@ -449,6 +450,7 @@ export default function WorkOrderCreate() {
         guestRegistration: reg || undefined,
         meterAtOpen:       meterAtOpen ?? undefined,
         openedBy:          profileId,
+        woType:            isQuoteMode ? "quote" : "work_order",
       })
       setDraftWoId(wo.id)
       setDraftWoNumber(wo.woNumber)
@@ -572,6 +574,7 @@ export default function WorkOrderCreate() {
         guestSerial: aircraftMode === "guest" ? form.guestSerial || undefined : undefined,
         meterAtOpen: form.meterAtOpen ? parseFloat(form.meterAtOpen) : undefined,
         openedBy: profileId,
+        woType: isQuoteMode ? "quote" : "work_order",
       })
       navigate(`/app/beet-box/work-orders/${wo.id}`)
     } catch (err) {
@@ -918,6 +921,7 @@ export default function WorkOrderCreate() {
           guestRegistration: matchedAircraft ? undefined : parsed.aircraftReg,
           meterAtOpen,
           openedBy:          profileId,
+          woType:            isQuoteMode ? "quote" : "work_order",
         })
         woId = wo.id
         // Patch the snapshot onto the freshly-created WO
@@ -982,9 +986,11 @@ export default function WorkOrderCreate() {
               {mode === "choose" ? "Work Orders" : "Back"}
             </button>
             <h1 className="text-white" style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}>
-              New Work Order
+              {isQuoteMode ? "New Work Order Quote" : "New Work Order"}
             </h1>
-            <p className="text-white/40 text-sm mt-1">Open a new maintenance work order</p>
+            <p className="text-white/40 text-sm mt-1">
+              {isQuoteMode ? "Build a customer estimate before work begins" : "Open a new maintenance work order"}
+            </p>
           </div>
           <div className="stripe-divider" />
         </>

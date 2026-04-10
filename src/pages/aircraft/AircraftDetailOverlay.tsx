@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
-import { Camera, Star, Shield, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react"
+import { Camera, Star, Shield, ShieldCheck, ShieldAlert, ShieldX, Building2 } from "lucide-react"
+import { supabase } from "@/lib/supabase"
 import Cropper from "react-easy-crop"
 import type { Area } from "react-easy-crop"
 import { useAuth } from "@/features/auth"
@@ -353,6 +354,148 @@ function PropulsionHeroStrip({
           {aircraftNote}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Client hero box ──────────────────────────────────────────────────────────
+// Sits at the bottom of the hero bar left column. Shows the billing client
+// (if any) linked to this aircraft via aircraft.client_id. Renders nothing
+// when no client is assigned, so it only appears on applicable aircraft.
+
+interface ClientHeroData {
+  id: string
+  name: string
+  address: string | null
+  address2: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
+  taxable: boolean
+}
+
+function ClientHeroBox({ aircraftId }: { aircraftId: string }) {
+  const [client, setClient] = useState<ClientHeroData | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    async function fetchClient() {
+      const { data: ac, error: acErr } = await supabase
+        .from("aircraft")
+        .select("client_id")
+        .eq("id", aircraftId)
+        .maybeSingle()
+      if (cancelled) return
+      if (acErr || !ac?.client_id) {
+        setClient(null)
+        setLoaded(true)
+        return
+      }
+      const { data: c, error: cErr } = await supabase
+        .from("clients")
+        .select("id, name, address, address2, city, state, zip, taxable")
+        .eq("id", ac.client_id)
+        .maybeSingle()
+      if (cancelled) return
+      if (cErr || !c) {
+        setClient(null)
+      } else {
+        setClient(c as ClientHeroData)
+      }
+      setLoaded(true)
+    }
+    fetchClient()
+    return () => { cancelled = true }
+  }, [aircraftId])
+
+  if (!loaded || !client) return null
+
+  const addressLine1 = [client.address, client.address2].filter(Boolean).join(", ")
+  const addressLine2 = [client.city, client.state, client.zip].filter(Boolean).join(", ")
+
+  return (
+    <div style={{
+      marginTop: 14,
+      paddingTop: 12,
+      borderTop: "1px solid hsl(var(--border))",
+    }}>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "56px 1fr",
+        columnGap: 8,
+        alignItems: "start",
+      }}>
+        {/* Label */}
+        <div style={{
+          padding: "3px 0",
+          fontFamily: "'Courier Prime','Courier New',monospace",
+          fontSize: 11,
+          fontWeight: 600,
+          color: "rgba(212,160,23,0.55)",
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+        }}>
+          <Building2 size={11} style={{ opacity: 0.75 }} />
+          CLIENT
+        </div>
+
+        {/* Name + badge + address */}
+        <div style={{ padding: "2px 0", fontSize: "13px", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, color: "hsl(var(--foreground))" }}>
+              {client.name}
+            </span>
+            {client.taxable ? (
+              <span style={{
+                fontSize: 9,
+                fontWeight: 700,
+                padding: "2px 7px",
+                borderRadius: 4,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                background: "rgba(251,191,36,0.12)",
+                color: "#fbbf24",
+                border: "1px solid rgba(251,191,36,0.25)",
+                whiteSpace: "nowrap",
+              }}>
+                Taxable
+              </span>
+            ) : (
+              <span style={{
+                fontSize: 9,
+                fontWeight: 700,
+                padding: "2px 7px",
+                borderRadius: 4,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                background: "rgba(255,255,255,0.04)",
+                color: "hsl(var(--muted-foreground))",
+                border: "1px solid rgba(255,255,255,0.08)",
+                whiteSpace: "nowrap",
+                opacity: 0.7,
+              }}>
+                Non-Taxable
+              </span>
+            )}
+          </div>
+          {(addressLine1 || addressLine2) && (
+            <div style={{
+              fontSize: 11,
+              color: "hsl(var(--muted-foreground))",
+              opacity: 0.7,
+              lineHeight: 1.4,
+              marginTop: 2,
+            }}>
+              {addressLine1 && <div>{addressLine1}</div>}
+              {addressLine2 && <div>{addressLine2}</div>}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -2646,6 +2789,7 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
                   apu={baseDetail.apu}
                   aircraftNote={getField(baseDetail.identity, "Aircraft Note")?.value}
                 />
+                <ClientHeroBox aircraftId={aircraft.id} />
               </div>
 
               {/* Right: Aircraft Photo */}
@@ -2728,6 +2872,7 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
           initialApu={baseDetail.apu}
           initialHobbsDiff={baseDetail.hobbsDifferential ?? null}
           tailNumber={aircraft.tailNumber}
+          aircraftId={aircraft.id}
           onSave={handlePropulsionSave}
           onClose={() => setShowPropulsionEditor(false)}
         />

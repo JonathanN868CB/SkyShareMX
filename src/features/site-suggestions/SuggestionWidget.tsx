@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import {
   MessageSquarePlus, X, ImageIcon, SendHorizonal, CheckCircle2,
-  ChevronRight, ArrowLeft, CornerDownRight, AlertCircle,
+  ChevronRight, ArrowLeft, CornerDownRight, AlertCircle, Archive,
 } from "lucide-react"
 import { useAuth } from "@/features/auth"
 import { supabase } from "@/lib/supabase"
@@ -142,7 +142,7 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
         suggestion_replies (id, admin_reply, reply_type, sender, sent_at, read_at)
       `)
       .eq("user_id", profile.id)
-      .neq("status", "deleted")
+      .not("status", "in", '("deleted","archived")')
       .order("created_at", { ascending: false })
 
     const items = (data ?? []) as MyItem[]
@@ -276,6 +276,15 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
       .eq("id", itemId)
     setMoreInfo("")
     setSendingInfo(false)
+    await fetchMyItems()
+  }
+
+  // ── Archive item ──────────────────────────────────────────────────────────
+  async function handleArchive(itemId: string) {
+    await supabase
+      .from("site_suggestions")
+      .update({ status: "archived" })
+      .eq("id", itemId)
     await fetchMyItems()
   }
 
@@ -433,6 +442,19 @@ export function SuggestionWidget({ variant = "topbar" }: { variant?: "topbar" | 
                     }}
                   >
                     {unread}
+                  </span>
+                )}
+
+                {/* Archive button */}
+                {item.status !== "archived" && (
+                  <span
+                    role="button"
+                    title="Archive"
+                    onClick={e => { e.stopPropagation(); handleArchive(item.id) }}
+                    className="flex-shrink-0 flex items-center justify-center rounded p-1 transition-colors hover:bg-white/10"
+                    style={{ color: "rgba(255,255,255,0.25)", cursor: "pointer" }}
+                  >
+                    <Archive size={12} />
                   </span>
                 )}
 

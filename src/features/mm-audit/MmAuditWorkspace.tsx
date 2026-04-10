@@ -121,7 +121,7 @@ export default function MmAuditWorkspace({ campaignId, campaignName, onClose }: 
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value as AuditStatus | "all")}
-          className="rounded px-2 py-1 text-xs outline-none cursor-pointer"
+          className="rounded px-2 py-1 text-xs outline-none cursor-pointer [&>option]:bg-[#1e1e2e] [&>option]:text-white"
           style={{ background: rgba(0.06), border: `1px solid ${rgba(0.12)}`, color: "rgba(255,255,255,0.7)" }}
         >
           <option value="all">All Statuses</option>
@@ -134,7 +134,7 @@ export default function MmAuditWorkspace({ campaignId, campaignName, onClose }: 
         <select
           value={familyFilter}
           onChange={e => setFamilyFilter(e.target.value)}
-          className="rounded px-2 py-1 text-xs outline-none cursor-pointer"
+          className="rounded px-2 py-1 text-xs outline-none cursor-pointer [&>option]:bg-[#1e1e2e] [&>option]:text-white"
           style={{ background: rgba(0.06), border: `1px solid ${rgba(0.12)}`, color: "rgba(255,255,255,0.7)" }}
         >
           <option value="all">All Aircraft Types</option>
