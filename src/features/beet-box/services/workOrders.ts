@@ -1,7 +1,8 @@
 import { supabase } from "@/lib/supabase"
 import type {
-  WorkOrder, WOItem, WOItemPart, WOItemLabor,
+  WorkOrder, WOItem, WOItemPart, WOItemLabor, WOItemAttachment,
   WOStatusChange, WOStatus, WOType, QuoteStatus, WOItemStatus, Mechanic, CertType, AuditEntry,
+  ItemApprovalStatus, DiscrepancyType,
 } from "../types"
 import { buildAircraftRef } from "./aircraft"
 
@@ -119,13 +120,14 @@ export async function getWorkOrderById(id: string): Promise<WorkOrder | null> {
   if (error) throw error
   if (!row) return null
 
-  // Fetch items with nested parts + labor + signer name
+  // Fetch items with nested parts + labor + attachments + signer name
   const { data: itemRows, error: iErr } = await supabase
     .from("bb_work_order_items")
     .select(`
       *,
       bb_work_order_item_parts ( * ),
       bb_work_order_item_labor ( * ),
+      bb_wo_item_attachments ( * ),
       signer:profiles!bb_work_order_items_signed_off_by_fkey ( full_name, display_name )
     `)
     .eq("work_order_id", id)
@@ -304,8 +306,12 @@ export async function convertQuoteToWorkOrder(
   if (insErr) throw insErr
   const newWoId = newWo.id as string
 
-  // 4. Deep-copy items + their parts and labor
-  for (const item of quote.items) {
+  // 4. Deep-copy items + their parts and labor.
+  // Only items the customer approved make it onto the new WO. Declined items
+  // stay on the quote record for audit but are excluded here.
+  const approvedItems = quote.items.filter(it => it.customerApprovalStatus !== "declined")
+  const skippedCount  = quote.items.length - approvedItems.length
+  for (const item of approvedItems) {
     const { data: newItem, error: itemErr } = await supabase
       .from("bb_work_order_items")
       .insert({
@@ -377,7 +383,9 @@ export async function convertQuoteToWorkOrder(
     from_status: null,
     to_status: "draft",
     changed_by: createdBy,
-    notes: `Created from quote ${quote.woNumber}`,
+    notes: skippedCount > 0
+      ? `Created from quote ${quote.woNumber} — ${skippedCount} item(s) skipped (declined by customer)`
+      : `Created from quote ${quote.woNumber}`,
   })
 
   // 6. Mark quote as converted + record back-reference
@@ -514,7 +522,7 @@ export async function upsertWOItem(
     : await supabase.from("bb_work_order_items").insert(payload).select("*").single()
 
   if (error) throw error
-  return mapItemRow({ ...data, bb_work_order_item_parts: [], bb_work_order_item_labor: [] })
+  return mapItemRow({ ...data, bb_work_order_item_parts: [], bb_work_order_item_labor: [], bb_wo_item_attachments: [] })
 }
 
 export async function updateItemStatus(itemId: string, status: WOItemStatus): Promise<void> {
@@ -786,6 +794,7 @@ function mapWorkOrderRow(
     quoteExpiresAt: row.quote_expires_at ?? null,
     sourceQuoteId: row.source_quote_id ?? null,
     convertedToWoId: row.converted_to_wo_id ?? null,
+    parentWoId: row.parent_wo_id ?? null,
     items: [],
     statusHistory: [],
     auditTrail: [],
@@ -818,6 +827,10 @@ function mapItemRow(row: any): WOItem {
     signedOffAt: row.signed_off_at,
     itemStatus: row.item_status,
     noPartsRequired: row.no_parts_required,
+    customerApprovalStatus: (row.customer_approval_status ?? "pending") as ItemApprovalStatus,
+    customerDecisionAt: row.customer_decision_at ?? null,
+    parentItemId: row.parent_item_id ?? null,
+    discrepancyType: (row.discrepancy_type ?? null) as DiscrepancyType | null,
     parts: (row.bb_work_order_item_parts ?? []).map((p: any): WOItemPart => ({
       id: p.id,
       itemId: p.item_id,
@@ -831,6 +844,18 @@ function mapItemRow(row: any): WOItem {
       condition: p.condition ?? null,
     })),
     labor: (row.bb_work_order_item_labor ?? []).map(mapLaborRow),
+    attachments: (row.bb_wo_item_attachments ?? []).map((a: any): WOItemAttachment => ({
+      id: a.id,
+      woItemId: a.wo_item_id,
+      workOrderId: a.work_order_id,
+      kind: (a.kind ?? "photo") as "photo" | "doc" | "other",
+      fileName: a.file_name,
+      storagePath: a.storage_path,
+      mimeType: a.mime_type ?? null,
+      fileSizeBytes: a.file_size_bytes ?? null,
+      uploadedBy: a.uploaded_by ?? null,
+      uploadedAt: a.uploaded_at,
+    })),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

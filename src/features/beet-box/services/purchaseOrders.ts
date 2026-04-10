@@ -1,20 +1,29 @@
 import { supabase } from "@/lib/supabase"
 import type {
-  PurchaseOrder, POLine, POStatus,
+  PurchaseOrder, POLine, POStatus, POLineStatus,
   PartCondition, CertificateType, InspectionStatus, ReceivingRecord,
+  POInvoice, POActivity,
 } from "../types"
 import { recordTransaction } from "./inventory"
 import { notifyProfileIds } from "@/features/parts/helpers"
+import { getMyProfile } from "./workOrders"
 
 export async function getPurchaseOrders(filters?: {
   status?: POStatus | POStatus[]
   vendorName?: string
+  showArchived?: boolean
 }): Promise<PurchaseOrder[]> {
   let query = supabase
     .from("bb_purchase_orders")
     .select("*, bb_purchase_order_lines(*)")
     .order("created_at", { ascending: false })
     .range(0, 9999)
+
+  if (filters?.showArchived) {
+    query = query.not("archived_at", "is", null)
+  } else {
+    query = query.is("archived_at", null)
+  }
 
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
@@ -113,15 +122,36 @@ export async function createPurchaseOrder(payload: {
     if (lineErr) throw lineErr
   }
 
-  return (await getPurchaseOrderById(po.id))!
+  const result = (await getPurchaseOrderById(po.id))!
+
+  // Log creation activity
+  addPOActivity(result.id, {
+    type: "system",
+    message: `Purchase order ${poNumber} created`,
+  }).catch(() => {})
+
+  return result
 }
 
-export async function updatePOStatus(id: string, status: POStatus): Promise<void> {
+export async function updatePOStatus(
+  id: string,
+  status: POStatus,
+  opts?: { skipActivity?: boolean; fromStatus?: POStatus }
+): Promise<void> {
   const updates: Record<string, unknown> = { status }
   if (status === "received") updates.received_at = new Date().toISOString()
 
   const { error } = await supabase.from("bb_purchase_orders").update(updates).eq("id", id)
   if (error) throw error
+
+  if (!opts?.skipActivity) {
+    const from = opts?.fromStatus ? `${opts.fromStatus} → ` : ""
+    // Fire-and-forget — don't block on activity write failure
+    addPOActivity(id, {
+      type: "status_change",
+      message: `Status changed: ${from}${status}`,
+    }).catch(() => {})
+  }
 }
 
 // ─── Receiving workflow with full traceability ─────────────────────────────
@@ -162,6 +192,7 @@ export async function receiveItems(
 
     // 1. Insert receiving record
     await supabase.from("bb_receiving_records").insert({
+      purchase_order_id: poId,
       po_line_id: item.lineId,
       part_number: item.partNumber,
       catalog_id: item.catalogId ?? null,
@@ -188,9 +219,16 @@ export async function receiveItems(
       .single()
 
     const newTotal = (line?.qty_received ?? 0) + item.qty
+    // Determine new line_status based on receipt qty
+    const qtyOrdered = await supabase
+      .from("bb_purchase_order_lines")
+      .select("qty_ordered")
+      .eq("id", item.lineId)
+      .single()
+    const newLineStatus = newTotal >= (qtyOrdered.data?.qty_ordered ?? 0) ? "received" : "shipped"
     await supabase
       .from("bb_purchase_order_lines")
-      .update({ qty_received: newTotal })
+      .update({ qty_received: newTotal, line_status: newLineStatus })
       .eq("id", item.lineId)
 
     // 2b. If this PO line links to a parts request line, mark it received
@@ -253,9 +291,16 @@ export async function receiveItems(
   if (updated) {
     const allDone = updated.lines.every(l => l.qtyReceived >= l.qtyOrdered)
     const anyReceived = updated.lines.some(l => l.qtyReceived > 0)
-    if (allDone) await updatePOStatus(poId, "received")
-    else if (anyReceived && updated.status === "sent") await updatePOStatus(poId, "partial")
+    if (allDone) await updatePOStatus(poId, "received", { skipActivity: true })
+    else if (anyReceived && updated.status === "sent") await updatePOStatus(poId, "partial", { skipActivity: true })
   }
+
+  // 5. Write receive activity entry
+  const partList = items.filter(i => i.qty > 0).map(i => `${i.qty}× ${i.partNumber}`).join(", ")
+  addPOActivity(poId, {
+    type: "receive",
+    message: `Received by ${receivedBy.name}: ${partList}`,
+  }).catch(() => {})
 
   // 5. Check if any parts requests are now fully received via this PO
   // Collect distinct request IDs linked through PO lines
@@ -367,6 +412,202 @@ export async function getReceivingRecords(poId: string): Promise<ReceivingRecord
   }))
 }
 
+// ─── Update PO line fields ──────────────────────────────────────────────────
+
+export async function updatePOLine(lineId: string, updates: {
+  lineStatus?: string
+  vendorPartNumber?: string
+  lineNotes?: string
+  lineExpectedDelivery?: string | null
+  qtyOrdered?: number
+  unitCost?: number
+  partNumber?: string
+  description?: string
+}): Promise<void> {
+  const patch: Record<string, unknown> = {}
+  if (updates.lineStatus !== undefined) patch.line_status = updates.lineStatus
+  if (updates.vendorPartNumber !== undefined) patch.vendor_part_number = updates.vendorPartNumber
+  if (updates.lineNotes !== undefined) patch.line_notes = updates.lineNotes
+  if ("lineExpectedDelivery" in updates) patch.line_expected_delivery = updates.lineExpectedDelivery ?? null
+  if (updates.qtyOrdered !== undefined) patch.qty_ordered = updates.qtyOrdered
+  if (updates.unitCost !== undefined) patch.unit_cost = updates.unitCost
+  if (updates.partNumber !== undefined) patch.part_number = updates.partNumber
+  if (updates.description !== undefined) patch.description = updates.description
+  const { error } = await supabase.from("bb_purchase_order_lines").update(patch).eq("id", lineId)
+  if (error) throw error
+}
+
+// ─── Update PO shipping/tracking ───────────────────────────────────────────
+
+export async function updatePOTracking(poId: string, updates: {
+  carrier?: string
+  trackingNumber?: string
+  trackingStatus?: string
+}): Promise<void> {
+  const { error } = await supabase
+    .from("bb_purchase_orders")
+    .update({
+      carrier: updates.carrier,
+      tracking_number: updates.trackingNumber,
+      tracking_status: updates.trackingStatus,
+      tracking_updated_at: new Date().toISOString(),
+    })
+    .eq("id", poId)
+  if (error) throw error
+}
+
+// ─── Linked work orders ─────────────────────────────────────────────────────
+
+export async function getLinkedWorkOrders(poId: string): Promise<{
+  id: string; woNumber: string; description: string | null; status: string
+  aircraft: string | null
+}[]> {
+  const { data: lines } = await supabase
+    .from("bb_purchase_order_lines")
+    .select("wo_ref")
+    .eq("purchase_order_id", poId)
+    .not("wo_ref", "is", null)
+
+  if (!lines || lines.length === 0) return []
+
+  const woRefs = [...new Set(lines.map((l: any) => l.wo_ref).filter(Boolean))]
+  if (woRefs.length === 0) return []
+
+  const { data, error } = await supabase
+    .from("bb_work_orders")
+    .select("id, wo_number, description, status, guest_registration")
+    .in("wo_number", woRefs)
+
+  if (error) throw error
+  return (data ?? []).map((w: any) => ({
+    id: w.id,
+    woNumber: w.wo_number,
+    description: w.description,
+    status: w.status,
+    aircraft: w.guest_registration ?? null,
+  }))
+}
+
+// ─── Activity log ───────────────────────────────────────────────────────────
+
+export async function getPOActivity(poId: string): Promise<POActivity[]> {
+  const { data, error } = await supabase
+    .from("bb_po_activity")
+    .select("*")
+    .eq("purchase_order_id", poId)
+    .order("created_at", { ascending: false })
+
+  if (error) throw error
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    purchaseOrderId: r.purchase_order_id,
+    type: r.type,
+    authorId: r.author_id,
+    authorName: r.author_name,
+    message: r.message,
+    createdAt: r.created_at,
+  }))
+}
+
+export async function addPOActivity(poId: string, entry: {
+  type: POActivity["type"]
+  message: string
+}): Promise<void> {
+  const profile = await getMyProfile()
+  if (!profile) throw new Error("Not authenticated")
+  const { error } = await supabase.from("bb_po_activity").insert({
+    purchase_order_id: poId,
+    type: entry.type,
+    author_id: profile.id,
+    author_name: profile.name,
+    message: entry.message,
+  })
+  if (error) throw error
+}
+
+// ─── Vendor invoices ────────────────────────────────────────────────────────
+
+export async function getPOInvoices(poId: string): Promise<POInvoice[]> {
+  const { data, error } = await supabase
+    .from("bb_po_invoices")
+    .select("*")
+    .eq("purchase_order_id", poId)
+    .order("received_at", { ascending: false })
+
+  if (error) throw error
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    purchaseOrderId: r.purchase_order_id,
+    invoiceNumber: r.invoice_number,
+    invoiceDate: r.invoice_date ?? null,
+    amount: Number(r.amount),
+    matchStatus: r.match_status,
+    notes: r.notes ?? null,
+    recordedBy: r.recorded_by ?? null,
+    receivedAt: r.received_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }))
+}
+
+export async function addPOInvoice(poId: string, data: {
+  invoiceNumber: string
+  invoiceDate?: string
+  amount: number
+  notes?: string
+}, poTotal: number): Promise<void> {
+  const profile = await getMyProfile()
+  if (!profile) throw new Error("Not authenticated")
+
+  // Compute match status against PO total
+  const diff = data.amount - poTotal
+  const matchStatus =
+    Math.abs(diff) < 0.01 ? "matched" :
+    diff > 0 ? "over" : "under"
+
+  const { error } = await supabase.from("bb_po_invoices").insert({
+    purchase_order_id: poId,
+    invoice_number: data.invoiceNumber,
+    invoice_date: data.invoiceDate ?? null,
+    amount: data.amount,
+    match_status: matchStatus,
+    notes: data.notes ?? null,
+    recorded_by: profile.id,
+  })
+  if (error) throw error
+
+  await addPOActivity(poId, {
+    type: "invoice",
+    message: `Invoice ${data.invoiceNumber} recorded — $${data.amount.toFixed(2)} (${matchStatus})`,
+  })
+}
+
+// ─── Archive / Restore / Delete ────────────────────────────────────────────
+
+export async function archivePO(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_purchase_orders")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id)
+  if (error) throw error
+}
+
+export async function restorePO(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_purchase_orders")
+    .update({ archived_at: null })
+    .eq("id", id)
+  if (error) throw error
+}
+
+export async function deletePO(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("bb_purchase_orders")
+    .delete()
+    .eq("id", id)
+  if (error) throw error
+}
+
 function mapPORow(row: any): PurchaseOrder {
   const lines: POLine[] = ((row.bb_purchase_order_lines ?? []) as any[])
     .sort((a, b) => a.line_number - b.line_number)
@@ -382,6 +623,10 @@ function mapPORow(row: any): PurchaseOrder {
       woRef: l.wo_ref,
       catalogId: l.catalog_id ?? null,
       partsRequestLineId: l.parts_request_line_id ?? null,
+      lineStatus: (l.line_status ?? "pending") as POLineStatus,
+      vendorPartNumber: l.vendor_part_number ?? null,
+      lineNotes: l.line_notes ?? null,
+      lineExpectedDelivery: l.line_expected_delivery ?? null,
       createdAt: l.created_at,
       updatedAt: l.updated_at,
     }))
@@ -397,6 +642,11 @@ function mapPORow(row: any): PurchaseOrder {
     expectedDelivery: row.expected_delivery,
     receivedAt: row.received_at,
     notes: row.notes,
+    carrier: row.carrier ?? null,
+    trackingNumber: row.tracking_number ?? null,
+    trackingStatus: row.tracking_status ?? null,
+    trackingUpdatedAt: row.tracking_updated_at ?? null,
+    archivedAt: row.archived_at ?? null,
     lines,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

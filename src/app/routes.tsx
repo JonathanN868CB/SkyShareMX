@@ -63,6 +63,7 @@ const ExternalRequests = lazy(() => import("@/pages/external-requests/ExternalRe
 const ExternalRequestDetail = lazy(() => import("@/pages/external-requests/ExternalRequestDetailPage"))
 const ExternalResponse = lazy(() => import("@/pages/external-response/ExternalResponsePage"))
 const FourteenDayCheckResponse = lazy(() => import("@/pages/fourteen-day-check/FourteenDayCheckResponse"))
+const ApprovalPortalPage       = lazy(() => import("@/pages/approval/ApprovalPortalPage"))
 const FourteenDayCheck         = lazy(() => import("@/pages/FourteenDayCheck"))
 const InspectionTemplatesPage  = lazy(() => import("@/pages/InspectionTemplatesPage"))
 const MaintenancePlanning = lazy(() => import("@/pages/MaintenancePlanning"))
@@ -120,6 +121,11 @@ const routes: RouteObject[] = [
     // 14-Day Check permanent standing form — no auth required
     path: "/check/:token",
     element: wrap(<FourteenDayCheckResponse />),
+  },
+  {
+    // Customer quote/change-order approval portal — no auth required
+    path: "/approval/:token",
+    element: wrap(<ApprovalPortalPage />),
   },
   {
     path: "/app",

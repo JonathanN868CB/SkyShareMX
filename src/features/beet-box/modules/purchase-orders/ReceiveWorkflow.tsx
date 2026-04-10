@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronRight,
   Upload, FileText, Camera, AlertTriangle, ShieldCheck, Package, Wrench,
@@ -29,7 +29,7 @@ export interface ReceivableLine {
 type RequiredDocType = "8130-3" | "CoC" | "manufacturer_cert" | "packing_slip" | "invoice"
 type ReceiptStatus = "serviceable" | "quarantine" | "rejected" | "repairable"
 
-interface ReceiveLineForm {
+export interface ReceiveLineForm {
   lineId: string
   partNumber: string
   partNumberVerified: boolean
@@ -60,7 +60,7 @@ interface ReceiveLineForm {
   inspectionPassed: boolean | null
 }
 
-interface ScannedField {
+export interface ScannedField {
   label: string
   value: string
   confidence: number
@@ -71,29 +71,12 @@ interface ScannedField {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MOCK OCR DATA — simulates what a scanned packing slip / 8130-3 would return
+// OCR INTEGRATION POINT
+// When DW1GHT analyzes an uploaded document, it should call:
+//   onScanComplete(fields: ScannedField[])
+// where each field has { label, value, confidence, top, left, width, height }.
+// The form will pre-populate from scannedFields; tech reviews and confirms.
 // ═══════════════════════════════════════════════════════════════════════════════
-
-const MOCK_SCANNED_FIELDS: ScannedField[] = [
-  { label: "PO Number",     value: "PO-2026-0042",       confidence: 0.99, top: 8,  left: 55, width: 35, height: 4 },
-  { label: "Vendor",        value: "JSSI Parts & Leasing", confidence: 0.97, top: 14, left: 10, width: 45, height: 4 },
-  { label: "Ship Date",     value: "04/05/2026",          confidence: 0.95, top: 14, left: 60, width: 25, height: 4 },
-  { label: "Part Number",   value: "SVO10068",            confidence: 0.98, top: 30, left: 5,  width: 22, height: 4 },
-  { label: "Description",   value: "Fuel Nozzle Assy PT6A-42", confidence: 0.92, top: 30, left: 28, width: 35, height: 4 },
-  { label: "Qty Shipped",   value: "1",                   confidence: 0.99, top: 30, left: 65, width: 8,  height: 4 },
-  { label: "Serial Number", value: "FN-2026-08841",       confidence: 0.96, top: 30, left: 75, width: 20, height: 4 },
-  { label: "Part Number",   value: "AN3-12A",             confidence: 0.98, top: 36, left: 5,  width: 22, height: 4 },
-  { label: "Description",   value: "Bolt Hex Hd 10-32x3/4", confidence: 0.91, top: 36, left: 28, width: 35, height: 4 },
-  { label: "Qty Shipped",   value: "24",                  confidence: 0.99, top: 36, left: 65, width: 8,  height: 4 },
-  { label: "Part Number",   value: "3041T15",             confidence: 0.97, top: 42, left: 5,  width: 22, height: 4 },
-  { label: "Description",   value: "Gasket Exhaust Collector", confidence: 0.90, top: 42, left: 28, width: 35, height: 4 },
-  { label: "Qty Shipped",   value: "4",                   confidence: 0.99, top: 42, left: 65, width: 8,  height: 4 },
-  { label: "Carrier",       value: "FedEx",               confidence: 0.99, top: 55, left: 10, width: 15, height: 4 },
-  { label: "Tracking",      value: "7961 0249 4000",      confidence: 0.94, top: 55, left: 30, width: 25, height: 4 },
-  { label: "Cert Type",     value: "FAA 8130-3",          confidence: 0.98, top: 68, left: 10, width: 20, height: 4 },
-  { label: "Tag Number",    value: "8130-42918",          confidence: 0.96, top: 68, left: 35, width: 20, height: 4 },
-  { label: "Condition",     value: "Overhauled",          confidence: 0.97, top: 68, left: 60, width: 18, height: 4 },
-]
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -156,13 +139,58 @@ export interface ReceiveWorkflowProps {
   lines: ReceivableLine[]
   onComplete: (results: ReceiveLineForm[]) => void
   onCancel: () => void
+  // OCR INTEGRATION: called by DW1GHT when it finishes analyzing a scanned document.
+  // Pass the extracted fields here to pre-populate the receiving form.
+  onScanComplete?: (fields: ScannedField[]) => void
 }
 
-export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplete, onCancel }: ReceiveWorkflowProps) {
+export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplete, onCancel, onScanComplete }: ReceiveWorkflowProps) {
   // Steps: upload → receive → inspect → confirm → done
   const [step, setStep] = useState<"upload" | "receive" | "inspect" | "confirm" | "done">("upload")
-  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; type: string; scanning: boolean; scanned: boolean }[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; type: string }[]>([])
   const [ocrComplete, setOcrComplete] = useState(false)
+  // scannedFields: populated by DW1GHT OCR when it analyzes an uploaded document.
+  // Empty until DW1GHT calls handleScanComplete with real extracted fields.
+  const [scannedFields, setScannedFields] = useState<ScannedField[]>([])
+  // DW1GHT calls this when it finishes analyzing a document.
+  const handleScanComplete = (fields: ScannedField[]) => {
+    setScannedFields(fields)
+    setOcrComplete(true)
+    onScanComplete?.(fields)
+  }
+
+  // File upload — hidden input triggered by the upload zone and doc-type buttons
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingDocType = useRef<string>("packing_slip")
+
+  function openFilePicker(docType: string) {
+    pendingDocType.current = docType
+    fileInputRef.current?.click()
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    const type = pendingDocType.current
+    const newEntries = Array.from(files).map(f => ({ name: f.name, type }))
+    setUploadedFiles(prev => {
+      const existingNames = new Set(prev.map(x => x.name))
+      return [...prev, ...newEntries.filter(f => !existingNames.has(f.name))]
+    })
+    // Reset so the same file can be re-selected if needed
+    e.target.value = ""
+  }
+
+  function handleDropZoneDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const files = e.dataTransfer.files
+    if (!files || files.length === 0) return
+    const newEntries = Array.from(files).map(f => ({ name: f.name, type: "packing_slip" }))
+    setUploadedFiles(prev => {
+      const existingNames = new Set(prev.map(x => x.name))
+      return [...prev, ...newEntries.filter(f => !existingNames.has(f.name))]
+    })
+  }
   const [activeLineIdx, setActiveLineIdx] = useState(0)
   const [highlightField, setHighlightField] = useState<string | null>(null)
   const [inspectorName] = useState("Jonathan B.")
@@ -204,31 +232,6 @@ export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplet
 
   function updateLine(idx: number, updates: Partial<ReceiveLineForm>) {
     setFormLines(prev => prev.map((l, i) => i === idx ? { ...l, ...updates } : l))
-  }
-
-  // Mock OCR pre-population
-  function runOcrPrepopulate() {
-    setOcrComplete(true)
-    setFormLines(prev => prev.map(l => {
-      if (l.partNumber === "SVO10068") {
-        return { ...l, qtyReceiving: "1", serialNumber: "FN-2026-08841", condition: "overhauled" as PartCondition, partNumberVerified: true, packingSlipRef: "PS-JSSI-20260405" }
-      }
-      if (l.partNumber === "AN3-12A") {
-        return { ...l, qtyReceiving: "24", partNumberVerified: true, condition: "new" as PartCondition, packingSlipRef: "PS-JSSI-20260405" }
-      }
-      if (l.partNumber === "3041T15") {
-        return { ...l, qtyReceiving: "4", partNumberVerified: true, condition: "new" as PartCondition, packingSlipRef: "PS-JSSI-20260405" }
-      }
-      return l
-    }))
-  }
-
-  function simulateUpload(fileName: string, type: string) {
-    setUploadedFiles(prev => [...prev, { name: fileName, type, scanning: true, scanned: false }])
-    setTimeout(() => {
-      setUploadedFiles(prev => prev.map(f => f.name === fileName ? { ...f, scanning: false, scanned: true } : f))
-      runOcrPrepopulate()
-    }, 1500)
   }
 
   const filledCount = formLines.filter(l => parseInt(l.qtyReceiving) > 0).length
@@ -311,81 +314,93 @@ export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplet
         {/* ═══ STEP 1: Upload & Scan ═══════════════════════════════════ */}
         {step === "upload" && (
           <div className="p-6 space-y-6">
+
+            {/* Hidden file input — triggered by upload zone and doc-type buttons */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+
             <div>
               <h3 className="text-white text-sm font-semibold mb-1">Upload Receiving Documents</h3>
-              <p className="text-white/40 text-xs">Upload packing slips, 8130-3 tags, Certificates of Conformance, or invoices. We'll scan and pre-populate the receiving form.</p>
+              <p className="text-white/40 text-xs">
+                Upload packing slips, 8130-3 tags, Certificates of Conformance, or invoices.
+                Once DW1GHT integration is live, fields will be extracted automatically and pre-populated into the receiving form.
+              </p>
             </div>
 
-            {/* Upload zone */}
+            {/* Main drop zone */}
             <div
               className="rounded-lg border-2 border-dashed border-white/15 hover:border-[rgba(212,160,23,0.4)] transition-colors p-8 text-center cursor-pointer hover:bg-white/[0.02] group"
-              onClick={() => simulateUpload("JSSI_Packing_Slip_PS-20260405.pdf", "packing_slip")}
+              onClick={() => openFilePicker("packing_slip")}
+              onDragOver={e => e.preventDefault()}
+              onDrop={handleDropZoneDrop}
             >
               <div className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center bg-white/[0.04] group-hover:bg-[rgba(212,160,23,0.08)] transition-colors">
-                <Camera className="w-6 h-6 text-white/25 group-hover:text-[rgba(212,160,23,0.7)] transition-colors" />
+                <Upload className="w-6 h-6 text-white/25 group-hover:text-[rgba(212,160,23,0.7)] transition-colors" />
               </div>
-              <p className="text-white/50 text-sm font-medium mb-1">Scan or upload documents</p>
+              <p className="text-white/50 text-sm font-medium mb-1">Drop files here or click to browse</p>
               <p className="text-white/25 text-xs">Packing slips, 8130-3 tags, CoC, invoices — PDF, JPG, or PNG</p>
-              <p className="text-white/15 text-[10px] mt-2">Click to simulate scanning a packing slip</p>
+              <p className="text-white/15 text-[10px] mt-2">Multiple files accepted — drop a whole stack at once</p>
             </div>
 
-            {/* Quick upload buttons */}
+            {/* Doc-type upload shortcuts */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: "Packing Slip", icon: <FileText className="w-4 h-4" />, file: "JSSI_Packing_Slip_PS-20260405.pdf", type: "packing_slip" },
-                { label: "8130-3 Tag", icon: <ShieldCheck className="w-4 h-4" />, file: "8130-3_SVO10068_FN-2026-08841.pdf", type: "8130-3" },
-                { label: "Certificate of Conformance", icon: <Clipboard className="w-4 h-4" />, file: "CoC_JSSI_April2026.pdf", type: "CoC" },
-                { label: "Invoice", icon: <FileText className="w-4 h-4" />, file: "INV-JSSI-2026-4471.pdf", type: "invoice" },
+                { label: "Packing Slip",               icon: <FileText className="w-4 h-4" />,   type: "packing_slip" },
+                { label: "8130-3 Tag",                  icon: <ShieldCheck className="w-4 h-4" />, type: "8130-3" },
+                { label: "Certificate of Conformance",  icon: <Clipboard className="w-4 h-4" />,   type: "CoC" },
+                { label: "Invoice",                     icon: <FileText className="w-4 h-4" />,    type: "invoice" },
               ].map(doc => (
                 <button key={doc.type}
-                  onClick={() => simulateUpload(doc.file, doc.type)}
+                  onClick={() => openFilePicker(doc.type)}
                   className="flex items-center gap-3 p-3 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/[0.03] transition-all text-left"
                 >
                   <div className="text-white/30">{doc.icon}</div>
                   <div>
                     <p className="text-white/70 text-xs font-medium">{doc.label}</p>
-                    <p className="text-white/25 text-[10px]">Click to simulate</p>
+                    <p className="text-white/25 text-[10px]">Upload {doc.label.toLowerCase()}</p>
                   </div>
                 </button>
               ))}
             </div>
 
-            {/* Uploaded files */}
+            {/* Uploaded files list */}
             {uploadedFiles.length > 0 && (
               <div className="space-y-2">
-                <p className="text-white/40 text-[10px] uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>Scanned Documents</p>
+                <p className="text-white/40 text-[10px] uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>Uploaded Documents</p>
                 {uploadedFiles.map((f, i) => (
                   <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-lg border border-white/10" style={{ background: "rgba(255,255,255,0.02)" }}>
-                    <FileText className={cn("w-4 h-4", f.scanned ? "text-emerald-400" : "text-white/30")} />
+                    <FileText className="w-4 h-4 text-white/40" />
                     <div className="flex-1 min-w-0">
                       <p className="text-white/80 text-sm truncate">{f.name}</p>
-                      {f.scanning && (
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="w-24 h-1 bg-white/10 rounded-full overflow-hidden">
-                            <div className="h-full rounded-full animate-pulse" style={{ width: "60%", background: "var(--skyshare-gold)" }} />
-                          </div>
-                          <span className="text-[10px] text-white/30">Scanning with OCR...</span>
-                        </div>
-                      )}
-                      {f.scanned && !f.scanning && (
-                        <p className="text-emerald-400/70 text-[10px] flex items-center gap-1 mt-0.5">
-                          <Check className="w-3 h-3" /> Scanned — {MOCK_SCANNED_FIELDS.length} fields extracted
-                        </p>
-                      )}
+                      <p className="text-white/30 text-[10px] mt-0.5">
+                        {DOC_LABELS[f.type as RequiredDocType] ?? f.type} — awaiting OCR analysis
+                      </p>
                     </div>
+                    <button
+                      onClick={() => setUploadedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                      className="text-white/20 hover:text-red-400 p-1 rounded hover:bg-red-400/10 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* OCR results preview */}
-            {ocrComplete && (
+            {/* OCR results — only shown when DW1GHT has processed a document */}
+            {ocrComplete && scannedFields.length > 0 && (
               <div className="rounded-lg p-4" style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.15)" }}>
                 <p className="text-emerald-400/90 text-sm font-semibold flex items-center gap-2 mb-2">
-                  <Zap className="w-4 h-4" /> OCR Extraction Complete
+                  <Zap className="w-4 h-4" /> DW1GHT — OCR Extraction Complete
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                  {MOCK_SCANNED_FIELDS.slice(0, 8).map((f, i) => (
+                  {scannedFields.slice(0, 8).map((f, i) => (
                     <div key={i} className="flex items-center justify-between">
                       <span className="text-white/40">{f.label}:</span>
                       <div className="flex items-center gap-1">
@@ -399,7 +414,9 @@ export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplet
                     </div>
                   ))}
                 </div>
-                <p className="text-white/30 text-[10px] mt-2">3 line items matched to PO. Pre-populated quantities, serial numbers, and condition.</p>
+                {scannedFields.length > 8 && (
+                  <p className="text-white/25 text-[10px] mt-2">+{scannedFields.length - 8} more fields extracted</p>
+                )}
               </div>
             )}
 
@@ -408,7 +425,7 @@ export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplet
               <ActionBtn variant="ghost" onClick={onCancel}>Cancel</ActionBtn>
               <div className="flex items-center gap-2">
                 <ActionBtn variant="default" onClick={() => setStep("receive")}>
-                  Skip — Enter Manually <ArrowRight className="w-3.5 h-3.5" />
+                  {uploadedFiles.length > 0 ? "Continue — Enter Manually" : "Skip — Enter Manually"} <ArrowRight className="w-3.5 h-3.5" />
                 </ActionBtn>
                 {ocrComplete && (
                   <ActionBtn variant="gold" onClick={() => setStep("receive")}>
@@ -786,7 +803,7 @@ export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplet
                 </div>
 
                 {/* OCR highlight overlays */}
-                {MOCK_SCANNED_FIELDS.map((field, i) => {
+                {scannedFields.map((field, i) => {
                   const isActive = highlightField === field.label
                   return (
                     <div key={i} className={cn("absolute rounded transition-all pointer-events-none",
@@ -803,7 +820,7 @@ export default function ReceiveWorkflow({ poNumber, vendorName, lines, onComplet
               <div className="space-y-1">
                 <p className="text-white/30 text-[10px] uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)" }}>Extracted Fields</p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                  {MOCK_SCANNED_FIELDS.filter((f, i, arr) => arr.findIndex(x => x.label === f.label) === i).slice(0, 10).map((f, i) => (
+                  {scannedFields.filter((f, i, arr) => arr.findIndex(x => x.label === f.label) === i).slice(0, 10).map((f, i) => (
                     <div key={i} className={cn("flex items-center justify-between text-[10px] px-1.5 py-0.5 rounded cursor-pointer transition-all",
                       highlightField === f.label ? "bg-[rgba(212,160,23,0.1)]" : "hover:bg-white/[0.03]"
                     )}
