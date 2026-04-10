@@ -7,7 +7,7 @@ import {
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
   BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
   ShieldCheck, Wrench, ChevronDown, Pencil, ArrowLeftRight,
-  Library, Zap, BookText,
+  Library, Zap, BookText, Mail,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
@@ -33,6 +33,8 @@ import type {
   AircraftTimesSnapshot, QuoteStatus,
 } from "../../types"
 import { TimesEditModal } from "./TimesEditModal"
+import { SendForApprovalModal } from "./SendForApprovalModal"
+import { ApprovalStatusStrip } from "./ApprovalStatusStrip"
 import { PartsRequestForm } from "@/features/parts/components/PartsRequestForm"
 import { STATUS_CONFIG, LINE_STATUS_CONFIG } from "@/features/parts/constants"
 import { supabase } from "@/lib/supabase"
@@ -1818,6 +1820,8 @@ export default function WorkOrderDetail() {
   const [showOpenModal, setShowOpenModal]               = useState(false)
   const [showDeleteDraftModal, setShowDeleteDraftModal] = useState(false)
   const [showConvertModal, setShowConvertModal]         = useState(false)
+  const [showSendApprovalModal, setShowSendApprovalModal] = useState(false)
+  const [approvalRefreshKey, setApprovalRefreshKey]       = useState(0)
   const [converting, setConverting]                     = useState(false)
   const [deletingDraft, setDeletingDraft]               = useState(false)
   const [timesEditOpen, setTimesEditOpen]               = useState(false)
@@ -2993,17 +2997,30 @@ export default function WorkOrderDetail() {
 
             {/* Status-dependent actions */}
             {wo.woType === "quote" ? (
-              wo.quoteStatus === "draft" ? (
-                <button
-                  onClick={() => setShowDeleteDraftModal(true)}
-                  className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium transition-all flex-shrink-0"
-                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "rgba(252,165,165,0.8)" }}
-                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.16)")}
-                  onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
-                >
-                  Delete Draft
-                </button>
-              ) : null
+              <>
+                {(wo.quoteStatus === "draft" || wo.quoteStatus === "expired") && wo.items.length > 0 && (
+                  <button
+                    onClick={() => setShowSendApprovalModal(true)}
+                    className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-semibold transition-all flex-shrink-0"
+                    style={{ background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(167,139,250,0.22)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "rgba(167,139,250,0.12)")}
+                  >
+                    <Mail className="w-3.5 h-3.5" /> Send for Approval
+                  </button>
+                )}
+                {wo.quoteStatus === "draft" && (
+                  <button
+                    onClick={() => setShowDeleteDraftModal(true)}
+                    className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium transition-all flex-shrink-0"
+                    style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "rgba(252,165,165,0.8)" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.16)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
+                  >
+                    Delete Draft
+                  </button>
+                )}
+              </>
             ) : wo.status === "draft" ? (
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
@@ -3075,6 +3092,11 @@ export default function WorkOrderDetail() {
           </div>
         </div>
       </div>
+
+      {/* ── APPROVAL STATUS STRIP (quote/CO after send) ─────────────────────── */}
+      {wo.woType === "quote" && wo.quoteStatus && ["sent","approved","declined","converted"].includes(wo.quoteStatus) && (
+        <ApprovalStatusStrip workOrderId={wo.id} refreshKey={approvalRefreshKey} />
+      )}
 
       {/* ── QUOTE TOTALS STRIP ──────────────────────────────────────────────── */}
       {wo.woType === "quote" && (() => {
@@ -3422,9 +3444,21 @@ export default function WorkOrderDetail() {
                                 className="flex-1 min-w-0 text-sm font-medium text-white bg-white/[0.08] rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-white/20"
                               />
                             ) : (
-                              <span className={cn("text-sm flex-1 truncate leading-snug", isSelected ? "text-white font-medium" : "text-white/65")}>
+                              <span
+                                className={cn(
+                                  "text-sm flex-1 truncate leading-snug",
+                                  isSelected ? "text-white font-medium" : "text-white/65",
+                                  wo.woType === "quote" && item.customerApprovalStatus === "declined" && "line-through opacity-50",
+                                )}
+                              >
                                 {item.category}
                               </span>
+                            )}
+                            {wo.woType === "quote" && item.customerApprovalStatus === "approved" && (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" aria-label="Customer approved" />
+                            )}
+                            {wo.woType === "quote" && item.customerApprovalStatus === "declined" && (
+                              <X className="w-3.5 h-3.5 text-red-400 flex-shrink-0" aria-label="Customer declined" />
                             )}
                             {!isLocked && (
                               <button
@@ -4456,6 +4490,21 @@ export default function WorkOrderDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── SEND FOR APPROVAL MODAL ──────────────────────────────────────────── */}
+      {wo && (wo.woType === "quote" || wo.woType === "change_order") && (
+        <SendForApprovalModal
+          open={showSendApprovalModal}
+          onClose={() => setShowSendApprovalModal(false)}
+          onSent={() => {
+            setApprovalRefreshKey(k => k + 1)
+            loadWO()
+          }}
+          workOrderId={wo.id}
+          workOrderNumber={wo.woNumber}
+          kind={wo.woType === "change_order" ? "change_order" : "quote"}
+        />
       )}
 
       {/* ── COMPLETE MODAL ───────────────────────────────────────────────────── */}

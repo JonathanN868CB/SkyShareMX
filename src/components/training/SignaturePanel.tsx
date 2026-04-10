@@ -11,6 +11,7 @@
 
 import { useState } from "react"
 import { CheckCheck, Lock, ShieldCheck } from "lucide-react"
+import { computeSignatureHash, shortSignatureHash } from "@/shared/lib/signatureHash"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,23 +25,11 @@ export interface SignatureData {
 
 export type SignerRole = "Manager" | "Technician" | "Witness"
 
-// ─── Hash helper ─────────────────────────────────────────────────────────────
+// Re-exported so existing callers of `computeSignatureHash` from this module
+// keep working without changes.
+export { computeSignatureHash }
 
-export async function computeSignatureHash(
-  userId: string,
-  recordId: number,
-  timestamp: string
-): Promise<string> {
-  const message  = `${userId}:${recordId}:${timestamp}`
-  const encoded  = new TextEncoder().encode(message)
-  const buffer   = await crypto.subtle.digest("SHA-256", encoded)
-  const bytes    = Array.from(new Uint8Array(buffer))
-  return bytes.map(b => b.toString(16).padStart(2, "0")).join("")
-}
-
-function shortHash(hash: string): string {
-  return hash.slice(0, 12).toUpperCase()
-}
+const shortHash = shortSignatureHash
 
 // ─── Completed signature display (read-only) ─────────────────────────────────
 

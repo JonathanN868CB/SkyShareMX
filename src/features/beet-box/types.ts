@@ -8,10 +8,19 @@ export type WOStatus =
   | "draft" | "open" | "waiting_on_parts" | "in_review"
   | "billing" | "completed" | "void"
 
-export type WOType = "work_order" | "quote"
+export type WOType = "work_order" | "quote" | "change_order"
 
 export type QuoteStatus =
   | "draft" | "sent" | "approved" | "declined" | "expired" | "converted"
+
+// Per-item customer approval state set by the signed approval portal.
+export type ItemApprovalStatus = "pending" | "approved" | "declined"
+
+// Mid-WO discrepancy tag — carried on items created via "Found Discrepancy".
+export type DiscrepancyType = "airworthy" | "recommendation"
+
+// Kind discriminator on approval requests / PDFs / public portal.
+export type ApprovalKind = "quote" | "change_order"
 
 export type WOItemStatus =
   | "pending" | "in_progress" | "done" | "needs_review" | "cut_short"
@@ -22,6 +31,7 @@ export type LogbookSection =
 export type PartCondition = "new" | "overhauled" | "serviceable" | "as_removed"
 export type TransactionType = "receipt" | "issue" | "return" | "adjustment" | "scrap"
 export type POStatus = "draft" | "sent" | "partial" | "received" | "closed" | "voided"
+export type POLineStatus = "pending" | "shipped" | "backordered" | "received" | "cancelled"
 export type ToolStatus = "active" | "due_soon" | "overdue" | "out_of_service" | "retired"
 export type InvoiceStatus = "draft" | "sent" | "paid" | "void"
 export type InvoiceLineType = "part" | "labor" | "misc" | "outside_labor"
@@ -128,6 +138,8 @@ export interface WorkOrder {
   // Bidirectional link between a quote and the WO it was converted into
   sourceQuoteId: string | null     // set on WOs that originated from a quote
   convertedToWoId: string | null   // set on quotes that have been converted
+  // Change-order link: on wo_type='change_order' rows, points at the parent WO
+  parentWoId: string | null
   // Loaded relations
   items: WOItem[]
   statusHistory: WOStatusChange[]
@@ -159,10 +171,73 @@ export interface WOItem {
   signedOffAt: string | null
   itemStatus: WOItemStatus
   noPartsRequired: boolean
+  // Customer approval lifecycle — set when the item is part of a signed
+  // quote or change-order approval. Items not yet sent sit at 'pending'.
+  customerApprovalStatus: ItemApprovalStatus
+  customerDecisionAt: string | null
+  // Mid-WO "Found Discrepancy" linkage. parentItemId points at the
+  // inspection item that surfaced the discrepancy; discrepancyType tags
+  // it as airworthy or recommendation on change-order approvals.
+  parentItemId: string | null
+  discrepancyType: DiscrepancyType | null
   parts: WOItemPart[]
   labor: WOItemLabor[]
+  attachments: WOItemAttachment[]
   createdAt: string
   updatedAt: string
+}
+
+// Photo / document attached to a WO item (stored in bb-wo-attachments bucket).
+export interface WOItemAttachment {
+  id: string
+  woItemId: string
+  workOrderId: string
+  kind: "photo" | "doc" | "other"
+  fileName: string
+  storagePath: string
+  mimeType: string | null
+  fileSizeBytes: number | null
+  uploadedBy: string | null
+  uploadedAt: string
+}
+
+// ─── Customer approval flow (quotes + change orders) ──────────────────────────
+
+export interface ApprovalRequest {
+  id: string
+  workOrderId: string
+  kind: ApprovalKind
+  token: string              // raw uuid — encode before putting in a URL
+  recipientName: string
+  recipientEmail: string
+  snapshotTotal: number
+  unsignedPdfPath: string | null
+  status: "sent" | "submitted" | "expired" | "revoked"
+  expiresAt: string | null
+  sentAt: string
+  sentBy: string | null
+  submittedAt: string | null
+  createdAt: string
+}
+
+export interface ApprovalSubmission {
+  id: string
+  approvalRequestId: string
+  signerName: string
+  signerEmail: string
+  signerTitle: string | null
+  signatureHash: string
+  signatureImagePath: string
+  signedPdfPath: string | null
+  submittedAt: string
+}
+
+export interface ApprovalItemDecision {
+  id: string
+  approvalRequestId: string
+  woItemId: string
+  decision: ItemApprovalStatus
+  decidedAt: string
 }
 
 export interface WOItemPart {
@@ -355,7 +430,13 @@ export interface PurchaseOrder {
   expectedDelivery: string | null
   receivedAt: string | null
   notes: string | null
+  // Shipping & tracking
+  carrier: string | null
+  trackingNumber: string | null
+  trackingStatus: string | null
+  trackingUpdatedAt: string | null
   lines: POLine[]
+  archivedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -368,12 +449,40 @@ export interface POLine {
   description: string
   catalogId: string | null
   partsRequestLineId: string | null
+  lineStatus: POLineStatus
+  vendorPartNumber: string | null
+  lineNotes: string | null
+  lineExpectedDelivery: string | null
   qtyOrdered: number
   qtyReceived: number
   unitCost: number
   woRef: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface POInvoice {
+  id: string
+  purchaseOrderId: string
+  invoiceNumber: string
+  invoiceDate: string | null
+  amount: number
+  matchStatus: "pending" | "matched" | "over" | "under"
+  notes: string | null
+  recordedBy: string | null
+  receivedAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface POActivity {
+  id: string
+  purchaseOrderId: string
+  type: "note" | "status_change" | "email" | "phone" | "system" | "receive" | "invoice"
+  authorId: string | null
+  authorName: string
+  message: string
+  createdAt: string
 }
 
 // ─── Receiving / Traceability ────────────────────────────────────────────────
