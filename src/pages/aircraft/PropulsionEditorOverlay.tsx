@@ -1,13 +1,27 @@
 import React, { useEffect, useState } from "react"
 import type { DataField } from "./fleetData"
+import { supabase } from "@/lib/supabase"
 
 interface Props {
   initialPowerplant: DataField[]
   initialApu: DataField[] | null
   initialHobbsDiff: number | null
   tailNumber: string
+  aircraftId: string
   onSave: (powerplant: DataField[], apu: DataField[] | null, hobbsDiff: number | null) => Promise<void>
   onClose: () => void
+}
+
+interface ClientOption {
+  id: string
+  name: string
+  address: string | null
+  address2: string | null
+  city: string | null
+  state: string | null
+  zip: string | null
+  taxable: boolean
+  inactive: boolean
 }
 
 // ─── Pattern types ─────────────────────────────────────────────────────────────
@@ -137,7 +151,7 @@ const inputBase: React.CSSProperties = {
 
 // ─── Overlay ───────────────────────────────────────────────────────────────────
 export default function PropulsionEditorOverlay({
-  initialPowerplant, initialApu, initialHobbsDiff, tailNumber, onSave, onClose,
+  initialPowerplant, initialApu, initialHobbsDiff, tailNumber, aircraftId, onSave, onClose,
 }: Props) {
   const [visible,   setVisible]   = useState(false)
   const [saving,    setSaving]    = useState(false)
@@ -148,6 +162,41 @@ export default function PropulsionEditorOverlay({
     loadRows(detectPattern(initialPowerplant, initialApu), initialPowerplant, initialApu)
   )
   const [hobbsDiff, setHobbsDiff] = useState(initialHobbsDiff != null ? String(initialHobbsDiff) : "")
+
+  // ── Client assignment state ────────────────────────────────────────────────
+  const [clientList, setClientList]   = useState<ClientOption[]>([])
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  const [initialClientId, setInitialClientId]   = useState<string | null>(null)
+  const [clientLoading, setClientLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadClientData() {
+      const [clientsRes, acRes] = await Promise.all([
+        supabase
+          .from("clients")
+          .select("id, name, address, address2, city, state, zip, taxable, inactive")
+          .order("name"),
+        supabase
+          .from("aircraft")
+          .select("client_id")
+          .eq("id", aircraftId)
+          .maybeSingle(),
+      ])
+      if (cancelled) return
+      if (!clientsRes.error && clientsRes.data) {
+        setClientList(clientsRes.data as ClientOption[])
+      }
+      const current = (acRes.data?.client_id as string | null) ?? null
+      setSelectedClientId(current)
+      setInitialClientId(current)
+      setClientLoading(false)
+    }
+    loadClientData()
+    return () => { cancelled = true }
+  }, [aircraftId])
+
+  const selectedClient = clientList.find(c => c.id === selectedClientId) ?? null
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true))
@@ -179,6 +228,16 @@ export default function PropulsionEditorOverlay({
       const diffRaw = hobbsDiff.trim() !== "" ? parseFloat(hobbsDiff) : null
       const diff    = diffRaw != null && !isNaN(diffRaw) ? diffRaw : null
       await onSave(powerplant, apu, diff)
+
+      // Persist client assignment if it changed
+      if (selectedClientId !== initialClientId) {
+        const { error: clientErr } = await supabase
+          .from("aircraft")
+          .update({ client_id: selectedClientId })
+          .eq("id", aircraftId)
+        if (clientErr) throw clientErr
+      }
+
       setVisible(false)
       setTimeout(onClose, 220)
     } catch (err) {
@@ -441,6 +500,118 @@ export default function PropulsionEditorOverlay({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Client assignment */}
+          <div className="rounded-lg p-5 flex flex-col gap-3"
+            style={{ background: "rgba(255,255,255,0.025)", border: "0.5px solid rgba(212,160,23,0.2)" }}>
+            <div className="text-xs font-semibold uppercase tracking-widest"
+              style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.12em" }}>
+              Billing Client
+            </div>
+            <div style={{ height: "0.5px", background: "rgba(212,160,23,0.15)" }} />
+            <p style={{ fontSize: "0.75rem", color: "hsl(var(--muted-foreground))", lineHeight: 1.5 }}>
+              The billing entity responsible for work performed on this aircraft.
+              Used by work orders and invoices to pull customer info automatically.
+            </p>
+
+            {clientLoading ? (
+              <div style={{ fontSize: "0.75rem", color: "hsl(var(--muted-foreground))", opacity: 0.55 }}>
+                Loading clients…
+              </div>
+            ) : (
+              <>
+                <div>
+                  <div style={{
+                    fontSize: "0.6rem", fontFamily: "var(--font-heading)", textTransform: "uppercase",
+                    letterSpacing: "0.09em", color: "hsl(var(--muted-foreground))", opacity: 0.55, marginBottom: 4,
+                  }}>
+                    Assigned Client
+                  </div>
+                  <select
+                    value={selectedClientId ?? ""}
+                    onChange={e => setSelectedClientId(e.target.value || null)}
+                    style={{
+                      background: "hsl(var(--background))",
+                      colorScheme: "dark light",
+                      border: "none",
+                      borderBottom: "1px solid rgba(212,160,23,0.5)",
+                      borderRadius: "2px 2px 0 0",
+                      color: "hsl(var(--foreground))",
+                      fontFamily: "var(--font-body)",
+                      fontSize: "0.8125rem",
+                      padding: "5px 8px",
+                      outline: "none",
+                      cursor: "pointer",
+                      width: "100%",
+                      maxWidth: 420,
+                    }}
+                    onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
+                    onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}>
+                    <option value="">— No client assigned —</option>
+                    {clientList
+                      .filter(c => !c.inactive || c.id === selectedClientId)
+                      .map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.inactive ? " (inactive)" : ""}
+                        </option>
+                      ))
+                    }
+                  </select>
+                </div>
+
+                {/* Preview of selected client */}
+                {selectedClient && (
+                  <div style={{
+                    marginTop: 6,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    background: "rgba(255,255,255,0.03)",
+                    border: "0.5px solid rgba(212,160,23,0.15)",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 12,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: "0.85rem",
+                        fontWeight: 600,
+                        color: "hsl(var(--foreground))",
+                        marginBottom: 2,
+                      }}>
+                        {selectedClient.name}
+                      </div>
+                      <div style={{
+                        fontSize: "0.7rem",
+                        color: "hsl(var(--muted-foreground))",
+                        opacity: 0.7,
+                        lineHeight: 1.5,
+                      }}>
+                        {[selectedClient.address, selectedClient.address2].filter(Boolean).join(", ") || "No address on file"}
+                        {(selectedClient.city || selectedClient.state || selectedClient.zip) && (
+                          <> <br/>{[selectedClient.city, selectedClient.state, selectedClient.zip].filter(Boolean).join(", ")}</>
+                        )}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      padding: "2px 7px",
+                      borderRadius: 4,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      background: selectedClient.taxable ? "rgba(251,191,36,0.12)" : "rgba(255,255,255,0.04)",
+                      color: selectedClient.taxable ? "#fbbf24" : "hsl(var(--muted-foreground))",
+                      border: selectedClient.taxable ? "1px solid rgba(251,191,36,0.25)" : "1px solid rgba(255,255,255,0.08)",
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                    }}>
+                      {selectedClient.taxable ? "Taxable" : "Non-Taxable"}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
         </div>

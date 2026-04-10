@@ -43,6 +43,34 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+function FieldInput({ f, idx, updateField }: {
+  f: DataField; idx: number; updateField: (idx: number, changes: Partial<DataField>) => void
+}) {
+  return (
+    <div>
+      <div style={lbl}>{f.label}</div>
+      <input
+        value={f.value === "—" ? "" : f.value}
+        onChange={e => updateField(idx, { value: e.target.value || "—" })}
+        placeholder={f.label}
+        style={inputBase}
+        onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
+        onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}
+      />
+      {f.note !== undefined && (
+        <input
+          value={f.note}
+          onChange={e => updateField(idx, { note: e.target.value })}
+          placeholder="Note"
+          style={{ ...inputBase, fontSize: "0.75rem", padding: "3px 6px", marginTop: 4, opacity: 0.7 }}
+          onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
+          onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}
+        />
+      )}
+    </div>
+  )
+}
+
 // ─── Overlay ───────────────────────────────────────────────────────────────────
 export default function IdentityEditorOverlay({
   initialIdentity, tailNumber, onSave, onClose,
@@ -84,33 +112,6 @@ export default function IdentityEditorOverlay({
 
   const mainFields = fields.filter(f => !f.label.toLowerCase().includes("key"))
   const keyFields  = fields.filter(f =>  f.label.toLowerCase().includes("key"))
-
-  function FieldInput({ f }: { f: DataField }) {
-    const idx = fields.indexOf(f)
-    return (
-      <div>
-        <div style={lbl}>{f.label}</div>
-        <input
-          value={f.value === "—" ? "" : f.value}
-          onChange={e => updateField(idx, { value: e.target.value || "—" })}
-          placeholder={f.label}
-          style={inputBase}
-          onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
-          onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}
-        />
-        {f.note !== undefined && (
-          <input
-            value={f.note}
-            onChange={e => updateField(idx, { note: e.target.value })}
-            placeholder="Note"
-            style={{ ...inputBase, fontSize: "0.75rem", padding: "3px 6px", marginTop: 4, opacity: 0.7 }}
-            onFocus={e => (e.currentTarget.style.borderBottomColor = "var(--skyshare-gold)")}
-            onBlur={e  => (e.currentTarget.style.borderBottomColor = "rgba(212,160,23,0.5)")}
-          />
-        )}
-      </div>
-    )
-  }
 
   return (
     <div style={{
@@ -180,12 +181,12 @@ export default function IdentityEditorOverlay({
         <div className="p-6 flex flex-col gap-5" style={{ flex: 1 }}>
           {mainFields.length > 0 && (
             <Section title="Identity &amp; Operations">
-              {mainFields.map(f => <FieldInput key={f.label} f={f} />)}
+              {mainFields.map(f => <FieldInput key={f.label} f={f} idx={fields.indexOf(f)} updateField={updateField} />)}
             </Section>
           )}
           {keyFields.length > 0 && (
             <Section title="Keys &amp; Codes">
-              {keyFields.map(f => <FieldInput key={f.label} f={f} />)}
+              {keyFields.map(f => <FieldInput key={f.label} f={f} idx={fields.indexOf(f)} updateField={updateField} />)}
             </Section>
           )}
         </div>

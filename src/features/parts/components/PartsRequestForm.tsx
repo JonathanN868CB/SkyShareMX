@@ -22,6 +22,8 @@ export interface PartsRequestPrefill {
   aircraftId?: string
   aircraftTail?: string
   woNumber?: string
+  woItemId?: string
+  woItemNumber?: number
   jobDescription?: string
   partNumber?: string
   partDescription?: string
@@ -49,7 +51,7 @@ export function PartsRequestForm({ prefill, onClose }: PartsRequestFormProps = {
   const [aircraftTail, setAircraftTail] = useState(prefill?.aircraftTail ?? "")
   const [jobDescription, setJobDescription] = useState(prefill?.jobDescription ?? "")
   const [workOrder, setWorkOrder] = useState(prefill?.woNumber ?? "")
-  const [itemNumber, setItemNumber] = useState("")
+  const [itemNumber, setItemNumber] = useState(prefill?.woItemNumber ? String(prefill.woItemNumber) : "")
   const [stockPurpose, setStockPurpose] = useState("")
 
   // Logistics
@@ -228,6 +230,7 @@ export function PartsRequestForm({ prefill, onClose }: PartsRequestFormProps = {
         condition: line.condition,
         line_status: "requested",
         catalog_id: line.catalog_id || null,
+        wo_item_id: prefill?.woItemId || null,
       }))
 
       const { error: lineErr } = await supabase

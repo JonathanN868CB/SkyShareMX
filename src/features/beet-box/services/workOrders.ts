@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase"
 import type {
   WorkOrder, WOItem, WOItemPart, WOItemLabor,
-  WOStatusChange, WOStatus, WOItemStatus, Mechanic, CertType, AuditEntry,
+  WOStatusChange, WOStatus, WOType, QuoteStatus, WOItemStatus, Mechanic, CertType, AuditEntry,
 } from "../types"
 import { buildAircraftRef } from "./aircraft"
 
@@ -73,6 +73,7 @@ async function fetchAircraftMaps(aircraftIds: string[]) {
 // ─── List ─────────────────────────────────────────────────────────────────────
 
 export async function getWorkOrders(filters?: {
+  type?: WOType
   status?: WOStatus | WOStatus[]
   aircraftId?: string
 }): Promise<WorkOrder[]> {
@@ -82,6 +83,9 @@ export async function getWorkOrders(filters?: {
     .order("opened_at", { ascending: false })
     .range(0, 9999)
 
+  if (filters?.type) {
+    query = query.eq("wo_type", filters.type)
+  }
   if (filters?.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
     query = query.in("status", statuses)
@@ -155,15 +159,20 @@ export async function createWorkOrder(payload: {
   discrepancyRef?: string
   notes?: string
   openedBy: string
+  woType?: WOType   // defaults to 'work_order'
 }): Promise<WorkOrder> {
-  // Generate WO number: YY-NNNN (e.g. 26-0025)
+  const woType: WOType = payload.woType ?? "work_order"
+  const isQuote = woType === "quote"
+
+  // Generate number scoped by type. WOs: YY-NNNN. Quotes: Q-YY-NNNN.
   const yy = String(new Date().getFullYear()).slice(-2)
   const { count } = await supabase
     .from("bb_work_orders")
     .select("id", { count: "exact", head: true })
+    .eq("wo_type", woType)
 
   const seq = String((count ?? 0) + 1).padStart(4, "0")
-  const woNumber = `${yy}-${seq}`
+  const woNumber = isQuote ? `Q-${yy}-${seq}` : `${yy}-${seq}`
 
   const { data, error } = await supabase
     .from("bb_work_orders")
@@ -171,7 +180,7 @@ export async function createWorkOrder(payload: {
       wo_number: woNumber,
       description: payload.description ?? null,
       aircraft_id: payload.aircraftId ?? null,
-      wo_type: "—",
+      wo_type: woType,
       guest_registration: payload.guestRegistration ?? null,
       guest_serial: payload.guestSerial ?? null,
       meter_at_open: payload.meterAtOpen ?? null,
@@ -179,22 +188,230 @@ export async function createWorkOrder(payload: {
       notes: payload.notes ?? null,
       opened_by: payload.openedBy,
       status: "draft",
+      // Quotes always start as 'draft' quote_status; CHECK constraint requires
+      // quote_status IS NOT NULL when wo_type='quote'.
+      quote_status: isQuote ? "draft" : null,
     })
     .select("id")
     .single()
 
   if (error) throw error
 
-  // Stamp initial status history
-  await supabase.from("bb_work_order_status_history").insert({
-    work_order_id: data.id,
-    from_status: null,
-    to_status: "draft",
-    changed_by: payload.openedBy,
-    notes: "Work order created",
-  })
+  if (isQuote) {
+    // Quote lifecycle is tracked via audit trail, not status_history
+    // (status_history columns are typed bb_wo_status enum)
+    await supabase.from("bb_work_order_audit_trail").insert({
+      work_order_id: data.id,
+      entry_type: "wo_created",
+      actor_id: payload.openedBy,
+      summary: "Quote created",
+      new_value: "draft",
+      field_name: "quote_status",
+    })
+  } else {
+    // Stamp initial status history
+    await supabase.from("bb_work_order_status_history").insert({
+      work_order_id: data.id,
+      from_status: null,
+      to_status: "draft",
+      changed_by: payload.openedBy,
+      notes: "Work order created",
+    })
+  }
 
   return (await getWorkOrderById(data.id))!
+}
+
+// ─── Quote Status Transitions ────────────────────────────────────────────────
+// Quotes track their status in bb_work_orders.quote_status (separate from the
+// bb_wo_status enum) and log transitions in the audit trail.
+
+export async function updateQuoteStatus(
+  id: string,
+  toQuoteStatus: QuoteStatus,
+  changedBy: string,
+  notes?: string,
+): Promise<void> {
+  const { data: current, error: fetchErr } = await supabase
+    .from("bb_work_orders")
+    .select("quote_status")
+    .eq("id", id)
+    .single()
+  if (fetchErr) throw fetchErr
+
+  const updates: Record<string, unknown> = { quote_status: toQuoteStatus }
+  if (toQuoteStatus === "sent") updates.quote_sent_at = new Date().toISOString()
+
+  const { error: updateErr } = await supabase
+    .from("bb_work_orders")
+    .update(updates)
+    .eq("id", id)
+  if (updateErr) throw updateErr
+
+  await supabase.from("bb_work_order_audit_trail").insert({
+    work_order_id: id,
+    entry_type: "status_change",
+    actor_id: changedBy,
+    summary: `Quote status: ${current.quote_status ?? "—"} → ${toQuoteStatus}`,
+    field_name: "quote_status",
+    old_value: current.quote_status ?? null,
+    new_value: toQuoteStatus,
+    detail: notes ?? null,
+  })
+}
+
+// ─── Convert Quote → Work Order ──────────────────────────────────────────────
+// Creates a new bb_work_orders row (wo_type='work_order'), deep-copies all
+// items / parts / labor, sets bidirectional links, marks the quote converted.
+
+export async function convertQuoteToWorkOrder(
+  quoteId: string,
+  createdBy: string,
+): Promise<string> {
+  // 1. Load full quote with items
+  const quote = await getWorkOrderById(quoteId)
+  if (!quote) throw new Error("Quote not found")
+  if (quote.woType !== "quote") throw new Error("Record is not a quote")
+
+  // 2. Generate new WO number
+  const yy = String(new Date().getFullYear()).slice(-2)
+  const { count } = await supabase
+    .from("bb_work_orders")
+    .select("id", { count: "exact", head: true })
+    .eq("wo_type", "work_order")
+  const seq = String((count ?? 0) + 1).padStart(4, "0")
+  const newWoNumber = `${yy}-${seq}`
+
+  // 3. Insert new work order
+  const { data: newWo, error: insErr } = await supabase
+    .from("bb_work_orders")
+    .insert({
+      wo_number: newWoNumber,
+      wo_type: "work_order",
+      description: quote.description,
+      aircraft_id: quote.aircraftId,
+      guest_registration: quote.guestRegistration,
+      guest_serial: quote.guestSerial,
+      meter_at_open: quote.meterAtOpen,
+      discrepancy_ref: quote.discrepancyRef,
+      notes: quote.notes,
+      opened_by: createdBy,
+      status: "draft",
+      source_quote_id: quoteId,
+    })
+    .select("id")
+    .single()
+  if (insErr) throw insErr
+  const newWoId = newWo.id as string
+
+  // 4. Deep-copy items + their parts and labor
+  for (const item of quote.items) {
+    const { data: newItem, error: itemErr } = await supabase
+      .from("bb_work_order_items")
+      .insert({
+        work_order_id: newWoId,
+        item_number: item.itemNumber,
+        category: item.category,
+        logbook_section: item.logbookSection,
+        task_number: item.taskNumber,
+        part_number: item.partNumber,
+        serial_number: item.serialNumber,
+        discrepancy: item.discrepancy,
+        corrective_action: item.correctiveAction,
+        ref_code: item.refCode,
+        mechanic_id: null,          // reset assignee on the new WO
+        estimated_hours: item.estimatedHours,
+        labor_rate: item.laborRate,
+        shipping_cost: item.shippingCost,
+        outside_services_cost: item.outsideServicesCost,
+        sign_off_required: item.signOffRequired,
+        item_status: "pending",     // reset from whatever the quote was at
+        no_parts_required: item.noPartsRequired,
+      })
+      .select("id")
+      .single()
+    if (itemErr) throw itemErr
+    const newItemId = newItem.id as string
+
+    // Copy parts for this item
+    if (item.parts.length) {
+      const partsPayload = item.parts.map((p) => ({
+        item_id: newItemId,
+        part_number: p.partNumber,
+        description: p.description,
+        qty: p.qty,
+        unit_price: p.unitPrice,
+        catalog_id: p.catalogId,
+        inventory_part_id: p.inventoryPartId,
+        serial_number: p.serialNumber,
+        condition: p.condition,
+      }))
+      const { error: partsErr } = await supabase
+        .from("bb_work_order_item_parts")
+        .insert(partsPayload)
+      if (partsErr) throw partsErr
+    }
+
+    // Copy labor entries (treated as estimates on the new WO)
+    if (item.labor.length) {
+      const laborPayload = item.labor.map((l) => ({
+        item_id: newItemId,
+        work_order_id: newWoId,
+        mechanic_id: l.mechanicId,
+        mechanic_name: l.mechanicName,
+        hours: l.hours,
+        clocked_at: l.clockedAt,
+        description: l.description,
+        billable: l.billable,
+      }))
+      const { error: laborErr } = await supabase
+        .from("bb_work_order_item_labor")
+        .insert(laborPayload)
+      if (laborErr) throw laborErr
+    }
+  }
+
+  // 5. Initial status history for the new WO
+  await supabase.from("bb_work_order_status_history").insert({
+    work_order_id: newWoId,
+    from_status: null,
+    to_status: "draft",
+    changed_by: createdBy,
+    notes: `Created from quote ${quote.woNumber}`,
+  })
+
+  // 6. Mark quote as converted + record back-reference
+  const { error: quoteErr } = await supabase
+    .from("bb_work_orders")
+    .update({
+      quote_status: "converted",
+      converted_to_wo_id: newWoId,
+    })
+    .eq("id", quoteId)
+  if (quoteErr) throw quoteErr
+
+  // 7. Audit trail on both sides
+  await supabase.from("bb_work_order_audit_trail").insert([
+    {
+      work_order_id: quoteId,
+      entry_type: "status_change",
+      actor_id: createdBy,
+      summary: `Quote converted → WO ${newWoNumber}`,
+      field_name: "quote_status",
+      old_value: quote.quoteStatus,
+      new_value: "converted",
+    },
+    {
+      work_order_id: newWoId,
+      entry_type: "wo_created",
+      actor_id: createdBy,
+      summary: `Created from quote ${quote.woNumber}`,
+      field_name: "source_quote_id",
+      new_value: quoteId,
+    },
+  ])
+
+  return newWoId
 }
 
 // ─── Update Status ────────────────────────────────────────────────────────────
@@ -548,6 +765,7 @@ function mapWorkOrderRow(
   return {
     id: row.id,
     woNumber: row.wo_number,
+    woType: (row.wo_type ?? "work_order") as WOType,
     aircraftId: row.aircraft_id,
     guestRegistration: row.guest_registration,
     guestSerial: row.guest_serial,
@@ -563,6 +781,11 @@ function mapWorkOrderRow(
     timesSnapshot: row.times_snapshot ?? null,
     discrepancyRef: row.discrepancy_ref,
     notes: row.notes,
+    quoteStatus: (row.quote_status ?? null) as QuoteStatus | null,
+    quoteSentAt: row.quote_sent_at ?? null,
+    quoteExpiresAt: row.quote_expires_at ?? null,
+    sourceQuoteId: row.source_quote_id ?? null,
+    convertedToWoId: row.converted_to_wo_id ?? null,
     items: [],
     statusHistory: [],
     auditTrail: [],

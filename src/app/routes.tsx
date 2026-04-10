@@ -1,7 +1,8 @@
 import { Suspense, lazy } from "react"
 import { createBrowserRouter, type RouteObject } from "react-router-dom"
-import { ProtectedRoute } from "@/features/auth"
+import { ProtectedRoute, PermissionGate } from "@/features/auth"
 import { AppErrorBoundary } from "./ErrorBoundary"
+import type { AppSection } from "@/entities/supabase"
 import ComingSoon from "@/pages/ComingSoon"
 import AccessDenied from "@/pages/AccessDenied"
 
@@ -88,6 +89,15 @@ function wrap(element: React.ReactNode) {
   )
 }
 
+/** Wrap a page element with both permission enforcement and Suspense/ErrorBoundary */
+function guard(section: AppSection, element: React.ReactNode, opts?: { adminOnly?: boolean; superAdminOnly?: boolean }) {
+  return wrap(
+    <PermissionGate section={section} adminOnly={opts?.adminOnly} superAdminOnly={opts?.superAdminOnly}>
+      {element}
+    </PermissionGate>
+  )
+}
+
 const routes: RouteObject[] = [
   {
     path: "/",
@@ -123,55 +133,46 @@ const routes: RouteObject[] = [
       </AppErrorBoundary>
     ),
     children: [
-      {
-        index: true,
-        element: wrap(<Dashboard />),
-      },
-      { path: "aircraft",    element: wrap(<AircraftInfo />) },
-      { path: "vendor-map",  element: wrap(<VendorMap />) },
-      { path: "vendors/:id", element: wrap(<VendorDetailPage />) },
-      { path: "dev/access-denied", element: wrap(<AccessDenied name="Aircraft Conformity" />) },
-      { path: "ai-assistant", element: wrap(<AiAssistant />) },
-      { path: "conformity",  element: wrap(<ComingSoon name="Aircraft Conformity" />) },
-      { path: "14-day-check",           element: wrap(<FourteenDayCheck />) },
-      { path: "14-day-check/templates", element: wrap(<InspectionTemplatesPage />) },
-      { path: "planning",    element: wrap(<MaintenancePlanning />) },
-      { path: "ten-or-more", element: wrap(<ComingSoon name="Ten or More" />) },
-      { path: "terminal-ogd", element: wrap(<ComingSoon name="Terminal-OGD" />) },
-      { path: "projects",           element: wrap(<ProjectsApp />) },
-      { path: "projects/:boardId",  element: wrap(<ProjectsApp />) },
-      { path: "compliance",   element: wrap(<Compliance />) },
-      { path: "safety",       element: wrap(<SafetyHouse />) },
-      { path: "discrepancy-intelligence", element: wrap(<DiscrepancyIntelligence />) },
-      { path: "external-requests",     element: wrap(<ExternalRequests />) },
-      { path: "external-requests/:id", element: wrap(<ExternalRequestDetail />) },
-      { path: "training",    element: wrap(<MyTraining />) },
-      { path: "journey",     element: wrap(<MyJourney />) },
-      { path: "docs",        element: wrap(<ComingSoon name="Docs & Links" />) },
-      {
-        path: "admin/users",
-        element: wrap(<AdminUsers />),
-      },
-      {
-        path: "admin/training",
-        element: wrap(<AdminTraining />),
-      },
-      {
-        path: "admin/permissions",
-        element: wrap(<PermissionsIndex />),
-      },
-      {
-        path: "admin/suggestions",
-        element: wrap(<SuggestionAdmin />),
-      },
-      {
-        path: "access-restricted",
-        element: wrap(<AccessRestricted />),
-      },
-      {
-        path: "*",
-        element: wrap(<NotFound />),
-      },
+      // ── Always accessible (Dashboard is a default permission) ──────
+      { index: true,                       element: guard("Dashboard", <Dashboard />) },
+      { path: "access-restricted",         element: wrap(<AccessRestricted />) },
+
+      // ── Overview ───────────────────────────────────────────────────
+      { path: "aircraft",                  element: guard("Aircraft Info", <AircraftInfo />) },
+      { path: "ai-assistant",              element: guard("AI Assistant", <AiAssistant />) },
+
+      // ── Operations ─────────────────────────────────────────────────
+      { path: "discrepancy-intelligence",  element: guard("Discrepancy Intelligence", <DiscrepancyIntelligence />) },
+      { path: "vendor-map",               element: guard("Vendor Map", <VendorMap />) },
+      { path: "vendors/:id",              element: guard("Vendor Map", <VendorDetailPage />) },
+      { path: "14-day-check",             element: guard("14-Day Check", <FourteenDayCheck />) },
+      { path: "14-day-check/templates",   element: guard("14-Day Check", <InspectionTemplatesPage />) },
+      { path: "projects",                 element: guard("Projects", <ProjectsApp />) },
+      { path: "projects/:boardId",        element: guard("Projects", <ProjectsApp />) },
+      { path: "compliance",               element: guard("Compliance", <Compliance />) },
+      { path: "safety",                   element: guard("Safety", <SafetyHouse />) },
+      { path: "external-requests",        element: guard("External Requests", <ExternalRequests />) },
+      { path: "external-requests/:id",    element: guard("External Requests", <ExternalRequestDetail />) },
+      { path: "training",                 element: guard("My Training", <MyTraining />) },
+      { path: "journey",                  element: guard("My Journey", <MyJourney />) },
+
+      // ── Pending Cert. ──────────────────────────────────────────────
+      { path: "conformity",               element: guard("Aircraft Conformity", <ComingSoon name="Aircraft Conformity" />) },
+      { path: "planning",                 element: guard("Maintenance Planning", <MaintenancePlanning />) },
+      { path: "ten-or-more",              element: guard("Ten or More", <ComingSoon name="Ten or More" />) },
+      { path: "terminal-ogd",             element: guard("Terminal-OGD", <ComingSoon name="Terminal-OGD" />) },
+      { path: "docs",                     element: guard("Docs & Links", <ComingSoon name="Docs & Links" />) },
+
+      // ── Admin (admin-only) ─────────────────────────────────────────
+      { path: "admin/users",              element: guard("Dashboard", <AdminUsers />, { adminOnly: true }) },
+      { path: "admin/training",           element: guard("Dashboard", <AdminTraining />, { superAdminOnly: true }) },
+      { path: "admin/permissions",        element: guard("Dashboard", <PermissionsIndex />, { superAdminOnly: true }) },
+      { path: "admin/suggestions",        element: guard("Dashboard", <SuggestionAdmin />, { superAdminOnly: true }) },
+      { path: "admin/settings",           element: guard("Dashboard", <ComingSoon name="Admin Settings" />, { adminOnly: true }) },
+
+      // ── Dev / fallback ─────────────────────────────────────────────
+      { path: "dev/access-denied",        element: wrap(<AccessDenied name="Aircraft Conformity" />) },
+      { path: "*",                        element: wrap(<NotFound />) },
     ],
   },
   // ─── Beet Box — full-screen, outside Layout, protected ─────────────────────
@@ -187,37 +188,37 @@ const routes: RouteObject[] = [
       </AppErrorBoundary>
     ),
     children: [
-      { index: true,                              element: wrap(<BeetBoxRedirect />) },
-      { path: "work-orders",                      element: wrap(<WorkOrderDashboard />) },
-      { path: "work-orders/new",                  element: wrap(<WorkOrderCreate />) },
-      { path: "work-orders/:id",                  element: wrap(<WorkOrderDetail />) },
-      { path: "inventory",                        element: wrap(<InventoryDashboard />) },
-      { path: "inventory/:id",                    element: wrap(<InventoryDetail />) },
-      { path: "purchase-orders",                  element: wrap(<PODashboard />) },
-      { path: "purchase-orders/new",              element: wrap(<POCreate />) },
-      { path: "purchase-orders/:id",              element: wrap(<PODetail />) },
-      { path: "tool-calibration",                 element: wrap(<ToolDashboard />) },
-      { path: "tool-calibration/new",             element: wrap(<ToolCreate />) },
-      { path: "tool-calibration/:id",             element: wrap(<ToolDetail />) },
-      { path: "invoicing",                        element: wrap(<InvoiceDashboard />) },
-      { path: "invoicing/:id",                    element: wrap(<InvoiceDetail />) },
-      { path: "sop-library",                      element: wrap(<SOPDashboard />) },
-      { path: "sop-library/:id",                  element: wrap(<SOPDetail />) },
-      { path: "training",                         element: wrap(<TrainingDashboard />) },
-      { path: "training/:id",                     element: wrap(<TrainingDetail />) },
-      { path: "settings",                         element: wrap(<SettingsDashboard />) },
-      { path: "flat-rates",                       element: wrap(<FlatRatesManager />) },
-      { path: "canned-actions",                   element: wrap(<CannedActionsManager />) },
-      { path: "parts",                            element: wrap(<BeetBoxParts />) },
-      { path: "parts/new",                        element: wrap(<BeetBoxPartsNew />) },
-      { path: "parts/:id",                        element: wrap(<BeetBoxPartsDetail />) },
-      { path: "catalog",                          element: wrap(<CatalogBrowser />) },
-      { path: "catalog/:id",                      element: wrap(<CatalogDetail />) },
-      { path: "parts-overview",                   element: wrap(<PartsOverview />) },
-      { path: "reports",                          element: wrap(<ReportsDashboard />) },
-      { path: "compliance",                       element: wrap(<ComplianceDash />) },
-      { path: "suppliers",                        element: wrap(<SuppliersList />) },
-      { path: "suppliers/:id",                    element: wrap(<SupplierDetail />) },
+      { index: true,                              element: guard("Work Orders", <BeetBoxRedirect />) },
+      { path: "work-orders",                      element: guard("Work Orders", <WorkOrderDashboard />) },
+      { path: "work-orders/new",                  element: guard("Work Orders", <WorkOrderCreate />) },
+      { path: "work-orders/:id",                  element: guard("Work Orders", <WorkOrderDetail />) },
+      { path: "inventory",                        element: guard("Work Orders", <InventoryDashboard />) },
+      { path: "inventory/:id",                    element: guard("Work Orders", <InventoryDetail />) },
+      { path: "purchase-orders",                  element: guard("Work Orders", <PODashboard />) },
+      { path: "purchase-orders/new",              element: guard("Work Orders", <POCreate />) },
+      { path: "purchase-orders/:id",              element: guard("Work Orders", <PODetail />) },
+      { path: "tool-calibration",                 element: guard("Work Orders", <ToolDashboard />) },
+      { path: "tool-calibration/new",             element: guard("Work Orders", <ToolCreate />) },
+      { path: "tool-calibration/:id",             element: guard("Work Orders", <ToolDetail />) },
+      { path: "invoicing",                        element: guard("Work Orders", <InvoiceDashboard />) },
+      { path: "invoicing/:id",                    element: guard("Work Orders", <InvoiceDetail />) },
+      { path: "sop-library",                      element: guard("Work Orders", <SOPDashboard />) },
+      { path: "sop-library/:id",                  element: guard("Work Orders", <SOPDetail />) },
+      { path: "training",                         element: guard("Work Orders", <TrainingDashboard />) },
+      { path: "training/:id",                     element: guard("Work Orders", <TrainingDetail />) },
+      { path: "settings",                         element: guard("Work Orders", <SettingsDashboard />, { adminOnly: true }) },
+      { path: "flat-rates",                       element: guard("Work Orders", <FlatRatesManager />, { adminOnly: true }) },
+      { path: "canned-actions",                   element: guard("Work Orders", <CannedActionsManager />, { adminOnly: true }) },
+      { path: "parts",                            element: guard("Parts", <BeetBoxParts />) },
+      { path: "parts/new",                        element: guard("Parts", <BeetBoxPartsNew />) },
+      { path: "parts/:id",                        element: guard("Parts", <BeetBoxPartsDetail />) },
+      { path: "catalog",                          element: guard("Parts", <CatalogBrowser />) },
+      { path: "catalog/:id",                      element: guard("Parts", <CatalogDetail />) },
+      { path: "parts-overview",                   element: guard("Parts", <PartsOverview />) },
+      { path: "reports",                          element: guard("Work Orders", <ReportsDashboard />) },
+      { path: "compliance",                       element: guard("Compliance", <ComplianceDash />) },
+      { path: "suppliers",                        element: guard("Work Orders", <SuppliersList />) },
+      { path: "suppliers/:id",                    element: guard("Work Orders", <SupplierDetail />) },
     ],
   },
   // ─── Records Vault — full-screen, outside Layout, protected ───────────────
@@ -233,11 +234,11 @@ const routes: RouteObject[] = [
       </AppErrorBoundary>
     ),
     children: [
-      { index: true,           element: wrap(<RecordsVaultRedirect />) },
-      { path: "search",        element: wrap(<RecordsVaultSearch />) },
-      { path: "browse",        element: wrap(<RecordsVaultBrowse />) },
-      { path: "timeline",      element: wrap(<RecordsVaultTimeline />) },
-      { path: "pipeline",      element: wrap(<RecordsVaultPipeline />) },
+      { index: true,           element: guard("Records Vault", <RecordsVaultRedirect />) },
+      { path: "search",        element: guard("Records Vault", <RecordsVaultSearch />) },
+      { path: "browse",        element: guard("Records Vault", <RecordsVaultBrowse />) },
+      { path: "timeline",      element: guard("Records Vault", <RecordsVaultTimeline />) },
+      { path: "pipeline",      element: guard("Records Vault", <RecordsVaultPipeline />) },
     ],
   },
   {

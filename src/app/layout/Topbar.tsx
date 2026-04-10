@@ -30,6 +30,52 @@ import { useNotifications } from "@/hooks/useNotifications"
 import type { AppNotification } from "@/hooks/useNotifications"
 import type { AppSection } from "@/entities/supabase"
 
+// ─── Route → Permission mapping (matches routes.tsx guard() calls) ──────────
+
+const PATH_PERMISSION_MAP: [RegExp, AppSection][] = [
+  [/^\/app\/aircraft/,                  "Aircraft Info"],
+  [/^\/app\/ai-assistant/,              "AI Assistant"],
+  [/^\/app\/discrepancy-intelligence/,  "Discrepancy Intelligence"],
+  [/^\/app\/records-vault/,             "Records Vault"],
+  [/^\/app\/beet-box\/parts/,           "Parts"],
+  [/^\/app\/beet-box\/catalog/,         "Parts"],
+  [/^\/app\/beet-box\/parts-overview/,  "Parts"],
+  [/^\/app\/beet-box/,                  "Work Orders"],
+  [/^\/app\/journey/,                   "My Journey"],
+  [/^\/app\/training/,                  "My Training"],
+  [/^\/app\/vendor/,                    "Vendor Map"],
+  [/^\/app\/14-day-check/,             "14-Day Check"],
+  [/^\/app\/projects/,                  "Projects"],
+  [/^\/app\/compliance/,                "Compliance"],
+  [/^\/app\/safety/,                    "Safety"],
+  [/^\/app\/external-requests/,         "External Requests"],
+  [/^\/app\/conformity/,                "Aircraft Conformity"],
+  [/^\/app\/planning/,                  "Maintenance Planning"],
+  [/^\/app\/ten-or-more/,              "Ten or More"],
+  [/^\/app\/terminal-ogd/,             "Terminal-OGD"],
+  [/^\/app\/docs/,                      "Docs & Links"],
+]
+
+/** Check whether a navigation path is allowed for the current user */
+function canNavigateTo(
+  path: string,
+  permissions: AppSection[],
+  role: string | undefined,
+): boolean {
+  const isAdmin = role === "Super Admin" || role === "Admin"
+  if (isAdmin) return true
+
+  // Admin pages require admin role
+  if (path.startsWith("/app/admin")) return false
+
+  for (const [pattern, section] of PATH_PERMISSION_MAP) {
+    if (pattern.test(path)) return permissions.includes(section)
+  }
+
+  // Dashboard and unknown paths — allow (router guard will catch unknown)
+  return true
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 const AVATAR_COLORS = [
   { name: "Gold",      value: "#d4a017" },
@@ -102,12 +148,21 @@ function NotificationRow({
   onClose: () => void
 }) {
   const navigate = useNavigate()
+  const { permissions, profile } = useAuth()
   const link = (notif.metadata?.link as string | undefined) ??
     (notif.type === "new_user" ? "/app/admin/users" : null)
 
+  const linkAllowed = link ? canNavigateTo(link, permissions, profile?.role) : false
+
   function handleClick() {
     if (!notif.read) onRead(notif.id)
-    if (link) { onClose(); navigate(link) }
+    if (link && linkAllowed) {
+      onClose()
+      navigate(link)
+    } else if (link && !linkAllowed) {
+      onClose()
+      navigate(`/app/access-restricted?feature=${encodeURIComponent("this section")}`)
+    }
   }
 
   return (
@@ -638,28 +693,12 @@ function ProfileSettingsDialog({
 
 // ─── Topbar ───────────────────────────────────────────────────────────────────
 export function Topbar() {
-  const { profile, user, signOut } = useAuth()
+  const { profile, user, permissions, signOut } = useAuth()
   const { theme, setTheme } = useTheme()
   const { notifications, unreadCount, markRead, markAllRead, deleteOne, clearAll } = useNotifications()
   const [profileOpen, setProfileOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
-  const [aogCount, setAogCount] = useState(0)
   const navigate = useNavigate()
-
-  // Poll for active AOG parts requests
-  useEffect(() => {
-    async function checkAog() {
-      const { count } = await supabase
-        .from("parts_requests")
-        .select("id", { count: "exact", head: true })
-        .eq("aog", true)
-        .not("status", "in", '("received","closed")')
-      setAogCount(count ?? 0)
-    }
-    checkAog()
-    const interval = setInterval(checkAog, 60_000) // refresh every minute
-    return () => clearInterval(interval)
-  }, [])
 
   const displayName = profile?.display_name ?? profile?.full_name ?? profile?.email ?? user?.email ?? "User"
   const initials = profile?.avatar_initials || getInitials(displayName)
@@ -679,24 +718,7 @@ export function Topbar() {
 
       <div className="flex items-center gap-1 ml-auto">
 
-        {/* AOG indicator */}
-        {aogCount > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-2 gap-1.5 hover:bg-accent"
-            onClick={() => navigate("/app/beet-box/parts")}
-            title={`${aogCount} active AOG request${aogCount > 1 ? "s" : ""}`}
-          >
-            <AlertTriangle className="h-3.5 w-3.5" style={{ color: "rgba(255,80,80,0.9)" }} />
-            <span
-              className="text-[10px] font-bold uppercase tracking-wider"
-              style={{ color: "rgba(255,100,100,0.9)" }}
-            >
-              AOG {aogCount > 1 ? `(${aogCount})` : ""}
-            </span>
-          </Button>
-        )}
+        {/* AOG indicator — disabled for now */}
 
         {/* Notifications bell */}
         <Popover open={notifOpen} onOpenChange={setNotifOpen}>

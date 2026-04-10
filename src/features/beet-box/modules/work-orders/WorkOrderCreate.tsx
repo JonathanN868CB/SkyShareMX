@@ -5,7 +5,7 @@ import {
   ArrowLeft, Upload, FileSpreadsheet, X, AlertTriangle,
   CheckCircle2, ClipboardList, GripVertical, Check,
   Trash2, Pencil, TriangleAlert, ShieldAlert, PackageCheck,
-  ChevronDown, ChevronRight, Plus, Zap, BookText,
+  ChevronDown, ChevronRight, Plus, Zap, BookText, Clock, FileText,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { Input } from "@/shared/ui/input"
@@ -358,6 +358,7 @@ export default function WorkOrderCreate() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const rebuildId = searchParams.get("rebuild")   // ?rebuild=<wo_id> → re-enter builder on existing draft
+  const isQuoteMode = searchParams.get("type") === "quote"   // ?type=quote → build a customer quote
 
   const [mode, setMode]   = useState<Mode>("choose")
 
@@ -449,6 +450,7 @@ export default function WorkOrderCreate() {
         guestRegistration: reg || undefined,
         meterAtOpen:       meterAtOpen ?? undefined,
         openedBy:          profileId,
+        woType:            isQuoteMode ? "quote" : "work_order",
       })
       setDraftWoId(wo.id)
       setDraftWoNumber(wo.woNumber)
@@ -513,6 +515,12 @@ export default function WorkOrderCreate() {
 
   // ── Library lookup state — keyed by task.importId ────────────────────────
   const [libCache, setLibCache] = useState<Record<string, TaskLibState>>({})
+  // Per-row estimated labor hours (click+1 / shift-click-1 / dblclick to type)
+  // Auto-seeded from flat-rate lookups unless the row has been manually touched.
+  const [estHoursByImportId, setEstHoursByImportId] = useState<Record<string, number>>({})
+  const [estHoursTouched, setEstHoursTouched] = useState<Set<string>>(new Set())
+  // Which row is currently in "type mode" (double-click expands to a text input)
+  const [estEditingId, setEstEditingId] = useState<string | null>(null)
   // Progress counter: scoped to a specific section so other sections don't show it
   const [libProgress, setLibProgress] = useState<{ section: LogbookSection; done: number; total: number; type: "ca" | "fr" } | null>(null)
   // Per-section applied state: tracks whether "Add" has been run (so button shows "Remove")
@@ -572,6 +580,7 @@ export default function WorkOrderCreate() {
         guestSerial: aircraftMode === "guest" ? form.guestSerial || undefined : undefined,
         meterAtOpen: form.meterAtOpen ? parseFloat(form.meterAtOpen) : undefined,
         openedBy: profileId,
+        woType: isQuoteMode ? "quote" : "work_order",
       })
       navigate(`/app/beet-box/work-orders/${wo.id}`)
     } catch (err) {
@@ -791,6 +800,13 @@ export default function WorkOrderCreate() {
       : { frStatus: "not_found", applyFR: false, frHours: null, frRate: null }
     const next = { ...getLib(importId), ...patch }
     setLibCache(c => ({ ...c, [importId]: next }))
+    // Auto-seed the Est Labor cell from flat-rate hours, unless the user has
+    // already touched it — don't stomp manual entries.
+    if (result && result.hours != null) {
+      setEstHoursByImportId(prev => (
+        estHoursTouched.has(importId) ? prev : { ...prev, [importId]: result.hours }
+      ))
+    }
     return next
   }
 
@@ -918,6 +934,7 @@ export default function WorkOrderCreate() {
           guestRegistration: matchedAircraft ? undefined : parsed.aircraftReg,
           meterAtOpen,
           openedBy:          profileId,
+          woType:            isQuoteMode ? "quote" : "work_order",
         })
         woId = wo.id
         // Patch the snapshot onto the freshly-created WO
@@ -929,7 +946,12 @@ export default function WorkOrderCreate() {
         const t = selected[idx]
         const lib = libCache[t.importId]
         const correctiveAction = (lib?.applyCA && lib.caText) ? lib.caText : ""
-        const estimatedHours   = (lib?.applyFR && lib.frHours != null) ? lib.frHours : 0
+        // Prefer the row-level Est Labor input (touched or auto-seeded from FR).
+        // Fall back to the flat-rate hours when the cell is still empty.
+        const rowHours         = estHoursByImportId[t.importId] ?? 0
+        const estimatedHours   = rowHours > 0
+                                   ? rowHours
+                                   : (lib?.applyFR && lib.frHours != null ? lib.frHours : 0)
         const laborRate        = (lib?.applyFR && lib.frRate  != null) ? lib.frRate  : 125
         await upsertWOItem({
           workOrderId:         woId,
@@ -982,9 +1004,11 @@ export default function WorkOrderCreate() {
               {mode === "choose" ? "Work Orders" : "Back"}
             </button>
             <h1 className="text-white" style={{ fontFamily: "var(--font-display)", fontSize: "28px", letterSpacing: "0.05em" }}>
-              New Work Order
+              {isQuoteMode ? "New Work Order Quote" : "New Work Order"}
             </h1>
-            <p className="text-white/40 text-sm mt-1">Open a new maintenance work order</p>
+            <p className="text-white/40 text-sm mt-1">
+              {isQuoteMode ? "Build a customer estimate before work begins" : "Open a new maintenance work order"}
+            </p>
           </div>
           <div className="stripe-divider" />
         </>
@@ -1291,47 +1315,87 @@ export default function WorkOrderCreate() {
 
             {/* Right: stat cards */}
             <div className="flex items-center gap-3 flex-shrink-0">
-              {[
-                {
-                  icon: PackageCheck,
-                  value: selectedCount,
-                  label: "Tasks Selected",
-                  color: "rgba(212,160,23,0.9)",
-                  bg:    "rgba(212,160,23,0.1)",
-                  border:"rgba(212,160,23,0.25)",
-                },
-                {
-                  icon: TriangleAlert,
-                  value: dueSoonCount,
-                  label: "Due < 14 Days",
-                  color: "#fbbf24",
-                  bg:    "rgba(251,191,36,0.08)",
-                  border:"rgba(251,191,36,0.2)",
-                  hidden: dueSoonCount === 0 || !!parsed?.isFresh,
-                },
-                {
-                  icon: ShieldAlert,
-                  value: overdueCount,
-                  label: "Overdue",
-                  color: "#f87171",
-                  bg:    "rgba(239,68,68,0.1)",
-                  border:"rgba(239,68,68,0.25)",
-                  hidden: overdueCount === 0 || !!parsed?.isFresh,
-                },
-              ].filter(s => !s.hidden).map(stat => {
-                const Icon = stat.icon
-                return (
-                  <div
-                    key={stat.label}
-                    className="flex flex-col items-center px-4 py-3 rounded-xl min-w-[80px]"
-                    style={{ background: stat.bg, border: `1px solid ${stat.border}` }}
-                  >
-                    <Icon className="w-4 h-4 mb-1.5" style={{ color: stat.color }} />
-                    <span className="text-2xl font-bold leading-none" style={{ color: stat.color }}>{stat.value}</span>
-                    <span className="text-white/35 text-[10px] mt-1 text-center leading-tight">{stat.label}</span>
-                  </div>
-                )
-              })}
+              {(() => {
+                // Quote mode: show Est. Labor / Est. Parts / Est. Total instead of due/overdue
+                if (isQuoteMode) {
+                  const selectedTasks = parsed?.tasks.filter(t => t.selected) ?? []
+                  let estLabor = 0
+                  for (const t of selectedTasks) {
+                    const lib = libCache[t.importId]
+                    // Prefer the row-level Est cell; fall back to FR hours if untouched.
+                    const rowHours = estHoursByImportId[t.importId] ?? 0
+                    const hours = rowHours > 0
+                      ? rowHours
+                      : (lib?.applyFR && lib.frHours != null ? lib.frHours : 0)
+                    const rate = (lib?.applyFR && lib.frRate != null) ? lib.frRate : 125
+                    estLabor += hours * rate
+                  }
+                  const estParts = 0 // parts not estimable pre-creation
+                  const estTotal = estLabor + estParts
+                  const fmt = (n: number) =>
+                    "$" + Math.round(n).toLocaleString("en-US")
+                  return [
+                    { icon: PackageCheck, value: selectedCount,        label: "Tasks Selected", color: "rgba(212,160,23,0.9)", bg: "rgba(212,160,23,0.1)", border: "rgba(212,160,23,0.25)", large: false },
+                    { icon: Clock,        value: fmt(estLabor) as any, label: "Est. Labor",     color: "#93c5fd",              bg: "rgba(96,165,250,0.1)", border: "rgba(96,165,250,0.25)", large: false },
+                    { icon: FileText,     value: fmt(estTotal) as any, label: "Est. Total",     color: "#c4b5fd",              bg: "rgba(167,139,250,0.12)", border: "rgba(167,139,250,0.35)", large: true },
+                  ].map(stat => {
+                    const Icon = stat.icon
+                    return (
+                      <div
+                        key={stat.label}
+                        className="flex flex-col items-center px-4 py-3 rounded-xl min-w-[90px]"
+                        style={{ background: stat.bg, border: `1px solid ${stat.border}` }}
+                      >
+                        <Icon className="w-4 h-4 mb-1.5" style={{ color: stat.color }} />
+                        <span className={cn("font-bold leading-none tabular-nums", stat.large ? "text-xl" : "text-lg")} style={{ color: stat.color }}>{stat.value}</span>
+                        <span className="text-white/35 text-[10px] mt-1 text-center leading-tight">{stat.label}</span>
+                      </div>
+                    )
+                  })
+                }
+                // Work order mode: due/overdue as before
+                return [
+                  {
+                    icon: PackageCheck,
+                    value: selectedCount,
+                    label: "Tasks Selected",
+                    color: "rgba(212,160,23,0.9)",
+                    bg:    "rgba(212,160,23,0.1)",
+                    border:"rgba(212,160,23,0.25)",
+                  },
+                  {
+                    icon: TriangleAlert,
+                    value: dueSoonCount,
+                    label: "Due < 14 Days",
+                    color: "#fbbf24",
+                    bg:    "rgba(251,191,36,0.08)",
+                    border:"rgba(251,191,36,0.2)",
+                    hidden: dueSoonCount === 0 || !!parsed?.isFresh,
+                  },
+                  {
+                    icon: ShieldAlert,
+                    value: overdueCount,
+                    label: "Overdue",
+                    color: "#f87171",
+                    bg:    "rgba(239,68,68,0.1)",
+                    border:"rgba(239,68,68,0.25)",
+                    hidden: overdueCount === 0 || !!parsed?.isFresh,
+                  },
+                ].filter(s => !s.hidden).map(stat => {
+                  const Icon = stat.icon
+                  return (
+                    <div
+                      key={stat.label}
+                      className="flex flex-col items-center px-4 py-3 rounded-xl min-w-[80px]"
+                      style={{ background: stat.bg, border: `1px solid ${stat.border}` }}
+                    >
+                      <Icon className="w-4 h-4 mb-1.5" style={{ color: stat.color }} />
+                      <span className="text-2xl font-bold leading-none" style={{ color: stat.color }}>{stat.value}</span>
+                      <span className="text-white/35 text-[10px] mt-1 text-center leading-tight">{stat.label}</span>
+                    </div>
+                  )
+                })
+              })()}
             </div>
           </div>
 
@@ -1570,6 +1634,119 @@ export default function WorkOrderCreate() {
                                   <p className="text-white/25 text-xs font-mono mt-0.5">{task.taskNumber}</p>
                                 )}
                               </div>
+
+                              {/* ── Estimated Labor cell ───────────────────────────────────
+                                  Click +1h, Shift+click -1h, double-click to type.
+                                  Auto-seeded by flat-rate lookup when a matching code exists. */}
+                              {(() => {
+                                const hours   = estHoursByImportId[task.importId] ?? 0
+                                const touched = estHoursTouched.has(task.importId)
+                                const editing = estEditingId === task.importId
+                                const dim     = !task.selected
+                                const bump = (delta: number) => {
+                                  setEstHoursByImportId(prev => {
+                                    const next = Math.max(0, (prev[task.importId] ?? 0) + delta)
+                                    return { ...prev, [task.importId]: next }
+                                  })
+                                  setEstHoursTouched(prev => {
+                                    if (prev.has(task.importId)) return prev
+                                    const n = new Set(prev); n.add(task.importId); return n
+                                  })
+                                }
+                                const reset = () => {
+                                  setEstHoursByImportId(prev => ({ ...prev, [task.importId]: 0 }))
+                                  setEstHoursTouched(prev => {
+                                    const n = new Set(prev); n.add(task.importId); return n
+                                  })
+                                }
+                                return (
+                                  <div
+                                    className="flex items-center flex-shrink-0"
+                                    onPointerDown={e => e.stopPropagation()}
+                                  >
+                                    {editing ? (
+                                      <input
+                                        autoFocus
+                                        type="number"
+                                        step="0.25"
+                                        min="0"
+                                        defaultValue={hours || ""}
+                                        className="w-16 text-center text-xs font-bold tabular-nums bg-white/[0.08] border border-white/30 rounded px-1.5 py-1 text-white focus:outline-none focus:border-white/60"
+                                        onClick={e => e.stopPropagation()}
+                                        onBlur={e => {
+                                          const v = Math.max(0, parseFloat(e.currentTarget.value) || 0)
+                                          setEstHoursByImportId(prev => ({ ...prev, [task.importId]: v }))
+                                          setEstHoursTouched(prev => {
+                                            const n = new Set(prev); n.add(task.importId); return n
+                                          })
+                                          setEstEditingId(null)
+                                        }}
+                                        onKeyDown={e => {
+                                          if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+                                          if (e.key === "Escape") setEstEditingId(null)
+                                        }}
+                                      />
+                                    ) : (
+                                      <div className="group/est relative flex items-center">
+                                        <button
+                                          type="button"
+                                          title={
+                                            hours === 0
+                                              ? "Click to add 1h  ·  double-click to type"
+                                              : `Click +1h  ·  Shift-click −1h  ·  double-click to type${touched ? "" : "  (from flat rate)"}`
+                                          }
+                                          onClick={e => {
+                                            e.stopPropagation()
+                                            if (e.shiftKey) bump(-1)
+                                            else            bump(+1)
+                                          }}
+                                          onDoubleClick={e => {
+                                            e.stopPropagation()
+                                            setEstEditingId(task.importId)
+                                          }}
+                                          className={cn(
+                                            "w-16 text-center text-xs font-bold tabular-nums rounded px-2 py-1 transition-all border select-none",
+                                            dim && "opacity-40",
+                                          )}
+                                          style={
+                                            hours > 0
+                                              ? touched
+                                                ? {
+                                                    background: "rgba(96,165,250,0.14)",
+                                                    border:     "1px solid rgba(147,197,253,0.45)",
+                                                    color:      "#93c5fd",
+                                                  }
+                                                : {
+                                                    // auto-populated from FR → subtle gold tint
+                                                    background: "rgba(212,160,23,0.1)",
+                                                    border:     "1px dashed rgba(212,160,23,0.45)",
+                                                    color:      "rgba(212,160,23,0.95)",
+                                                  }
+                                              : {
+                                                    background: "transparent",
+                                                    border:     "1px dashed rgba(255,255,255,0.15)",
+                                                    color:      "rgba(255,255,255,0.3)",
+                                                  }
+                                          }
+                                        >
+                                          {hours > 0 ? `${hours}h` : "—"}
+                                        </button>
+                                        {hours > 0 && (
+                                          <button
+                                            type="button"
+                                            title="Reset to 0"
+                                            onClick={e => { e.stopPropagation(); reset() }}
+                                            className="absolute -right-1 -top-1 w-3.5 h-3.5 rounded-full flex items-center justify-center opacity-0 group-hover/est:opacity-100 transition-opacity"
+                                            style={{ background: "hsl(0,0%,22%)", border: "1px solid hsl(0,0%,35%)" }}
+                                          >
+                                            <X className="w-2 h-2 text-white/70" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })()}
 
                               {/* Per-row library checkboxes — only visible once a lookup has run */}
                               {!parsed.isFresh && task.taskNumber && (() => {
@@ -1859,7 +2036,7 @@ export default function WorkOrderCreate() {
                   transition: "all 0.2s ease",
                 }}
               >
-                {submitting ? "Saving…" : isRebuild ? "Rebuild Work Order →" : "Commit to Work Order →"}
+                {submitting ? "Saving…" : isRebuild ? "Rebuild Work Order →" : isQuoteMode ? "Create Quote →" : "Commit to Work Order →"}
               </Button>
             </div>
           </div>

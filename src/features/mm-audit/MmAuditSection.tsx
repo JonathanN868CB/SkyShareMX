@@ -26,7 +26,7 @@ const statusColors: Record<AuditStatus, string> = {
 export default function MmAuditSection() {
   const { profile } = useAuth()
   const canEdit = profile?.role === "Super Admin" || profile?.role === "Admin" || profile?.role === "Manager"
-  const isSuperAdmin = profile?.role === "Super Admin"
+  const isAdminOrAbove = profile?.role === "Super Admin" || profile?.role === "Admin"
 
   const [open, setOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<"audits" | "mel">("audits")
@@ -188,7 +188,7 @@ export default function MmAuditSection() {
 
                   <div className="ml-auto flex items-center gap-2">
                     <MmPdfExportButton campaign={activeCampaign ?? null} />
-                    {isSuperAdmin && (
+                    {isAdminOrAbove && (
                       <button
                         onClick={(e) => { e.stopPropagation(); setShowSourceDocs(true) }}
                         className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"
@@ -239,7 +239,7 @@ export default function MmAuditSection() {
                         <ClipboardList className="h-3.5 w-3.5" />
                         Ad-hoc Workspace
                       </button>
-                      {isSuperAdmin && (
+                      {isAdminOrAbove && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setShowBackdate(true) }}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"

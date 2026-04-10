@@ -315,66 +315,103 @@ function Section({
 
 // ─── Next Review Card ─────────────────────────────────────────────────────────
 
-function NextReviewCard({ sessions, loading }: { sessions: MxlmsSession[]; loading: boolean }) {
-  const next = sessions.find(s => (s.status === "scheduled" || s.status === "pending") && s.scheduled_date)
-  const last = sessions.find(s => s.status === "completed")
+function ReviewScheduleBar({ sessions, loading }: { sessions: MxlmsSession[]; loading: boolean }) {
+  const SLOTS = 4
+
+  const upcoming = sessions
+    .filter(s => (s.status === "scheduled" || s.status === "pending") && s.scheduled_date)
+    .sort((a, b) => new Date(a.scheduled_date!).getTime() - new Date(b.scheduled_date!).getTime())
+    .slice(0, SLOTS)
+
+  // Pad to always show 4 cells
+  type Cell = { label: string; date: string; relative: string; filled: boolean; isNext: boolean }
+  const cells: Cell[] = upcoming.map((s, i) => ({
+    label: `Session ${s.session_number ?? "?"}${s.session_year ? ` · ${s.session_year}` : ""}`,
+    date: formatDate(s.scheduled_date),
+    relative: formatDateRelative(s.scheduled_date),
+    filled: true,
+    isNext: i === 0,
+  }))
+  while (cells.length < SLOTS) {
+    cells.push({ label: "", date: "", relative: "Not yet scheduled", filled: false, isNext: false })
+  }
 
   if (loading) {
     return (
-      <div className="px-5 py-8 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
-        Loading…
-      </div>
+      <Card className="card-elevated border-0 overflow-hidden">
+        <div className="px-5 py-6 text-center text-xs text-white/25" style={{ fontFamily: "var(--font-heading)" }}>
+          Loading…
+        </div>
+      </Card>
     )
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5">
-      {/* Next session */}
-      <div className="rounded-lg p-4 space-y-1"
-        style={{
-          background: next ? "rgba(212,160,23,0.07)" : "rgba(255,255,255,0.03)",
-          border: next ? "1px solid rgba(212,160,23,0.18)" : "1px solid rgba(255,255,255,0.07)",
-        }}>
-        <p className="text-[10px] uppercase tracking-wider text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
-          Next Review
-        </p>
-        {next ? (
-          <>
-            <p className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--skyshare-gold)" }}>
-              {formatDateRelative(next.scheduled_date)}
-            </p>
-            <p className="text-xs text-white/45">
-              Session {next.session_number}
-              {next.session_year ? ` · ${next.session_year}` : ""}
-              <span className="ml-2 text-white/25">{formatDate(next.scheduled_date)}</span>
-            </p>
-          </>
-        ) : (
-          <p className="text-sm text-white/25">Not yet scheduled</p>
-        )}
+    <Card className="card-elevated border-0 overflow-hidden relative">
+      {/* Floating title badge — centered over the cells */}
+      <div className="absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1 rounded-full"
+        style={{ top: 15, background: "hsl(var(--background))", border: "1px solid rgba(212,160,23,0.2)" }}>
+        <CalendarDays className="h-3 w-3" style={{ color: "var(--skyshare-gold)", opacity: 0.6 }} />
+        <span className="text-[10px] uppercase tracking-wider font-semibold"
+          style={{ fontFamily: "var(--font-heading)", color: "rgba(212,160,23,0.5)" }}>
+          Review Schedule
+        </span>
       </div>
 
-      {/* Last session */}
-      <div className="rounded-lg p-4 space-y-1"
-        style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-        <p className="text-[10px] uppercase tracking-wider text-white/30" style={{ fontFamily: "var(--font-heading)" }}>
-          Last Review
-        </p>
-        {last ? (
-          <>
-            <p className="text-2xl font-bold text-white/70" style={{ fontFamily: "var(--font-display)" }}>
-              {formatDate(last.conducted_date)}
-            </p>
-            <p className="text-xs text-white/35">
-              Session {last.session_number}
-              {last.session_year ? ` · ${last.session_year}` : ""}
-            </p>
-          </>
-        ) : (
-          <p className="text-sm text-white/25">No completed sessions</p>
-        )}
+      {/* 4-cell bar */}
+      <div className="grid grid-cols-4">
+        {cells.map((cell, i) => (
+          <div key={i} className="flex flex-col items-center justify-center text-center"
+            style={{
+              padding: "24px 14px",
+              background: cell.isNext
+                ? "rgba(212,160,23,0.09)"
+                : cell.filled
+                  ? "rgba(255,255,255,0.025)"
+                  : "rgba(255,255,255,0.01)",
+              borderRight: i < SLOTS - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
+            }}>
+            {cell.filled ? (
+              <>
+                <div className="uppercase tracking-wider mb-2"
+                  style={{
+                    fontFamily: "var(--font-heading)",
+                    fontSize: "0.8rem",
+                    color: cell.isNext ? "var(--skyshare-gold)" : "rgba(255,255,255,0.3)",
+                  }}>
+                  {cell.isNext ? "Next" : cell.label}
+                </div>
+                <div className="font-bold"
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    fontSize: "1.45rem",
+                    lineHeight: 1.15,
+                    color: cell.isNext ? "var(--skyshare-gold)" : "rgba(255,255,255,0.55)",
+                  }}>
+                  {cell.isNext ? cell.relative : cell.date}
+                </div>
+                <div className="mt-1.5"
+                  style={{
+                    fontSize: "0.95rem",
+                    color: cell.isNext ? "rgba(212,160,23,0.55)" : "rgba(255,255,255,0.25)",
+                  }}>
+                  {cell.isNext ? cell.date : cell.relative}
+                </div>
+              </>
+            ) : (
+              <div style={{
+                fontFamily: "var(--font-heading)",
+                fontSize: "0.85rem",
+                color: "rgba(255,255,255,0.15)",
+                letterSpacing: "0.04em",
+              }}>
+                Not yet scheduled
+              </div>
+            )}
+          </div>
+        ))}
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -1326,19 +1363,7 @@ export default function MyJourney() {
               </Section>
 
               {/* Review Schedule */}
-              <Section icon={CalendarDays} title="Review Schedule" sub="Upcoming and past 4-1-1 sessions">
-                <NextReviewCard sessions={sessions} loading={ls} />
-                {sessions.filter(s => s.status === "completed").length > 0 && (
-                  <>
-                    <div className="px-5 pt-1 pb-1">
-                      <span className="text-[10px] uppercase tracking-wider text-white/20" style={{ fontFamily: "var(--font-heading)" }}>
-                        Session History
-                      </span>
-                    </div>
-                    <SessionHistory sessions={sessions} />
-                  </>
-                )}
-              </Section>
+              <ReviewScheduleBar sessions={sessions} loading={ls} />
 
               {/* Goals */}
               <Section icon={Target} title="Goals" sub={`${goals.filter(g => g.status === "open").length} active`}>

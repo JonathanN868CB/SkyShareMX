@@ -213,7 +213,7 @@ export default function DocumentationEditorOverlay({
                   : null
 
                 return (
-                  <div key={idx} className="rounded-lg px-6 py-6"
+                  <div key={f.label} className="rounded-lg px-6 py-6"
                     style={{
                       border: f.libraryManualId
                         ? "1px solid rgba(167,139,250,0.35)"
