@@ -515,6 +515,12 @@ export default function WorkOrderCreate() {
 
   // ── Library lookup state — keyed by task.importId ────────────────────────
   const [libCache, setLibCache] = useState<Record<string, TaskLibState>>({})
+  // Per-row estimated labor hours (click+1 / shift-click-1 / dblclick to type)
+  // Auto-seeded from flat-rate lookups unless the row has been manually touched.
+  const [estHoursByImportId, setEstHoursByImportId] = useState<Record<string, number>>({})
+  const [estHoursTouched, setEstHoursTouched] = useState<Set<string>>(new Set())
+  // Which row is currently in "type mode" (double-click expands to a text input)
+  const [estEditingId, setEstEditingId] = useState<string | null>(null)
   // Progress counter: scoped to a specific section so other sections don't show it
   const [libProgress, setLibProgress] = useState<{ section: LogbookSection; done: number; total: number; type: "ca" | "fr" } | null>(null)
   // Per-section applied state: tracks whether "Add" has been run (so button shows "Remove")
@@ -794,6 +800,13 @@ export default function WorkOrderCreate() {
       : { frStatus: "not_found", applyFR: false, frHours: null, frRate: null }
     const next = { ...getLib(importId), ...patch }
     setLibCache(c => ({ ...c, [importId]: next }))
+    // Auto-seed the Est Labor cell from flat-rate hours, unless the user has
+    // already touched it — don't stomp manual entries.
+    if (result && result.hours != null) {
+      setEstHoursByImportId(prev => (
+        estHoursTouched.has(importId) ? prev : { ...prev, [importId]: result.hours }
+      ))
+    }
     return next
   }
 
@@ -933,7 +946,12 @@ export default function WorkOrderCreate() {
         const t = selected[idx]
         const lib = libCache[t.importId]
         const correctiveAction = (lib?.applyCA && lib.caText) ? lib.caText : ""
-        const estimatedHours   = (lib?.applyFR && lib.frHours != null) ? lib.frHours : 0
+        // Prefer the row-level Est Labor input (touched or auto-seeded from FR).
+        // Fall back to the flat-rate hours when the cell is still empty.
+        const rowHours         = estHoursByImportId[t.importId] ?? 0
+        const estimatedHours   = rowHours > 0
+                                   ? rowHours
+                                   : (lib?.applyFR && lib.frHours != null ? lib.frHours : 0)
         const laborRate        = (lib?.applyFR && lib.frRate  != null) ? lib.frRate  : 125
         await upsertWOItem({
           workOrderId:         woId,
@@ -1304,9 +1322,13 @@ export default function WorkOrderCreate() {
                   let estLabor = 0
                   for (const t of selectedTasks) {
                     const lib = libCache[t.importId]
-                    if (lib?.applyFR && lib.frHours != null && lib.frRate != null) {
-                      estLabor += lib.frHours * lib.frRate
-                    }
+                    // Prefer the row-level Est cell; fall back to FR hours if untouched.
+                    const rowHours = estHoursByImportId[t.importId] ?? 0
+                    const hours = rowHours > 0
+                      ? rowHours
+                      : (lib?.applyFR && lib.frHours != null ? lib.frHours : 0)
+                    const rate = (lib?.applyFR && lib.frRate != null) ? lib.frRate : 125
+                    estLabor += hours * rate
                   }
                   const estParts = 0 // parts not estimable pre-creation
                   const estTotal = estLabor + estParts
@@ -1612,6 +1634,119 @@ export default function WorkOrderCreate() {
                                   <p className="text-white/25 text-xs font-mono mt-0.5">{task.taskNumber}</p>
                                 )}
                               </div>
+
+                              {/* ── Estimated Labor cell ───────────────────────────────────
+                                  Click +1h, Shift+click -1h, double-click to type.
+                                  Auto-seeded by flat-rate lookup when a matching code exists. */}
+                              {(() => {
+                                const hours   = estHoursByImportId[task.importId] ?? 0
+                                const touched = estHoursTouched.has(task.importId)
+                                const editing = estEditingId === task.importId
+                                const dim     = !task.selected
+                                const bump = (delta: number) => {
+                                  setEstHoursByImportId(prev => {
+                                    const next = Math.max(0, (prev[task.importId] ?? 0) + delta)
+                                    return { ...prev, [task.importId]: next }
+                                  })
+                                  setEstHoursTouched(prev => {
+                                    if (prev.has(task.importId)) return prev
+                                    const n = new Set(prev); n.add(task.importId); return n
+                                  })
+                                }
+                                const reset = () => {
+                                  setEstHoursByImportId(prev => ({ ...prev, [task.importId]: 0 }))
+                                  setEstHoursTouched(prev => {
+                                    const n = new Set(prev); n.add(task.importId); return n
+                                  })
+                                }
+                                return (
+                                  <div
+                                    className="flex items-center flex-shrink-0"
+                                    onPointerDown={e => e.stopPropagation()}
+                                  >
+                                    {editing ? (
+                                      <input
+                                        autoFocus
+                                        type="number"
+                                        step="0.25"
+                                        min="0"
+                                        defaultValue={hours || ""}
+                                        className="w-16 text-center text-xs font-bold tabular-nums bg-white/[0.08] border border-white/30 rounded px-1.5 py-1 text-white focus:outline-none focus:border-white/60"
+                                        onClick={e => e.stopPropagation()}
+                                        onBlur={e => {
+                                          const v = Math.max(0, parseFloat(e.currentTarget.value) || 0)
+                                          setEstHoursByImportId(prev => ({ ...prev, [task.importId]: v }))
+                                          setEstHoursTouched(prev => {
+                                            const n = new Set(prev); n.add(task.importId); return n
+                                          })
+                                          setEstEditingId(null)
+                                        }}
+                                        onKeyDown={e => {
+                                          if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+                                          if (e.key === "Escape") setEstEditingId(null)
+                                        }}
+                                      />
+                                    ) : (
+                                      <div className="group/est relative flex items-center">
+                                        <button
+                                          type="button"
+                                          title={
+                                            hours === 0
+                                              ? "Click to add 1h  ·  double-click to type"
+                                              : `Click +1h  ·  Shift-click −1h  ·  double-click to type${touched ? "" : "  (from flat rate)"}`
+                                          }
+                                          onClick={e => {
+                                            e.stopPropagation()
+                                            if (e.shiftKey) bump(-1)
+                                            else            bump(+1)
+                                          }}
+                                          onDoubleClick={e => {
+                                            e.stopPropagation()
+                                            setEstEditingId(task.importId)
+                                          }}
+                                          className={cn(
+                                            "w-16 text-center text-xs font-bold tabular-nums rounded px-2 py-1 transition-all border select-none",
+                                            dim && "opacity-40",
+                                          )}
+                                          style={
+                                            hours > 0
+                                              ? touched
+                                                ? {
+                                                    background: "rgba(96,165,250,0.14)",
+                                                    border:     "1px solid rgba(147,197,253,0.45)",
+                                                    color:      "#93c5fd",
+                                                  }
+                                                : {
+                                                    // auto-populated from FR → subtle gold tint
+                                                    background: "rgba(212,160,23,0.1)",
+                                                    border:     "1px dashed rgba(212,160,23,0.45)",
+                                                    color:      "rgba(212,160,23,0.95)",
+                                                  }
+                                              : {
+                                                    background: "transparent",
+                                                    border:     "1px dashed rgba(255,255,255,0.15)",
+                                                    color:      "rgba(255,255,255,0.3)",
+                                                  }
+                                          }
+                                        >
+                                          {hours > 0 ? `${hours}h` : "—"}
+                                        </button>
+                                        {hours > 0 && (
+                                          <button
+                                            type="button"
+                                            title="Reset to 0"
+                                            onClick={e => { e.stopPropagation(); reset() }}
+                                            className="absolute -right-1 -top-1 w-3.5 h-3.5 rounded-full flex items-center justify-center opacity-0 group-hover/est:opacity-100 transition-opacity"
+                                            style={{ background: "hsl(0,0%,22%)", border: "1px solid hsl(0,0%,35%)" }}
+                                          >
+                                            <X className="w-2 h-2 text-white/70" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })()}
 
                               {/* Per-row library checkboxes — only visible once a lookup has run */}
                               {!parsed.isFresh && task.taskNumber && (() => {
