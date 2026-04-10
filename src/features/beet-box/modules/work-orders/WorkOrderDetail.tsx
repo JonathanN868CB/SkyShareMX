@@ -1212,11 +1212,11 @@ function ItemDetailPanel({
                   </div>
                 </div>
               )}
-              </div>{/* end labor inner */}
-            </div>{/* end labor card */}
+              </div>
+            </div>
             )}
-          </div>{/* end right column */}
-        </div>{/* end discrepancy + labor row */}
+          </div>
+        </div>
 
         {/* Parts */}
         <div className="px-5 pt-3 pb-1" style={{ borderBottom: "1px solid hsl(0,0%,17%)" }}>
