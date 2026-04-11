@@ -71,6 +71,10 @@ function injectSelectionStyle() {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 4
+const ZOOM_STEP = 0.15
+
 export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuery, pageNumber }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null)
   const imgRef        = useRef<HTMLImageElement>(null)
@@ -78,6 +82,8 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
   const [imageLoaded,   setImageLoaded]   = useState(false)
   const [imageError,    setImageError]    = useState(false)
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null)
+  const [zoom,          setZoom]          = useState(1)
+  const [isPanning,     setIsPanning]     = useState(false)
 
   useEffect(() => { injectSelectionStyle() }, [])
 
@@ -86,10 +92,11 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
     setImageLoaded(false)
     setImageError(false)
     setContainerSize(null)
+    setZoom(1)
   }, [imageUrl, pageNumber])
 
-  // Track container size — word span pixel positions depend on the rendered
-  // image dimensions, which change whenever the panel is resized.
+  // Track rendered image size — word span pixel positions depend on it, which
+  // changes whenever the panel is resized OR the user zooms in/out.
   const updateSize = useCallback(() => {
     const img = imgRef.current
     if (!img || !img.complete) return
@@ -101,12 +108,96 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
     if (!el) return
     const ro = new ResizeObserver(updateSize)
     ro.observe(el)
+    const img = imgRef.current
+    if (img) ro.observe(img)
     return () => ro.disconnect()
-  }, [updateSize])
+  }, [updateSize, imageLoaded])
+
+  // Re-measure after zoom changes commit so overlay matches the new image size
+  useEffect(() => {
+    requestAnimationFrame(() => updateSize())
+  }, [zoom, updateSize])
+
+  // Mouse wheel → zoom. preventDefault requires a non-passive listener, which
+  // React's synthetic onWheel can't give us, so attach natively.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const direction = e.deltaY < 0 ? 1 : -1
+      setZoom((z) => {
+        const next = z + direction * ZOOM_STEP
+        return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(next.toFixed(3))))
+      })
+    }
+    el.addEventListener("wheel", handleWheel, { passive: false })
+    return () => el.removeEventListener("wheel", handleWheel)
+  }, [])
+
+  // Middle mouse button → grab-pan the page. Windows/Linux browsers treat
+  // middle-click as auto-scroll; preventDefault on mousedown suppresses that
+  // so we can drive scrollLeft/scrollTop directly from pointer movement.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    let panning    = false
+    let lastX      = 0
+    let lastY      = 0
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 1) return   // middle only
+      e.preventDefault()
+      panning = true
+      lastX = e.clientX
+      lastY = e.clientY
+      setIsPanning(true)
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!panning) return
+      const dx = e.clientX - lastX
+      const dy = e.clientY - lastY
+      lastX = e.clientX
+      lastY = e.clientY
+      el.scrollLeft -= dx
+      el.scrollTop  -= dy
+    }
+
+    const stop = () => {
+      if (!panning) return
+      panning = false
+      setIsPanning(false)
+    }
+
+    // Swallow the auxclick that fires on middle-button release — without this
+    // some browsers still try to enter autoscroll mode after the drag ends.
+    const onAuxClick = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault()
+    }
+
+    el.addEventListener("mousedown", onMouseDown)
+    el.addEventListener("auxclick",  onAuxClick)
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup",   stop)
+    window.addEventListener("blur",      stop)
+
+    return () => {
+      el.removeEventListener("mousedown", onMouseDown)
+      el.removeEventListener("auxclick",  onAuxClick)
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup",   stop)
+      window.removeEventListener("blur",      stop)
+    }
+  }, [])
 
   const handleImageLoad = useCallback(() => {
     setImageLoaded(true)
-    updateSize()
+    // Defer measurement until after React commits the state change — reading
+    // clientWidth synchronously here returns 0 because the image's layout
+    // hasn't been applied yet, which would render every word span at 0×0.
+    requestAnimationFrame(() => updateSize())
   }, [updateSize])
 
   // Pre-compute which words match so we don't recalculate per-span
@@ -125,6 +216,12 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
     <div
       ref={containerRef}
       className="relative w-full h-full flex items-start justify-center overflow-auto bg-muted/30"
+      style={{
+        cursor: isPanning ? "grabbing" : undefined,
+        // Disable text selection mid-pan so drag doesn't accidentally select
+        // a huge block of words while the user drags with middle mouse.
+        userSelect: isPanning ? "none" : undefined,
+      }}
     >
       {/* ── Page image ───────────────────────────────────────────────────── */}
       {!imageError ? (
@@ -139,8 +236,15 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
             ref={imgRef}
             src={imageUrl}
             alt={`Page ${pageNumber}`}
-            className="block max-w-full h-auto shadow-xl select-none"
-            style={{ display: imageLoaded ? "block" : "none" }}
+            className="block h-auto shadow-xl select-none"
+            // Zoom is applied as a pixel-based width override so the browser
+            // reflows the image and scrollbars appear naturally when it
+            // overflows the container. The text layer re-measures via the
+            // zoom useEffect so word spans stay aligned to the scan.
+            style={{
+              width:    `${zoom * 100}%`,
+              maxWidth: "none",
+            }}
             onLoad={handleImageLoad}
             onError={() => setImageError(true)}
             draggable={false}
@@ -154,7 +258,11 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
               style={{
                 width:          containerSize.w,
                 height:         containerSize.h,
-                pointerEvents:  "none",   // scroll/click pass through to image
+                // Parent is pointer-events: none so wheel/scroll gestures on
+                // the gutter between words pass through to the image, but
+                // individual word spans opt back in with pointer-events: auto
+                // so drag-select and click still target text.
+                pointerEvents:  "none",
                 userSelect:     "text",
                 WebkitUserSelect: "text",
               }}
@@ -190,13 +298,17 @@ export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuer
                         : "transparent",
                       // Rounded corners on highlighted spans to soften the overlay
                       borderRadius: isMatch ? "2px" : "0",
-                      // pointer-events: none inherited from parent (cannot override
-                      // in a pointer-events: none subtree via CSS alone); text
-                      // selection works via keyboard and browser find-in-page
+                      // Opt back in to pointer events so drag-select targets
+                      // word spans even though the parent text layer disables
+                      // them for pass-through scroll.
+                      pointerEvents: "auto",
                       cursor: "text",
                     }}
                   >
-                    {word.text}
+                    {/* Trailing space is clipped by overflow: hidden so it
+                        stays invisible, but copy/paste picks it up — without
+                        it, adjacent absolute spans concatenate into "word1word2". */}
+                    {word.text + " "}
                   </span>
                 )
               })}

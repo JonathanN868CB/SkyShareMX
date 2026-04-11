@@ -161,7 +161,7 @@ async function embedQuery(query: string): Promise<number[] | null> {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ input: [query], model: "voyage-3" }),
+      body: JSON.stringify({ input: [query], model: "voyage-3", input_type: "query" }),
     });
 
     if (!resp.ok) {
