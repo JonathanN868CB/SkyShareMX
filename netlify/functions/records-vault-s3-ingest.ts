@@ -282,11 +282,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
     console.log(`[s3-ingest] Processing: tail=${tailNumber} type=${sourceCategory} file=${filename}`);
 
-    // ── 6a. Look up aircraft by tail_number ──────────────────────────────
-    const { data: aircraft, error: aircraftErr } = await supabase
-      .from("aircraft")
-      .select("id, tail_number")
-      .eq("tail_number", tailNumber)
+    // ── 6a. Look up aircraft via aircraft_registrations ──────────────────
+    // Tail numbers live in aircraft_registrations.registration → aircraft.id
+    const { data: regRow, error: aircraftErr } = await supabase
+      .from("aircraft_registrations")
+      .select("aircraft_id")
+      .eq("registration", tailNumber)
       .maybeSingle();
 
     if (aircraftErr) {
@@ -298,7 +299,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
     let aircraftId: string;
 
-    if (!aircraft) {
+    if (!regRow) {
       // Unknown tail number — create a quarantine record so nothing is lost
       console.warn(`[s3-ingest] Unknown tail number: ${tailNumber} — creating unmatched record`);
 
@@ -326,7 +327,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
       continue;
     }
 
-    aircraftId = aircraft.id;
+    aircraftId = regRow.aircraft_id;
 
     // ── 6b. Check for duplicate (same s3_key) ────────────────────────────
     const { data: existing } = await supabase
