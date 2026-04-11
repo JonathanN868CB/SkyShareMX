@@ -1,5 +1,5 @@
 /**
- * RecordsVaultViewer — Phase B viewer (Blue Tail style)
+ * RecordsVaultViewer — Phase B document viewer
  *
  * Layout:
  *   [LEFT 15%: page strip] | [CENTER 85%: scanned page + text overlay]
@@ -228,6 +228,7 @@ function CenterPanel({
               pageNumber={pageNumber}
               pageKey={`${recordSourceId}-${pageNumber}`}
               searchQuery={searchQuery || undefined}
+              wordGeometry={geometry?.word_geometry ?? null}
               onNextPage={onNextPage}
               onPrevPage={onPrevPage}
             />

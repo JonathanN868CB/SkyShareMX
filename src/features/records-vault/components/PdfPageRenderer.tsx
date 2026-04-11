@@ -28,6 +28,7 @@ import "react-pdf/dist/Page/TextLayer.css"
 import {
   Loader2, AlertTriangle, ZoomIn, ZoomOut, Maximize2, ImageOff, Hand,
 } from "lucide-react"
+import type { WordGeometry } from "../types"
 
 // Configure PDF.js worker from local package (CDN may not have this version)
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -48,6 +49,14 @@ interface PdfPageRendererProps {
   searchQuery?: string
   /** Unique key for forcing re-render on page change */
   pageKey: string
+  /**
+   * Textract word-level geometry for the current page.
+   * When provided, a transparent text overlay is projected over the canvas
+   * using normalized bounding boxes — same approach as PageTextOverlay.
+   * Search matches are highlighted gold. Text selection works natively.
+   * When provided, the PDF.js built-in text layer is disabled to avoid duplication.
+   */
+  wordGeometry?: WordGeometry[] | null
   /** Called when PDF.js can't render the page (blank canvas / JBIG2).
    *  Parent should respond by fetching a page image URL. */
   onPdfFailed?: () => void
@@ -297,12 +306,33 @@ function ImagePageRenderer({
 
 // ─── PDF.js renderer (primary path — efficient with native highlighting) ─────
 
+// ─── Text selection style for Textract overlay ───────────────────────────────
+
+let pdfOverlayStyleInjected = false
+function injectPdfOverlayStyle() {
+  if (pdfOverlayStyleInjected || typeof document === "undefined") return
+  pdfOverlayStyleInjected = true
+  const style = document.createElement("style")
+  style.textContent = `
+    .rv-pdf-text-layer span::selection {
+      background: rgba(59, 130, 246, 0.45);
+      color: transparent;
+    }
+    .rv-pdf-text-layer span::-moz-selection {
+      background: rgba(59, 130, 246, 0.45);
+      color: transparent;
+    }
+  `
+  document.head.appendChild(style)
+}
+
 export function PdfPageRenderer({
   pdfUrl,
   pageImageUrl,
   pageNumber = 1,
   searchQuery,
   pageKey,
+  wordGeometry,
   onPdfFailed,
   onRenderComplete,
   onNextPage,
@@ -315,7 +345,13 @@ export function PdfPageRenderer({
   const [fitMode, setFitMode] = useState<"width" | "manual">("width")
   const [loadError, setLoadError] = useState(false)
   const [rendering, setRendering] = useState(true)
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number } | null>(null)
   const { panMode, setPanMode, panHandlers } = usePanMode(containerRef)
+
+  // Inject selection style once for the Textract overlay
+  useEffect(() => {
+    if (wordGeometry?.length) injectPdfOverlayStyle()
+  }, [wordGeometry])
 
   const scale = ZOOM_STEPS[zoomIdx]
 
@@ -338,7 +374,19 @@ export function PdfPageRenderer({
     setZoomIdx(DEFAULT_ZOOM_IDX)
     setLoadError(false)
     setRendering(true)
+    setCanvasSize(null)
   }, [pageKey])
+
+  // Precompute which words match the search query (for gold highlighting)
+  const matchSet = useMemo<Set<number>>(() => {
+    if (!searchQuery?.trim() || !wordGeometry?.length) return new Set()
+    const q = searchQuery.toLowerCase()
+    const matches = new Set<number>()
+    wordGeometry.forEach((w, i) => {
+      if (w.text.toLowerCase().includes(q)) matches.add(i)
+    })
+    return matches
+  }, [wordGeometry, searchQuery])
 
   const handleZoomIn = useCallback(() => {
     setFitMode("manual")
@@ -365,16 +413,18 @@ export function PdfPageRenderer({
   function onPageRenderSuccess() {
     setRendering(false)
 
-    // Detect blank canvas — JBIG2/CCITTFax pages that PDF.js can't decode
-    // render as all-white. Sample multiple patches across the canvas.
     requestAnimationFrame(() => {
       if (containerRef.current) {
         const canvas = containerRef.current.querySelector("canvas")
         if (canvas) {
+          // Capture canvas dimensions for the Textract word geometry overlay
+          setCanvasSize({ w: canvas.clientWidth, h: canvas.clientHeight })
+
           try {
             const ctx = canvas.getContext("2d")
             if (ctx) {
-              // Sample 3 regions: top-left, center, bottom-right
+              // Detect blank canvas — JBIG2/CCITTFax pages that PDF.js can't decode
+              // render as all-white. Sample 3 patches across the canvas.
               const patches = [
                 { x: 0, y: 0 },
                 { x: Math.max(0, Math.floor(canvas.width / 2) - 100), y: Math.max(0, Math.floor(canvas.height / 2) - 100) },
@@ -386,23 +436,24 @@ export function PdfPageRenderer({
                 const h = Math.min(200, canvas.height - patch.y)
                 if (w <= 0 || h <= 0) continue
                 const { data } = ctx.getImageData(patch.x, patch.y, w, h)
-                for (let i = 0; i < data.length; i += 16) { // sample every 4th pixel for speed
+                for (let i = 0; i < data.length; i += 16) {
                   if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) totalNonWhite++
                 }
               }
               if (totalNonWhite < 20) {
-                onPdfFailed?.() // Tell parent to fetch a page image
+                onPdfFailed?.()
                 setLoadError(true)
                 return
               }
             }
           } catch {
-            // Canvas read failed (e.g. tainted canvas) — leave as-is
+            // Canvas read failed (tainted canvas) — leave as-is
           }
         }
 
-        // Canvas has content — apply search highlights
-        if (searchQuery) {
+        // Canvas has content — apply search highlights to PDF.js text layer
+        // (only used when no Textract wordGeometry is available)
+        if (searchQuery && !wordGeometry?.length) {
           highlightTextLayer(containerRef.current, searchQuery)
         }
       }
@@ -509,7 +560,7 @@ export function PdfPageRenderer({
       {/* PDF rendering area */}
       <div
         ref={containerRef}
-        className="flex-1 min-h-0 overflow-auto bg-neutral-800 flex justify-center"
+        className="flex-1 min-h-0 overflow-auto bg-neutral-800 flex justify-center items-start"
         style={{ cursor: panMode ? "grab" : undefined }}
         {...panHandlers}
       >
@@ -518,24 +569,81 @@ export function PdfPageRenderer({
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         )}
-        <Document
-          file={pdfUrl}
-          loading={null}
-          error={null}
-          onLoadError={onDocLoadError}
-          options={pdfOptions}
-        >
-          <Page
-            pageNumber={pageNumber}
-            width={fitMode === "width" ? containerWidth - 24 : undefined}
-            scale={fitMode === "manual" ? scale : undefined}
-            renderTextLayer={true}
-            renderAnnotationLayer={false}
-            onRenderSuccess={onPageRenderSuccess}
-            onRenderError={onPageRenderError}
-            loading={null}
-          />
-        </Document>
+
+        {/* Wrapper: position:relative so the Textract overlay can be absolute within it */}
+        <div className="py-3" style={{ display: "inline-block" }}>
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <Document
+              file={pdfUrl}
+              loading={null}
+              error={null}
+              onLoadError={onDocLoadError}
+              options={pdfOptions}
+            >
+              <Page
+                pageNumber={pageNumber}
+                width={fitMode === "width" ? containerWidth - 24 : undefined}
+                scale={fitMode === "manual" ? scale : undefined}
+                renderTextLayer={!wordGeometry?.length}
+                renderAnnotationLayer={false}
+                onRenderSuccess={onPageRenderSuccess}
+                onRenderError={onPageRenderError}
+                loading={null}
+              />
+            </Document>
+
+            {/* Textract word geometry overlay — same technique as PageTextOverlay.
+                Transparent spans positioned by normalized bounding boxes.
+                Gold highlight on search matches. Native text selection. */}
+            {canvasSize && wordGeometry && wordGeometry.length > 0 && (
+              <div
+                className="rv-pdf-text-layer"
+                aria-hidden={false}
+                style={{
+                  position:         "absolute",
+                  top:              0,
+                  left:             0,
+                  width:            canvasSize.w,
+                  height:           canvasSize.h,
+                  pointerEvents:    "none",
+                  userSelect:       "text",
+                  WebkitUserSelect: "text",
+                }}
+              >
+                {wordGeometry.map((word, i) => {
+                  const { left, top, width, height } = word.geometry
+                  const px = left   * canvasSize.w
+                  const py = top    * canvasSize.h
+                  const pw = width  * canvasSize.w
+                  const ph = height * canvasSize.h
+                  const isMatch = matchSet.has(i)
+                  return (
+                    <span
+                      key={i}
+                      style={{
+                        position:     "absolute",
+                        left:         `${px}px`,
+                        top:          `${py}px`,
+                        width:        `${pw}px`,
+                        height:       `${ph}px`,
+                        fontSize:     `${ph * 0.82}px`,
+                        lineHeight:   "1",
+                        whiteSpace:   "nowrap",
+                        overflow:     "hidden",
+                        color:        "transparent",
+                        background:   isMatch ? "rgba(212,160,23,0.38)" : "transparent",
+                        borderRadius: isMatch ? "2px" : "0",
+                        cursor:       "text",
+                      }}
+                    >
+                      {word.text}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

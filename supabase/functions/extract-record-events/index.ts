@@ -125,6 +125,18 @@ function sanitizeDate(s: string | null | undefined): string | null {
     const iso = `${mdyMatch[3]}-${mdyMatch[1].padStart(2,"0")}-${mdyMatch[2].padStart(2,"0")}`;
     if (!isNaN(new Date(iso).getTime())) return iso;
   }
+  // Try DD.MM.YYYY (European format, e.g. Swiss logbooks)
+  const dmyDotMatch = clean.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (dmyDotMatch) {
+    const iso = `${dmyDotMatch[3]}-${dmyDotMatch[2].padStart(2,"0")}-${dmyDotMatch[1].padStart(2,"0")}`;
+    if (!isNaN(new Date(iso).getTime())) return iso;
+  }
+  // Try DD/MM/YYYY (European with slashes — only when day > 12 to avoid MM/DD ambiguity)
+  const dmySlashMatch = clean.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmySlashMatch && parseInt(dmySlashMatch[1]) > 12) {
+    const iso = `${dmySlashMatch[3]}-${dmySlashMatch[2].padStart(2,"0")}-${dmySlashMatch[1].padStart(2,"0")}`;
+    if (!isNaN(new Date(iso).getTime())) return iso;
+  }
   // Try DD-Mon-YYYY (e.g. 14-Aug-2023)
   const dmyMatch = clean.match(/^(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{4})$/);
   if (dmyMatch) {
@@ -198,6 +210,66 @@ function matchFormField(key: string): string | null {
 }
 
 /**
+ * Batch-generate concise descriptions for forms pages that had no mapped
+ * English description field (e.g. Swiss/French/German EASA logbooks).
+ * Calls Claude Haiku once with all pages in a single prompt.
+ * Returns one description string per input forms array.
+ */
+async function generateFallbackDescriptions(formsArray: FormField[][]): Promise<string[]> {
+  if (formsArray.length === 0) return [];
+
+  // Strip structural fields and contact noise; keep only meaningful content
+  const SKIP_KEY = /\b(fax|tel|phone|email|web|www|p\.?o\.?\s*box|vat|tax|zip|city)\b/i;
+  const summarized = formsArray.map((forms) =>
+    forms
+      .filter((f) => {
+        if (!f.value.trim() || f.value === "☑" || f.value === "☐") return false;
+        if (f.valueConfidence < 40) return false;
+        const mapped = matchFormField(f.key);
+        if (mapped && mapped !== "description") return false;
+        if (SKIP_KEY.test(f.key)) return false;
+        return true;
+      })
+      .slice(0, 12)
+      .map((f) => ({ k: f.key.replace(/:$/, "").trim(), v: f.value.trim() }))
+  );
+
+  const prompt = `For each numbered set of aviation maintenance form fields, write a single concise English sentence (≤12 words) describing the maintenance performed. Return a JSON array of strings with one sentence per set — no markdown, no extra text.
+
+${summarized.map((fields, i) => `Set ${i + 1}:\n${JSON.stringify(fields)}`).join("\n\n")}`;
+
+  try {
+    const resp = await fetch(ANTHROPIC_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 512,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error(`Anthropic error ${resp.status}`);
+    const result = await resp.json();
+    const text: string = result.content?.[0]?.text ?? "";
+    const cleaned = text.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+    const parsed = JSON.parse(cleaned) as string[];
+    if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {
+      return parsed.map((s) => s.slice(0, 200));
+    }
+  } catch (err) {
+    console.warn("[extract-record-events] Fallback description generation failed:", err);
+  }
+
+  // Hard fallback: return "Maintenance record" for each
+  return formsArray.map(() => "Maintenance record");
+}
+
+/**
  * Infer event type from available form fields and description text.
  */
 function inferEventTypeFromForm(
@@ -255,7 +327,9 @@ function extractFromForms(
   const hasHours       = !!raw["aircraft_total_time"]?.length;
   if (!hasDescription && !hasDate && !hasHours) return null;
 
-  const description     = (raw["description"]      ?? []).join(" ").slice(0, 1000) || "Maintenance record";
+  // Use "__FALLBACK__" sentinel when there's no mapped description field.
+  // The caller will batch these through Claude Haiku to generate real descriptions.
+  const description     = (raw["description"]      ?? []).join(" ").slice(0, 1000) || "__FALLBACK__";
   const eventDateRaw    = (raw["event_date"]        ?? [])[0] ?? null;
   const totalTimeRaw    = (raw["aircraft_total_time"] ?? [])[0] ?? null;
   const cyclesRaw       = (raw["aircraft_cycles"]   ?? [])[0] ?? null;
@@ -684,9 +758,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const allRows: EventRow[] = [];
 
     // ── 5. PATH A: Forms extraction ───────────────────────────────────────
+    // Build a map of pageId → forms so we can look up form data for batch
+    // description generation after the synchronous extraction loop.
+    const pageFormsMap = new Map<string, FormField[]>();
     for (const page of formsPages) {
+      if (page.forms_extracted) pageFormsMap.set(page.id, page.forms_extracted);
       const row = extractFromForms(page, aircraft_id, record_source_id);
       if (row) allRows.push(row);
+    }
+
+    // Any forms-path rows with "__FALLBACK__" description need Claude descriptions.
+    // Collect them and their original form fields, then call Claude in one batch.
+    const fallbackRows = allRows.filter(
+      (r) => r.description === "__FALLBACK__" && r.extraction_model === "textract-forms"
+    );
+    if (fallbackRows.length > 0) {
+      const fallbackForms = fallbackRows.map((r) => pageFormsMap.get(r.page_ids[0]) ?? []);
+      const descriptions = await generateFallbackDescriptions(fallbackForms);
+      fallbackRows.forEach((row, i) => {
+        row.description = descriptions[i] || "Maintenance record";
+      });
     }
 
     // ── 6. PATH B: Tables extraction ──────────────────────────────────────
