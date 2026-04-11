@@ -22,9 +22,9 @@
 //     { JobId, Status, API, Timestamp, DocumentLocation: { S3ObjectName, S3Bucket } }
 //
 // Environment variables required:
-//   AWS_REGION                — e.g. "us-east-1"
-//   AWS_ACCESS_KEY_ID         — IAM credentials
-//   AWS_SECRET_ACCESS_KEY     — IAM credentials
+//   TEXTRACT_REGION           — e.g. "us-east-2" (AWS_REGION is reserved by Netlify)
+//   TEXTRACT_KEY_ID           — IAM access key ID (AWS_ACCESS_KEY_ID is reserved by Netlify)
+//   TEXTRACT_SECRET_KEY       — IAM secret access key
 //   SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE (or SUPABASE_SERVICE_ROLE_KEY)
 
@@ -508,9 +508,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   // ── 5. Set up Supabase client ─────────────────────────────────────────────
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const awsRegion   = process.env.AWS_REGION ?? "us-east-1";
+  const awsRegion   = process.env.TEXTRACT_REGION ?? "us-east-2";
+  const awsKeyId    = process.env.TEXTRACT_KEY_ID;
+  const awsSecret   = process.env.TEXTRACT_SECRET_KEY;
 
-  if (!supabaseUrl || !serviceRole) {
+  if (!supabaseUrl || !serviceRole || !awsKeyId || !awsSecret) {
     return { statusCode: 500, body: "Server configuration error" };
   }
 
@@ -555,7 +557,10 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   // ── 8. Fetch all Textract blocks (paginated) ──────────────────────────────
-  const textract = new TextractClient({ region: awsRegion });
+  const textract = new TextractClient({
+    region: awsRegion,
+    credentials: { accessKeyId: awsKeyId, secretAccessKey: awsSecret },
+  });
 
   await log("textract_fetching", `Fetching Textract results for job ${jobId}`);
 
