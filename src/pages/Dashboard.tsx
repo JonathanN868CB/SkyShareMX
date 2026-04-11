@@ -30,6 +30,7 @@ const coreValues = [
 ]
 
 const bulletinItems = [
+  { date: "Apr 10", text: "Work Orders: Customer Approval Portal is live — send quotes and change orders for per-item sign-off via a secure, no-login link with drawn signature and signed PDF." },
   { date: "Apr 8", text: "Aircraft profiles now support photos — upload, crop, and rate any aircraft. Each photo credits the photographer. Profile pictures upgraded across the portal." },
   { date: "Apr 7", text: "Work Orders: Tool Calibration module, work order sign-off flow, and Records Vault OCR search are live." },
   { date: "Apr 4", text: "Records Vault (aircraft records intelligence layer) and Work Orders (full MRO suite) are now in active development." },
