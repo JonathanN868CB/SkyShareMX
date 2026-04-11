@@ -18,7 +18,7 @@
 // complete the handshake.
 //
 // Environment variables required:
-//   AWS_REGION                — e.g. "us-east-1"
+//   TEXTRACT_REGION           — e.g. "us-east-2" (AWS_REGION is reserved by Netlify)
 //   AWS_ACCESS_KEY_ID         — IAM user or role credentials
 //   AWS_SECRET_ACCESS_KEY     — IAM user or role credentials
 //   TEXTRACT_S3_BUCKET        — S3 bucket name (e.g. "records-vault-skysharemx")
@@ -230,7 +230,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   // ── 5. Set up clients ─────────────────────────────────────────────────────
   const supabaseUrl  = process.env.SUPABASE_URL;
   const serviceRole  = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const awsRegion    = process.env.AWS_REGION ?? "us-east-1";
+  const awsRegion    = process.env.TEXTRACT_REGION ?? "us-east-2";
   const s3Bucket     = process.env.TEXTRACT_S3_BUCKET;
   const snsTopicArn  = process.env.TEXTRACT_SNS_TOPIC_ARN;
   const roleArn      = process.env.TEXTRACT_ROLE_ARN;

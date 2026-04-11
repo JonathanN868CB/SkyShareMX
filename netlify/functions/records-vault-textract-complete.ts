@@ -22,7 +22,7 @@
 //     { JobId, Status, API, Timestamp, DocumentLocation: { S3ObjectName, S3Bucket } }
 //
 // Environment variables required:
-//   AWS_REGION                — e.g. "us-east-1"
+//   TEXTRACT_REGION           — e.g. "us-east-2" (AWS_REGION is reserved by Netlify)
 //   AWS_ACCESS_KEY_ID         — IAM credentials
 //   AWS_SECRET_ACCESS_KEY     — IAM credentials
 //   SUPABASE_URL
@@ -508,7 +508,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   // ── 5. Set up Supabase client ─────────────────────────────────────────────
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const awsRegion   = process.env.AWS_REGION ?? "us-east-1";
+  const awsRegion   = process.env.TEXTRACT_REGION ?? "us-east-2";
 
   if (!supabaseUrl || !serviceRole) {
     return { statusCode: 500, body: "Server configuration error" };
