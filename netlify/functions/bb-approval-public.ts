@@ -54,16 +54,36 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   if (error || !reqRow) return jsonResponse(404, { error: "Approval not found" });
 
-  // Strip server-only fields (woItemId) from the snapshot before returning
+  // Fetch photo attachment IDs for each item so the portal can load them
+  // via bb-wo-attachment-public-url without needing a session.
+  const rawItems = (reqRow.snapshot_payload as any)?.items ?? [];
+  const woItemIds = (rawItems as any[]).map((it: any) => it.woItemId).filter(Boolean) as string[];
+  let photosByItemId: Record<string, string[]> = {};
+  if (woItemIds.length > 0) {
+    const { data: photos } = await admin
+      .from("bb_wo_item_attachments")
+      .select("id, wo_item_id")
+      .in("wo_item_id", woItemIds)
+      .eq("kind", "photo");
+    for (const p of photos ?? []) {
+      const arr = photosByItemId[p.wo_item_id as string] ?? [];
+      arr.push(p.id as string);
+      photosByItemId[p.wo_item_id as string] = arr;
+    }
+  }
+
+  // Strip server-only fields (woItemId) from the snapshot before returning.
+  // Attach photo attachment IDs so the portal can render them via the
+  // bb-wo-attachment-public-url endpoint.
+  const buildSafeItems = (items: any[]) =>
+    items.map((it: any) => {
+      const { woItemId: _hidden, ...rest } = it ?? {};
+      return { ...rest, attachmentIds: photosByItemId[it.woItemId ?? ""] ?? [] };
+    });
+
   const snapshotSafe = (() => {
     const s = (reqRow.snapshot_payload ?? {}) as any;
-    const items = Array.isArray(s.items)
-      ? s.items.map((it: any) => {
-          const { woItemId: _hidden, ...rest } = it ?? {};
-          return rest;
-        })
-      : [];
-    return { ...s, items };
+    return { ...s, items: buildSafeItems(Array.isArray(s.items) ? s.items : []) };
   })();
 
   // Expiry check
@@ -97,11 +117,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     });
   }
 
-  // Fresh, sendable state
+  // Fresh, sendable state — use snapshotSafe so woItemId is never leaked
   return jsonResponse(200, {
     state:     "ready",
     kind:      reqRow.kind,
-    snapshot:  reqRow.snapshot_payload,
+    snapshot:  snapshotSafe,
     total:     Number(reqRow.snapshot_total ?? 0),
     recipient: { name: reqRow.recipient_name, email: reqRow.recipient_email },
     sentAt:    reqRow.sent_at,

@@ -286,6 +286,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const pdfItems: ApprovalPdfItem[] = pdfItemsWithId.map(({ woItemId: _woItemId, ...rest }) => rest);
   const total = pdfItemsWithId.reduce((acc, it) => acc + it.lineTotal, 0);
 
+  // Revoke any existing open (sent/expired) requests for this WO so the old
+  // link can no longer be submitted. This prevents a stale link from racing
+  // a re-send.
+  await admin
+    .from("bb_approval_requests")
+    .update({ status: "revoked" })
+    .eq("work_order_id", workOrderId)
+    .in("status", ["sent", "expired"]);
+
   // Insert approval request row (token auto-generated)
   const { data: reqRow, error: reqErr } = await admin
     .from("bb_approval_requests")
@@ -389,9 +398,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   });
 
   const resend = new Resend(resendApiKey);
+  const senderEmail = callerProfile.email as string | undefined;
   const { error: emailErr } = await resend.emails.send({
-    from: `SkyShare MX <${fromEmail}>`,
-    to:   [recipientEmail],
+    from:    `SkyShare MX <${fromEmail}>`,
+    to:      [recipientEmail],
+    ...(senderEmail ? { bcc: [senderEmail] } : {}),
     subject,
     html,
     text,

@@ -16,12 +16,10 @@ import type { AircraftDocLink } from "./useMmAuditData"
 const C = "#a78bfa"
 const rgba = (a: number) => `rgba(167,139,250,${a})`
 
-const ASSEMBLY_TYPES = ["airframe", "engine", "apu", "avionics", "propeller", "other"]
+const ASSEMBLY_TYPES = ["airframe", "engine", "apu", "propeller"]
 const REQUIREMENT_TYPES = [
   { value: "sched_mx", label: "Sched Mx" },
   { value: "awl", label: "AWL" },
-  { value: "ad", label: "AD" },
-  { value: "other", label: "Other" },
 ]
 
 interface Props {
@@ -522,36 +520,45 @@ function AircraftDocRow({
 
   if (editing) {
     return (
-      <tr style={{ borderBottom: `1px solid ${rgba(0.05)}`, background: rgba(0.04) }}>
-        <td className={cellStyle} style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{link.registration}</td>
-        <td className={cellStyle}>
-          <select value={form.assembly_type} onChange={e => setForm(f => ({ ...f, assembly_type: e.target.value }))} style={selectStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
-            {ASSEMBLY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </td>
-        <td className={cellStyle}>
-          <select value={form.requirement_type} onChange={e => setForm(f => ({ ...f, requirement_type: e.target.value }))} style={selectStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
-            {REQUIREMENT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </td>
-        <td className={cellStyle}>
-          <input value={form.section} onChange={e => setForm(f => ({ ...f, section: e.target.value }))} style={inputStyle} placeholder="e.g. Chapter 05" />
-        </td>
-        <td className={cellStyle}>
-          <input value={form.assembly_detail} onChange={e => setForm(f => ({ ...f, assembly_detail: e.target.value }))} style={inputStyle} placeholder="e.g. PW545A" />
-        </td>
-        <td className={cellStyle}>—</td>
-        <td className={cellStyle}>
-          <div className="flex items-center gap-1">
-            <button onClick={handleSave} disabled={upsertMut.isPending} className="p-1 rounded transition-opacity hover:opacity-80 disabled:opacity-40" style={{ color: "#10b981" }}>
-              {upsertMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-            </button>
-            <button onClick={() => setEditing(false)} className="p-1 rounded transition-opacity hover:opacity-80" style={{ color: "rgba(255,255,255,0.4)" }}>
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        </td>
-      </tr>
+      <>
+        <tr style={{ borderBottom: `1px solid ${rgba(0.05)}`, background: rgba(0.04) }}>
+          <td className={cellStyle} style={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{link.registration}</td>
+          <td className={cellStyle}>
+            <select value={form.assembly_type} onChange={e => setForm(f => ({ ...f, assembly_type: e.target.value }))} style={selectStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
+              {ASSEMBLY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </td>
+          <td className={cellStyle}>
+            <select value={form.requirement_type} onChange={e => setForm(f => ({ ...f, requirement_type: e.target.value }))} style={selectStyle} className="[&>option]:bg-[#1e1e2e] [&>option]:text-white">
+              {REQUIREMENT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </td>
+          <td className={cellStyle}>
+            <input value={form.section} onChange={e => setForm(f => ({ ...f, section: e.target.value }))} style={inputStyle} placeholder="e.g. Chapter 05" />
+          </td>
+          <td className={cellStyle}>
+            <input value={form.assembly_detail} onChange={e => setForm(f => ({ ...f, assembly_detail: e.target.value }))} style={inputStyle} placeholder="e.g. PW545A" />
+          </td>
+          <td className={cellStyle}>—</td>
+          <td className={cellStyle}>
+            <div className="flex items-center gap-1">
+              <button onClick={handleSave} disabled={upsertMut.isPending} className="p-1 rounded transition-opacity hover:opacity-80 disabled:opacity-40" style={{ color: "#10b981" }}>
+                {upsertMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              </button>
+              <button onClick={() => setEditing(false)} className="p-1 rounded transition-opacity hover:opacity-80" style={{ color: "rgba(255,255,255,0.4)" }}>
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </td>
+        </tr>
+        {upsertMut.isError && (
+          <tr style={{ background: "rgba(248,113,113,0.08)", borderBottom: `1px solid ${rgba(0.05)}` }}>
+            <td colSpan={7} className={cellStyle} style={{ color: "#f87171", fontSize: "11px" }}>
+              Save failed: {upsertMut.error?.message || "Unknown error"}
+            </td>
+          </tr>
+        )}
+      </>
     )
   }
 

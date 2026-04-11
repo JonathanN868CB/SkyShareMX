@@ -7,7 +7,7 @@ import {
   CheckCircle2, Circle, AlertCircle, Scissors, Eye,
   BookOpen, ShoppingCart, FileText, Receipt, Search, Warehouse, Download, ChevronsDown,
   ShieldCheck, Wrench, ChevronDown, Pencil, ArrowLeftRight,
-  Library, Zap, BookText, Mail,
+  Library, Zap, BookText, Mail, GitBranch, Trash2,
 } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
@@ -20,9 +20,10 @@ import {
   addItemPart, removeItemPart, issuePartFromInventory, clockLabor, deleteLabor,
   getParts, getTechnicians, getMyProfileId, getMyProfile, searchPartsLimited,
   getLogbookEntries, getOrCreateDraftLogbookEntry, createComponentInstallEntry, upsertEntrySignatory, addSignatoryLine, removeItemLogbookLines, updateLogbookEntry,
-  addAuditEntry, deleteWorkOrder,
+  addAuditEntry, deleteWorkOrder, deleteWOItem,
   upsertFlatRate, upsertCorrectiveAction,
   updateQuoteStatus, convertQuoteToWorkOrder,
+  findDiscrepancy,
 } from "../../services"
 import { autoGenerateInvoice } from "../../services/automation"
 import { WO_STATUS_LABELS, INVOICE_STATUS_LABELS, QUOTE_STATUS_LABELS } from "../../constants"
@@ -35,11 +36,15 @@ import type {
 import { TimesEditModal } from "./TimesEditModal"
 import { SendForApprovalModal } from "./SendForApprovalModal"
 import { ApprovalStatusStrip } from "./ApprovalStatusStrip"
+import { FoundDiscrepancyModal } from "./FoundDiscrepancyModal"
+import { CreateChangeOrderModal } from "./CreateChangeOrderModal"
+import { ChangeOrdersPanel } from "./ChangeOrdersPanel"
 import { PartsRequestForm } from "@/features/parts/components/PartsRequestForm"
 import { STATUS_CONFIG, LINE_STATUS_CONFIG } from "@/features/parts/constants"
 import { supabase } from "@/lib/supabase"
 import { WOStatusBadge, QuoteStatusBadge } from "../../shared/StatusBadge"
 import { useAuth } from "@/features/auth"
+import { useBeetBoxTabs } from "../../BeetBoxTabsContext"
 
 // ─── Status pipeline ──────────────────────────────────────────────────────────
 const NEXT_STATUS: Partial<Record<WOStatus, WOStatus>> = {
@@ -259,6 +264,7 @@ const AUDIT_ENTRY_STYLE: Record<string, { dot: string; icon: React.ElementType; 
   item_status_change:{ dot: "#c084fc", icon: Circle,       iconColor: "#c084fc" },
   text_edit:        { dot: "#6b7280", icon: FileText,      iconColor: "#6b7280" },
   item_created:     { dot: "#93c5fd", icon: Plus,          iconColor: "#93c5fd" },
+  item_deleted:     { dot: "#f87171", icon: X,             iconColor: "#f87171" },
   wo_created:       { dot: "#d4a017", icon: FileText,      iconColor: "#d4a017" },
 }
 
@@ -525,12 +531,15 @@ interface ItemDetailPanelProps {
   newPart: { partNumber: string; description: string; qty: string; unitPrice: string }
   setNewPart: React.Dispatch<React.SetStateAction<{ partNumber: string; description: string; qty: string; unitPrice: string }>>
   onAddPart: () => void
-  onAddFromInventory: (inv: InventoryPart) => void
+  onAddFromInventory: (inv: InventoryPart, qty: number) => void
   addingLaborToItem: string | null
   setAddingLaborToItem: (id: string | null) => void
   newLabor: { mechName: string; hours: string; date: string }
   setNewLabor: React.Dispatch<React.SetStateAction<{ mechName: string; hours: string; date: string }>>
   onAddLabor: () => void
+  onFoundDiscrepancy?: () => void
+  onChangeOrders?: () => void
+  onDeleteItem?: () => void
 }
 
 function ItemDetailPanel({
@@ -538,7 +547,7 @@ function ItemDetailPanel({
   mechanics, inventoryParts, onNavigatePO, onShowPartsOverview, allItems, itemPartsOnOrder,
   pullPartNumber, onPullHandled,
   addingPartToItem, setAddingPartToItem, newPart, setNewPart, onAddPart, onAddFromInventory,
-  addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor,
+  addingLaborToItem, setAddingLaborToItem, newLabor, setNewLabor, onAddLabor, onFoundDiscrepancy, onChangeOrders, onDeleteItem,
 }: ItemDetailPanelProps) {
   const discRef = useRef<HTMLTextAreaElement>(null)
   const corrRef = useRef<HTMLTextAreaElement>(null)
@@ -558,6 +567,9 @@ function ItemDetailPanel({
   const [libSaving, setLibSaving] = useState(false)
   const [libSaved, setLibSaved] = useState(false)
   const [libSaveError, setLibSaveError] = useState<string | null>(null)
+  const [invQtyMap, setInvQtyMap] = useState<Record<string, string>>({})
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [deleting,      setDeleting]      = useState(false)
 
   // ── P/N cross-check: inventory parts mentioned in corrective action but not logged ──
   const unloggedMentionedParts = useMemo(() => {
@@ -593,10 +605,12 @@ function ItemDetailPanel({
   }, [invSearch, showInventoryPicker])
 
   function addFromInventory(inv: InventoryPart) {
-    onAddFromInventory(inv)
+    const qty = Math.max(1, parseInt(invQtyMap[inv.id] ?? "1", 10) || 1)
+    onAddFromInventory(inv, qty)
     setShowInventoryPicker(false)
     setInvSearch("")
     setInvResults([])
+    setInvQtyMap({})
   }
 
   const itemStatus    = item.itemStatus ?? "pending"
@@ -676,6 +690,23 @@ function ItemDetailPanel({
             </>
           )
         })()}
+
+        {/* ── Change Orders ── */}
+        {onChangeOrders && (
+          <>
+            <div className="w-px h-5 mx-1 self-center" style={{ background: "hsl(0,0%,26%)" }} />
+            <button
+              type="button"
+              onClick={onChangeOrders}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-all"
+              style={{ background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.25)", color: "rgba(251,191,36,0.75)" }}
+              title="Create a change order from pending discrepancies"
+            >
+              <GitBranch className="w-3.5 h-3.5" />
+              Change Orders
+            </button>
+          </>
+        )}
 
         {/* ── Sign-off — right side ── */}
         {item.signOffRequired && (
@@ -878,6 +909,44 @@ function ItemDetailPanel({
                   P/N {item.partNumber}{item.serialNumber ? ` · S/N ${item.serialNumber}` : ""}
                 </span>
               )}
+              {/* ── Delete discrepancy (Manager+, double-confirm) ── */}
+              {onDeleteItem && !deleting && (
+                deleteConfirm ? (
+                  <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                    <span className="text-[10px] text-red-300/80 uppercase tracking-wider font-semibold">Permanently delete this item?</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setDeleting(true)
+                        await onDeleteItem()
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider transition-all"
+                      style={{ background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.5)", color: "#fca5a5" }}
+                    >
+                      Yes, Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirm(false)}
+                      className="text-[10px] text-white/35 hover:text-white/60 transition-colors px-1"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirm(true)}
+                    className="ml-auto flex-shrink-0 p-1.5 rounded transition-all hover:bg-red-900/30 text-white/20 hover:text-red-400"
+                    title="Delete this discrepancy item (Manager+)"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )
+              )}
+              {deleting && (
+                <Loader2 className="ml-auto w-3.5 h-3.5 text-red-400/60 animate-spin flex-shrink-0" />
+              )}
             </div>
             {!isLocked && (
               <div className="flex items-center border-b border-white/[0.07]">
@@ -913,6 +982,18 @@ function ItemDetailPanel({
                   />
                 </div>
                 <Toolbar textareaRef={discRef} onUpdate={v => onPatch({ discrepancy: v })} noBorder />
+                {onFoundDiscrepancy && (
+                  <button
+                    type="button"
+                    onClick={onFoundDiscrepancy}
+                    className="ml-auto mr-3 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-all flex-shrink-0"
+                    style={{ background: "rgba(193,2,48,0.08)", border: "1px solid rgba(193,2,48,0.3)", color: "#ff6b81" }}
+                    title="Record a discrepancy found on this inspection item"
+                  >
+                    <Wrench className="w-3.5 h-3.5" />
+                    Found Discrepancy
+                  </button>
+                )}
               </div>
             )}
             <textarea
@@ -1301,13 +1382,28 @@ function ItemDetailPanel({
                       {alreadyAdded ? (
                         <span className="text-emerald-400/60 text-xs flex-shrink-0 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Added</span>
                       ) : (
-                        <button
-                          onClick={() => addFromInventory(inv)}
-                          className="flex-shrink-0 text-xs font-bold px-4 py-2 rounded-lg transition-all hover:scale-[1.03]"
-                          style={{ background: "rgba(212,160,23,0.2)", color: "rgba(212,160,23,0.95)", border: "1px solid rgba(212,160,23,0.35)" }}
-                        >
-                          + Add
-                        </button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <div className="flex items-center gap-1">
+                            <label className="text-white/30 text-[10px] uppercase tracking-wider">Qty</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max={inv.qtyOnHand > 0 ? inv.qtyOnHand : undefined}
+                              value={invQtyMap[inv.id] ?? "1"}
+                              onClick={e => e.stopPropagation()}
+                              onChange={e => setInvQtyMap(m => ({ ...m, [inv.id]: e.target.value }))}
+                              className="w-14 bg-transparent text-white text-xs text-center focus:outline-none rounded px-1 py-1"
+                              style={{ border: "1px solid rgba(212,160,23,0.3)" }}
+                            />
+                          </div>
+                          <button
+                            onClick={() => addFromInventory(inv)}
+                            className="text-xs font-bold px-4 py-2 rounded-lg transition-all hover:scale-[1.03]"
+                            style={{ background: "rgba(212,160,23,0.2)", color: "rgba(212,160,23,0.95)", border: "1px solid rgba(212,160,23,0.35)" }}
+                          >
+                            + Add
+                          </button>
+                        </div>
                       )}
                     </div>
                   )
@@ -1762,6 +1858,7 @@ export default function WorkOrderDetail() {
   const location = useLocation()
   const { profile } = useAuth()
   const isSuperAdmin = profile?.role === "Super Admin"
+  const { setHeaderLabel } = useBeetBoxTabs()
 
   // Handle Traxxall import: build a synthetic WO from navigate state
   const importState = location.state as {
@@ -1822,6 +1919,10 @@ export default function WorkOrderDetail() {
   const [showConvertModal, setShowConvertModal]         = useState(false)
   const [showSendApprovalModal, setShowSendApprovalModal] = useState(false)
   const [approvalRefreshKey, setApprovalRefreshKey]       = useState(0)
+  const [resendPrefill, setResendPrefill]                 = useState<{ name: string; email: string } | null>(null)
+  const [discrepancyForItem, setDiscrepancyForItem]       = useState<WOItem | null>(null)
+  const [showCreateCOModal,  setShowCreateCOModal]        = useState(false)
+  const [coRefreshKey,       setCoRefreshKey]             = useState(0)
   const [converting, setConverting]                     = useState(false)
   const [deletingDraft, setDeletingDraft]               = useState(false)
   const [timesEditOpen, setTimesEditOpen]               = useState(false)
@@ -1871,6 +1972,58 @@ export default function WorkOrderDetail() {
   const [partsRequestsKey, setPartsRequestsKey] = useState(0)
   const [pullPartNumber, setPullPartNumber] = useState<string | null>(null)
   const [partsOverviewOpen, setPartsOverviewOpen] = useState(false)
+
+  // ── Approved change-order items for invoice preview ──────────────────────
+  type CoInvoiceItem = {
+    id: string; itemNumber: number; discrepancy: string; correctiveAction: string
+    estimatedHours: number; laborRate: number
+    shippingCost: number; outsideServicesCost: number
+    parts: { qty: number; unitPrice: number }[]
+  }
+  const [coSections, setCoSections] = useState<Array<{ coId: string; coNumber: string; items: CoInvoiceItem[] }>>([])
+
+  useEffect(() => {
+    if (!wo || wo.woType !== "work_order") { setCoSections([]); return }
+    let cancelled = false
+    async function loadCOInvoiceItems() {
+      const { data: childCOs } = await supabase
+        .from("bb_work_orders")
+        .select("id, wo_number")
+        .eq("parent_wo_id", wo!.id)
+        .eq("wo_type", "change_order")
+        .eq("quote_status", "approved")
+      if (cancelled || !childCOs?.length) { setCoSections([]); return }
+
+      const sections: Array<{ coId: string; coNumber: string; items: CoInvoiceItem[] }> = []
+      for (const co of childCOs) {
+        const { data: coItems } = await supabase
+          .from("bb_work_order_items")
+          .select("id, item_number, discrepancy, corrective_action, estimated_hours, labor_rate, shipping_cost, outside_services_cost, bb_work_order_item_parts(qty, unit_price)")
+          .eq("work_order_id", co.id)
+          .eq("customer_approval_status", "approved")
+          .order("item_number")
+        if (!coItems?.length) continue
+        sections.push({
+          coId: co.id,
+          coNumber: co.wo_number as string,
+          items: coItems.map((r: any) => ({
+            id: r.id,
+            itemNumber: r.item_number,
+            discrepancy: r.discrepancy ?? "",
+            correctiveAction: r.corrective_action ?? "",
+            estimatedHours: Number(r.estimated_hours ?? 0),
+            laborRate: Number(r.labor_rate ?? 0),
+            shippingCost: Number(r.shipping_cost ?? 0),
+            outsideServicesCost: Number(r.outside_services_cost ?? 0),
+            parts: (r.bb_work_order_item_parts ?? []).map((p: any) => ({ qty: Number(p.qty ?? 0), unitPrice: Number(p.unit_price ?? 0) })),
+          })),
+        })
+      }
+      if (!cancelled) setCoSections(sections)
+    }
+    void loadCOInvoiceItems()
+    return () => { cancelled = true }
+  }, [wo?.id, wo?.woType])
 
   async function handlePreviewPdf(type: "logbook" | "invoice", woNumber: string) {
     if (type === "logbook" && !logbookPrintRef.current) return
@@ -2001,6 +2154,13 @@ export default function WorkOrderDetail() {
       .catch(() => {})
     getMyProfile().then(p => { if (p) setMyProfile({ id: p.id, name: p.name }) }).catch(() => {})
   }, [loadWO, loadDraftLogbookEntries])
+
+  // Push WO# into the top tab bar
+  useEffect(() => {
+    if (!wo?.woNumber || wo.woNumber === "WO-IMPORT") return
+    const prefix = wo.woType === "quote" ? "Quote" : wo.woType === "change_order" ? "CO" : "WO#"
+    setHeaderLabel(`${prefix} ${wo.woNumber}`)
+  }, [wo?.woNumber, wo?.woType, setHeaderLabel])
 
   // Fetch parts requests linked to this WO by WO number
   useEffect(() => {
@@ -2207,7 +2367,9 @@ export default function WorkOrderDetail() {
   const aircraft      = wo.aircraft
   const isLocked      = wo.woType === "quote"
     ? wo.quoteStatus === "converted" || wo.quoteStatus === "declined" || wo.quoteStatus === "expired"
-    : wo.status === "completed" || wo.status === "void"
+    : wo.woType === "change_order"
+      ? wo.quoteStatus === "approved" || wo.quoteStatus === "declined"
+      : wo.status === "completed" || wo.status === "void"
 
   const totalLabor    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0)
   const totalParts    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0)
@@ -2314,6 +2476,27 @@ export default function WorkOrderDetail() {
     } catch (err) {
       console.error("Failed to save item fields:", err)
     }
+  }
+
+  async function handleDeleteItem(item: WOItem) {
+    await deleteWOItem(item.id)
+    auditLog({
+      entryType:  "item_deleted",
+      summary:    `Discrepancy item #${item.itemNumber} deleted (${item.discrepancyType ?? "unknown"})`,
+      detail:     item.discrepancy || item.category,
+      itemId:     item.id,
+      itemNumber: item.itemNumber,
+    })
+    setWO(prev => {
+      if (!prev) return prev
+      const remaining = prev.items.filter(i => i.id !== item.id)
+      return { ...prev, items: remaining }
+    })
+    setSelectedItemId(prev => {
+      if (prev !== item.id) return prev
+      const remaining = wo?.items.filter(i => i.id !== item.id) ?? []
+      return remaining[0]?.id ?? null
+    })
   }
 
   async function removeLaborEntry(itemId: string, laborId: string) {
@@ -2512,13 +2695,13 @@ export default function WorkOrderDetail() {
     })
   }
 
-  async function addPartFromInventory(itemId: string, inv: InventoryPart) {
+  async function addPartFromInventory(itemId: string, inv: InventoryPart, qty: number = 1) {
     if (!wo) return
     try {
       const saved = await issuePartFromInventory(
         itemId,
         { id: inv.id, partNumber: inv.partNumber, description: inv.description, unitCost: inv.unitCost, catalogId: inv.catalogId, condition: inv.condition },
-        1,
+        qty,
         wo.woNumber,
         { id: myProfile?.id ?? "", name: myProfile?.name ?? "Unknown" }
       )
@@ -2762,23 +2945,22 @@ export default function WorkOrderDetail() {
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
-            <div className="flex flex-col items-center gap-1">
-              <span
-                className="text-white text-xl font-bold tracking-wide leading-none"
-                style={{ fontFamily: "var(--font-display)" }}
-              >
-                <span className="text-white/40 font-normal text-base mr-1.5">
-                  {wo.woType === "quote" ? "Quote" : "WO#"}
-                </span>
-                {wo.woNumber}
-              </span>
-              {wo.woType === "quote" && wo.quoteStatus && (
-                <QuoteStatusBadge status={wo.quoteStatus} className="mt-0.5" />
+            <div className="flex flex-col gap-1 min-w-0">
+              {(wo.woType === "quote" || wo.woType === "change_order") && wo.quoteStatus && (
+                <QuoteStatusBadge status={wo.quoteStatus} className="self-start" />
+              )}
+              {wo.woType === "change_order" && wo.parentWoId && (
+                <button
+                  onClick={() => navigate(`/app/beet-box/work-orders/${wo.parentWoId}`)}
+                  className="text-[10px] text-amber-300/70 hover:text-amber-300 underline underline-offset-2 text-left"
+                >
+                  ↩ Back to parent WO
+                </button>
               )}
               {wo.woType === "quote" && wo.convertedToWoId && (
                 <button
                   onClick={() => navigate(`/app/beet-box/work-orders/${wo.convertedToWoId}`)}
-                  className="mt-1 text-[10px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
+                  className="text-[10px] text-purple-300 hover:text-purple-200 underline underline-offset-2 text-left"
                 >
                   Converted → open WO
                 </button>
@@ -2786,7 +2968,7 @@ export default function WorkOrderDetail() {
               {wo.woType === "work_order" && wo.sourceQuoteId && (
                 <button
                   onClick={() => navigate(`/app/beet-box/work-orders/${wo.sourceQuoteId}`)}
-                  className="mt-1 text-[10px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
+                  className="text-[10px] text-purple-300 hover:text-purple-200 underline underline-offset-2 text-left"
                 >
                   From quote ↗
                 </button>
@@ -2794,7 +2976,7 @@ export default function WorkOrderDetail() {
               {editingDesc ? (
                 <input
                   autoFocus
-                  className="bg-transparent text-white/60 text-xs text-center border-b border-white/20 outline-none px-1 py-0.5 w-64"
+                  className="bg-transparent text-white/60 text-xs border-b border-white/20 outline-none px-1 py-0.5 w-full"
                   placeholder="e.g. Scheduled maintenance, 14-day check…"
                   value={woDesc}
                   onChange={e => setWoDesc(e.target.value)}
@@ -2809,10 +2991,10 @@ export default function WorkOrderDetail() {
               ) : (
                 <button
                   onClick={() => setEditingDesc(true)}
-                  className="text-white/40 text-xs hover:text-white/60 transition-colors flex items-center gap-1 max-w-[280px]"
+                  className="text-white/40 text-xs hover:text-white/60 transition-colors flex items-start gap-1 text-left group"
                 >
-                  <span className="truncate">{woDesc || "Add description…"}</span>
-                  <Pencil className="w-2.5 h-2.5 flex-shrink-0 opacity-0 group-hover:opacity-100" />
+                  <span className="whitespace-normal break-words">{woDesc || "Add description…"}</span>
+                  <Pencil className="w-2.5 h-2.5 flex-shrink-0 mt-0.5 opacity-0 group-hover:opacity-100" />
                 </button>
               )}
             </div>
@@ -2834,18 +3016,17 @@ export default function WorkOrderDetail() {
               }
 
               // Pick the right pipeline based on record type
-              const isQuoteMode = wo.woType === "quote"
+              const isQuoteMode   = wo.woType === "quote"
+              const isCoMode      = wo.woType === "change_order"
+              const isApprovalDoc = isQuoteMode || isCoMode
               const currentQuoteStatus: QuoteStatus = wo.quoteStatus ?? "draft"
 
-              const c       = isQuoteMode
-                ? QUOTE_STATUS_CONFIG[currentQuoteStatus]
-                : SC[wo.status]
-              const currentLabel = isQuoteMode
-                ? QUOTE_STATUS_LABELS[currentQuoteStatus]
-                : WO_STATUS_LABELS[wo.status]
+              const c            = isApprovalDoc ? QUOTE_STATUS_CONFIG[currentQuoteStatus] : SC[wo.status]
+              const currentLabel = isApprovalDoc ? QUOTE_STATUS_LABELS[currentQuoteStatus] : WO_STATUS_LABELS[wo.status]
 
-              const prevKey = isQuoteMode ? QUOTE_PREV_STATUS[currentQuoteStatus] : PREV_STATUS[wo.status]
-              const nextKey = isQuoteMode ? QUOTE_NEXT_STATUS[currentQuoteStatus] : NEXT_STATUS[wo.status]
+              // COs have no manual status transitions — they move via the approval portal
+              const prevKey = isCoMode ? undefined : isQuoteMode ? QUOTE_PREV_STATUS[currentQuoteStatus] : PREV_STATUS[wo.status]
+              const nextKey = isCoMode ? undefined : isQuoteMode ? QUOTE_NEXT_STATUS[currentQuoteStatus] : NEXT_STATUS[wo.status]
 
               const hasPrev = !!prevKey && (!isLocked || isSuperAdmin)
               const hasNext = !!nextKey
@@ -2889,35 +3070,35 @@ export default function WorkOrderDetail() {
                     disabled={!hasPrev || isTransitioning}
                     className="flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:brightness-125 active:brightness-90"
                     style={{
-                      width: "92px",
-                      height: "40px",
+                      width: "70px",
+                      height: "31px",
                       background: cp ? cp.bg : "rgba(255,255,255,0.02)",
                       borderTop:    `2px solid ${cp ? cp.border : dimBorder}`,
                       borderBottom: `2px solid ${cp ? cp.border : dimBorder}`,
                       borderLeft:   `2px solid ${cp ? cp.border : dimBorder}`,
                       borderRight:  "none",
-                      borderTopLeftRadius: "10px",
-                      borderBottomLeftRadius: "10px",
+                      borderTopLeftRadius: "8px",
+                      borderBottomLeftRadius: "8px",
                       opacity: hasPrev ? 1 : 0.28,
                     }}
                     title={hasPrev ? `Back to ${prevLabel}` : undefined}
                   >
-                    <ChevronLeft className="w-5 h-5" style={{ color: cp ? cp.text : "rgba(255,255,255,0.25)" }} />
-                    <span className="text-[9px] font-medium uppercase tracking-wider leading-none" style={{ color: cp ? cp.text : "rgba(255,255,255,0.18)" }}>
+                    <ChevronLeft className="w-4 h-4" style={{ color: cp ? cp.text : "rgba(255,255,255,0.25)" }} />
+                    <span className="text-[8px] font-medium uppercase tracking-wider leading-none" style={{ color: cp ? cp.text : "rgba(255,255,255,0.18)" }}>
                       {prevLabel}
                     </span>
                   </button>
 
                   {/* ● Current status — full rounded rect, taller, z-index raises it over side caps */}
                   <div
-                    className="flex items-center gap-3 px-7 hover:brightness-110 relative"
+                    className="flex items-center gap-2 px-5 hover:brightness-110 relative"
                     style={{
-                      width: "180px",
-                      height: "56px",
+                      width: "139px",
+                      height: "43px",
                       background: c.bg,
                       border: `2px solid ${c.border}`,
-                      borderRadius: "10px",
-                      boxShadow: `inset 0 0 28px ${c.glow}, 0 0 14px ${c.glow}`,
+                      borderRadius: "8px",
+                      boxShadow: `inset 0 0 22px ${c.glow}, 0 0 11px ${c.glow}`,
                       zIndex: 1,
                       marginLeft: "-2px",
                       marginRight: "-2px",
@@ -2931,11 +3112,11 @@ export default function WorkOrderDetail() {
                   >
                     <span
                       className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                      style={{ background: c.text, boxShadow: `0 0 8px ${c.text}, 0 0 16px ${c.glow}` }}
+                      style={{ background: c.text, boxShadow: `0 0 6px ${c.text}, 0 0 11px ${c.glow}` }}
                     />
                     <div className="flex flex-col">
-                      <span className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-50" style={{ color: c.text }}>Status</span>
-                      <span className="text-sm font-bold uppercase tracking-widest leading-tight" style={{ color: c.text, fontFamily: "var(--font-heading)" }}>
+                      <span className="text-[8px] font-bold uppercase tracking-[0.2em] opacity-50" style={{ color: c.text }}>Status</span>
+                      <span className="text-xs font-bold uppercase tracking-widest leading-tight" style={{ color: c.text, fontFamily: "var(--font-heading)" }}>
                         {currentLabel}
                       </span>
                     </div>
@@ -2947,21 +3128,21 @@ export default function WorkOrderDetail() {
                     disabled={!hasNext || isTransitioning}
                     className="flex flex-col items-center justify-center gap-0.5 transition-all duration-150 hover:brightness-125 active:brightness-90"
                     style={{
-                      width: "92px",
-                      height: "40px",
+                      width: "70px",
+                      height: "31px",
                       background: cn2 ? cn2.bg : "rgba(255,255,255,0.02)",
                       borderTop:    `2px solid ${cn2 ? cn2.border : dimBorder}`,
                       borderBottom: `2px solid ${cn2 ? cn2.border : dimBorder}`,
                       borderRight:  `2px solid ${cn2 ? cn2.border : dimBorder}`,
                       borderLeft:   "none",
-                      borderTopRightRadius: "10px",
-                      borderBottomRightRadius: "10px",
+                      borderTopRightRadius: "8px",
+                      borderBottomRightRadius: "8px",
                       opacity: hasNext && !isTransitioning ? 1 : 0.28,
                     }}
                     title={nextTitle}
                   >
-                    <ChevronRight className="w-5 h-5" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.25)" }} />
-                    <span className="text-[9px] font-medium uppercase tracking-wider leading-none" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.18)" }}>
+                    <ChevronRight className="w-4 h-4" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.25)" }} />
+                    <span className="text-[8px] font-medium uppercase tracking-wider leading-none" style={{ color: cn2 ? cn2.text : "rgba(255,255,255,0.18)" }}>
                       {nextLabel}
                     </span>
                   </button>
@@ -2980,6 +3161,19 @@ export default function WorkOrderDetail() {
               >
                 Purchase Orders
               </Button>
+            )}
+
+            {/* Send CO for Approval — CO mode */}
+            {wo.woType === "change_order" && (wo.quoteStatus === "draft" || wo.quoteStatus === "expired") && wo.items.length > 0 && (
+              <button
+                onClick={() => setShowSendApprovalModal(true)}
+                className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-semibold transition-all flex-shrink-0"
+                style={{ background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", color: "#fbbf24" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(251,191,36,0.22)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "rgba(251,191,36,0.12)")}
+              >
+                <Mail className="w-3.5 h-3.5" /> Send for Approval
+              </button>
             )}
 
             {/* Convert quote → work order */}
@@ -3059,10 +3253,10 @@ export default function WorkOrderDetail() {
               {[
                 { id: "items"       as const, label: "Work Items",                                      icon: FileText    },
                 { id: "notes"       as const, label: "Notes",                                           icon: StickyNote  },
-                ...(wo.woType === "quote"
+                ...(wo.woType === "quote" || wo.woType === "change_order"
                   ? []
                   : [{ id: "logbook" as const, label: "Logbook", icon: BookOpen }]),
-                { id: "invoice"     as const, label: wo.woType === "quote" ? "Quote" : "Invoice",       icon: Receipt     },
+                { id: "invoice" as const, label: wo.woType === "quote" ? "Quote" : wo.woType === "change_order" ? "Change Order" : "Invoice", icon: Receipt },
                 { id: "audit_trail" as const, label: "Audit Trail",                                     icon: ShieldCheck },
               ].map(tab => {
                 const Icon = tab.icon
@@ -3094,12 +3288,20 @@ export default function WorkOrderDetail() {
       </div>
 
       {/* ── APPROVAL STATUS STRIP (quote/CO after send) ─────────────────────── */}
-      {wo.woType === "quote" && wo.quoteStatus && ["sent","approved","declined","converted"].includes(wo.quoteStatus) && (
-        <ApprovalStatusStrip workOrderId={wo.id} refreshKey={approvalRefreshKey} />
+      {((wo.woType === "quote" && wo.quoteStatus && ["sent","approved","declined","converted"].includes(wo.quoteStatus)) ||
+        (wo.woType === "change_order" && wo.quoteStatus && ["sent","approved","declined"].includes(wo.quoteStatus))) && (
+        <ApprovalStatusStrip
+          workOrderId={wo.id}
+          refreshKey={approvalRefreshKey}
+          onResend={(name, email) => {
+            setResendPrefill({ name, email })
+            setShowSendApprovalModal(true)
+          }}
+        />
       )}
 
-      {/* ── QUOTE TOTALS STRIP ──────────────────────────────────────────────── */}
-      {wo.woType === "quote" && (() => {
+      {/* ── QUOTE / CO TOTALS STRIP ─────────────────────────────────────────── */}
+      {(wo.woType === "quote" || wo.woType === "change_order") && (() => {
         const estLabor = wo.items.reduce(
           (s, i) => s + (i.estimatedHours ?? 0) * (i.laborRate ?? 0),
           0,
@@ -3460,6 +3662,22 @@ export default function WorkOrderDetail() {
                             {wo.woType === "quote" && item.customerApprovalStatus === "declined" && (
                               <X className="w-3.5 h-3.5 text-red-400 flex-shrink-0" aria-label="Customer declined" />
                             )}
+                            {item.discrepancyType === "airworthy" && (
+                              <span
+                                className="flex-shrink-0 text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded"
+                                style={{ background: "rgba(193,2,48,0.15)", color: "#ff6b81" }}
+                              >
+                                AW
+                              </span>
+                            )}
+                            {item.discrepancyType === "recommendation" && (
+                              <span
+                                className="flex-shrink-0 text-[8px] font-bold uppercase tracking-widest px-1 py-0.5 rounded"
+                                style={{ background: "rgba(212,160,23,0.15)", color: "#d4a017" }}
+                              >
+                                REC
+                              </span>
+                            )}
                             {!isLocked && (
                               <button
                                 onClick={e => {
@@ -3520,50 +3738,75 @@ export default function WorkOrderDetail() {
                   ))}
                 </div>
               )}
+              {/* ── Change Orders (WO mode only) ── */}
+              {wo.woType === "work_order" && (
+                <ChangeOrdersPanel parentWoId={wo.id} refreshKey={coRefreshKey} />
+              )}
+
               </div>{/* end scrollable sections */}
             </div>{/* end left rail */}
 
             {/* Right panel: item detail / add form / empty state */}
             <div className="flex-1 min-w-0 overflow-y-auto pt-3">
               {selectedItem && !addingToSection ? (
-                <ItemDetailPanel
-                  item={selectedItem}
-                  isLocked={isLocked}
-                  isQuote={wo.woType === "quote"}
-                  sectionColor={SECTION_COLORS[selectedItem.logbookSection]}
-                  aircraftModel={[aircraft?.make, aircraft?.modelFull].filter(Boolean).join(" ")}
-                  mechanicName={myProfile?.name ?? ""}
-                  onPatch={patch => patchItem(selectedItem.id, patch)}
-                  onPersist={fields => persistItemFields(selectedItem.id, fields)}
-                  onSignOff={opts => toggleSignOff(selectedItem.id, opts)}
-                  signOffError={signOffError}
-                  onClearSignOffError={() => setSignOffError(null)}
-                  onDeleteLabor={id => removeLaborEntry(selectedItem.id, id)}
-                  onDeletePart={id => removePartEntry(selectedItem.id, id)}
-                  mechanics={mechanics}
-                  inventoryParts={inventoryParts}
-                  onNavigatePO={() => { setOrderPartsForItem({ id: selectedItem.id, itemNumber: selectedItem.itemNumber }); setOrderPartsOpen(true) }}
-                  onShowPartsOverview={() => setPartsOverviewOpen(true)}
-                  allItems={wo.items}
-                  itemPartsOnOrder={partsRequests.flatMap(req =>
-                    req.lines
-                      .filter(l => l.woItemId === selectedItem.id)
-                      .map(l => ({ requestId: req.id, status: req.status, partNumber: l.partNumber, description: l.description, quantity: l.quantity, lineStatus: l.lineStatus }))
-                  )}
-                  pullPartNumber={pullPartNumber ?? undefined}
-                  onPullHandled={() => setPullPartNumber(null)}
-                  addingPartToItem={addingPartToItem}
-                  setAddingPartToItem={setAddingPartToItem}
-                  newPart={newPart}
-                  setNewPart={setNewPart}
-                  onAddPart={() => addPart(selectedItem.id)}
-                  onAddFromInventory={(inv) => addPartFromInventory(selectedItem.id, inv)}
-                  addingLaborToItem={addingLaborToItem}
-                  setAddingLaborToItem={setAddingLaborToItem}
-                  newLabor={newLabor}
-                  setNewLabor={setNewLabor}
-                  onAddLabor={() => addLaborEntry(selectedItem.id)}
-                />
+                <>
+                  <ItemDetailPanel
+                    item={selectedItem}
+                    isLocked={isLocked}
+                    isQuote={wo.woType !== "work_order"}
+                    sectionColor={SECTION_COLORS[selectedItem.logbookSection]}
+                    aircraftModel={[aircraft?.make, aircraft?.modelFull].filter(Boolean).join(" ")}
+                    mechanicName={myProfile?.name ?? ""}
+                    onPatch={patch => patchItem(selectedItem.id, patch)}
+                    onPersist={fields => persistItemFields(selectedItem.id, fields)}
+                    onSignOff={opts => toggleSignOff(selectedItem.id, opts)}
+                    signOffError={signOffError}
+                    onClearSignOffError={() => setSignOffError(null)}
+                    onDeleteLabor={id => removeLaborEntry(selectedItem.id, id)}
+                    onDeletePart={id => removePartEntry(selectedItem.id, id)}
+                    mechanics={mechanics}
+                    inventoryParts={inventoryParts}
+                    onNavigatePO={() => { setOrderPartsForItem({ id: selectedItem.id, itemNumber: selectedItem.itemNumber }); setOrderPartsOpen(true) }}
+                    onShowPartsOverview={() => setPartsOverviewOpen(true)}
+                    allItems={wo.items}
+                    itemPartsOnOrder={partsRequests.flatMap(req =>
+                      req.lines
+                        .filter(l => l.woItemId === selectedItem.id)
+                        .map(l => ({ requestId: req.id, status: req.status, partNumber: l.partNumber, description: l.description, quantity: l.quantity, lineStatus: l.lineStatus }))
+                    )}
+                    pullPartNumber={pullPartNumber ?? undefined}
+                    onPullHandled={() => setPullPartNumber(null)}
+                    addingPartToItem={addingPartToItem}
+                    setAddingPartToItem={setAddingPartToItem}
+                    newPart={newPart}
+                    setNewPart={setNewPart}
+                    onAddPart={() => addPart(selectedItem.id)}
+                    onAddFromInventory={(inv, qty) => addPartFromInventory(selectedItem.id, inv, qty)}
+                    addingLaborToItem={addingLaborToItem}
+                    setAddingLaborToItem={setAddingLaborToItem}
+                    newLabor={newLabor}
+                    setNewLabor={setNewLabor}
+                    onAddLabor={() => addLaborEntry(selectedItem.id)}
+                    onFoundDiscrepancy={
+                      wo.woType === "work_order" && !selectedItem.parentItemId && profile?.role !== "Viewer"
+                        ? () => setDiscrepancyForItem(selectedItem)
+                        : undefined
+                    }
+                    onChangeOrders={
+                      wo.woType === "work_order" && wo.items.some(i => i.parentItemId && i.customerApprovalStatus === "pending")
+                        ? () => setShowCreateCOModal(true)
+                        : undefined
+                    }
+                    onDeleteItem={
+                      wo.woType === "work_order" &&
+                      selectedItem.parentItemId &&
+                      !isLocked &&
+                      (profile?.role === "Manager" || profile?.role === "Admin" || profile?.role === "Super Admin")
+                        ? () => handleDeleteItem(selectedItem)
+                        : undefined
+                    }
+                  />
+                </>
               ) : addingToSection ? (
                 /* ── Add item form ── */
                 <div className="p-8 max-w-2xl">
@@ -4020,10 +4263,18 @@ export default function WorkOrderDetail() {
 
         {/* ── INVOICE TAB ────────────────────────────────────────────────────── */}
         {activeTab === "invoice" && (() => {
-          const laborTotal    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0)
-          const partsTotal    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0)
-          const shippingTotal = wo.items.reduce((s, i) => s + i.shippingCost, 0)
-          const outsideTotal  = wo.items.reduce((s, i) => s + i.outsideServicesCost, 0)
+          // CO helpers — mirrors itemLaborTotal/itemPartsTotal for CoInvoiceItem
+          const coItemLaborTotal   = (ci: { estimatedHours: number; laborRate: number }) => ci.estimatedHours * ci.laborRate
+          const coItemPartsTotal   = (ci: { parts: { qty: number; unitPrice: number }[] }) => ci.parts.reduce((s, p) => s + p.qty * p.unitPrice, 0)
+          const coLabor    = coSections.flatMap(s => s.items).reduce((s, i) => s + coItemLaborTotal(i), 0)
+          const coParts    = coSections.flatMap(s => s.items).reduce((s, i) => s + coItemPartsTotal(i), 0)
+          const coShipping = coSections.flatMap(s => s.items).reduce((s, i) => s + i.shippingCost, 0)
+          const coOutside  = coSections.flatMap(s => s.items).reduce((s, i) => s + i.outsideServicesCost, 0)
+
+          const laborTotal    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0) + coLabor
+          const partsTotal    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0) + coParts
+          const shippingTotal = wo.items.reduce((s, i) => s + i.shippingCost, 0) + coShipping
+          const outsideTotal  = wo.items.reduce((s, i) => s + i.outsideServicesCost, 0) + coOutside
           const shopSupplies  = Math.round(laborTotal * SHOP_SUPPLIES_RATE * 100) / 100
           const taxOnLabor    = Math.round(laborTotal * 0.0725 * 100) / 100
           const taxOnSupplies = Math.round(shopSupplies * 0.0725 * 100) / 100
@@ -4182,6 +4433,55 @@ export default function WorkOrderDetail() {
                         </div>
                       )
                     })}
+
+                    {/* ── Approved Change Order sections ── */}
+                    {coSections.map(section => (
+                      <div key={section.coId}>
+                        {/* CO divider header */}
+                        <div style={{ background: "#1a1a1a", color: "#fff", textAlign: "center", padding: "4px 8px", fontWeight: 700, fontSize: "11px", letterSpacing: "0.08em", marginTop: "14px" }}>
+                          CHANGE ORDER: {section.coNumber}
+                        </div>
+                        {section.items.map(ci => {
+                          const labor = coItemLaborTotal(ci)
+                          const parts = coItemPartsTotal(ci)
+                          const sub   = labor + parts + ci.shippingCost + ci.outsideServicesCost
+                          return (
+                            <div key={ci.id} style={{ marginTop: "10px" }}>
+                              <div style={{ background: "#e0e0e0", textAlign: "center", padding: "3px 8px", fontWeight: 700, borderTop: "1px solid #bbb", borderBottom: "1px solid #bbb" }}>
+                                Item: {ci.itemNumber} ({section.coNumber})
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", marginTop: "4px" }}>
+                                <div style={{ flex: 1 }}>
+                                  <p style={{ fontWeight: 700 }}>Discrepancy</p>
+                                  <p>{ci.discrepancy || "—"}</p>
+                                </div>
+                                <div style={{ textAlign: "right", minWidth: "110px" }}>
+                                  <div style={{ display: "flex", gap: "20px", justifyContent: "flex-end", fontWeight: 700 }}>
+                                    <span>Hours</span><span>Subtotal</span>
+                                  </div>
+                                  <div style={{ display: "flex", gap: "20px", justifyContent: "flex-end" }}>
+                                    <span>{ci.estimatedHours.toFixed(2)}</span>
+                                    <span>{$f(labor)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={{ marginTop: "4px" }}>
+                                <p style={{ fontWeight: 700 }}>Corrective Action</p>
+                                <p style={{ lineHeight: "1.5" }}>{ci.correctiveAction || "—"}</p>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "16px", background: "#f0f0f0", padding: "3px 8px", marginTop: "6px", borderTop: "1px solid #ccc", borderBottom: "1px solid #ccc", flexWrap: "wrap" }}>
+                                <span style={{ fontWeight: 700 }}>Item Summary</span>
+                                <span>Labor:&nbsp; {$f(labor)}</span>
+                                <span>Parts:&nbsp; {$f(parts)}</span>
+                                {ci.shippingCost > 0 && <span>Shipping:&nbsp; {$f(ci.shippingCost)}</span>}
+                                {ci.outsideServicesCost > 0 && <span>Outside Svcs:&nbsp; {$f(ci.outsideServicesCost)}</span>}
+                                <span style={{ marginLeft: "auto", fontWeight: 700 }}>Item Subtotal:&nbsp; {$f(sub)}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))}
                   </div>
 
                   {/* ═══ PAGE 2 (visual separator) ═══ */}
@@ -4495,15 +4795,69 @@ export default function WorkOrderDetail() {
       {/* ── SEND FOR APPROVAL MODAL ──────────────────────────────────────────── */}
       {wo && (wo.woType === "quote" || wo.woType === "change_order") && (
         <SendForApprovalModal
+          key={`send-approval-${resendPrefill?.email ?? "fresh"}`}
           open={showSendApprovalModal}
-          onClose={() => setShowSendApprovalModal(false)}
+          onClose={() => { setShowSendApprovalModal(false); setResendPrefill(null) }}
           onSent={() => {
             setApprovalRefreshKey(k => k + 1)
+            setResendPrefill(null)
             loadWO()
           }}
           workOrderId={wo.id}
           workOrderNumber={wo.woNumber}
           kind={wo.woType === "change_order" ? "change_order" : "quote"}
+          defaultRecipientName={resendPrefill?.name}
+          defaultRecipientEmail={resendPrefill?.email}
+        />
+      )}
+
+      {/* ── FOUND DISCREPANCY MODAL ─────────────────────────────────────────── */}
+      {wo && discrepancyForItem && (
+        <FoundDiscrepancyModal
+          open={true}
+          onClose={() => setDiscrepancyForItem(null)}
+          parentItem={discrepancyForItem}
+          laborRate={discrepancyForItem.laborRate ?? 125}
+          onSubmit={async ({ discrepancyType, discrepancy, correctiveAction, estimatedHours, partNumber }) => {
+            const saved = await findDiscrepancy({
+              workOrderId:      wo.id,
+              parentItemId:     discrepancyForItem.id,
+              logbookSection:   discrepancyForItem.logbookSection,
+              discrepancyType,
+              discrepancy,
+              correctiveAction,
+              estimatedHours,
+              laborRate:        discrepancyForItem.laborRate ?? 125,
+              partNumber:       partNumber || undefined,
+              itemNumber:       wo.items.length + 1,
+              reportedById:     myProfile?.id ?? null,
+            })
+            setWO(prev => prev ? { ...prev, items: [...prev.items, saved] } : prev)
+            setSelectedItemId(saved.id)
+            setDiscrepancyForItem(null)
+            auditLog({
+              entryType:  "item_created",
+              summary:    `Discrepancy recorded on item #${discrepancyForItem.itemNumber} (${discrepancyType})`,
+              detail:     discrepancy,
+              itemId:     saved.id,
+              itemNumber: saved.itemNumber,
+            })
+          }}
+        />
+      )}
+
+      {/* ── CREATE CHANGE ORDER MODAL ───────────────────────────────────────── */}
+      {wo && showCreateCOModal && myProfile && (
+        <CreateChangeOrderModal
+          open={true}
+          onClose={() => setShowCreateCOModal(false)}
+          parentWoId={wo.id}
+          pendingItems={wo.items.filter(i => i.parentItemId && i.customerApprovalStatus === "pending")}
+          createdByProfileId={myProfile.id}
+          onCreated={(coId) => {
+            setShowCreateCOModal(false)
+            navigate(`/app/beet-box/work-orders/${coId}`)
+          }}
         />
       )}
 

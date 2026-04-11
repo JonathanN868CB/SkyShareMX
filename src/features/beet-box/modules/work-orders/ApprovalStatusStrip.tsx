@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import {
-  CheckCircle2, XCircle, Clock, Download, Loader2, Mail, AlertTriangle,
+  CheckCircle2, XCircle, Clock, Download, Loader2, Mail, AlertTriangle, RotateCcw,
 } from "lucide-react"
 import {
   getLatestApprovalForWorkOrder,
@@ -12,6 +12,8 @@ interface Props {
   workOrderId: string
   /** Bumped by parent when a new approval is sent so the strip reloads. */
   refreshKey?: number
+  /** Called when the user clicks Resend — parent opens the send modal pre-filled. */
+  onResend?: (recipientName: string, recipientEmail: string) => void
 }
 
 function formatDate(iso: string | null): string {
@@ -24,7 +26,7 @@ function formatDate(iso: string | null): string {
   } catch { return iso }
 }
 
-export function ApprovalStatusStrip({ workOrderId, refreshKey = 0 }: Props) {
+export function ApprovalStatusStrip({ workOrderId, refreshKey = 0, onResend }: Props) {
   const [bundle,  setBundle]  = useState<ApprovalBundle | null>(null)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
@@ -171,6 +173,23 @@ export function ApprovalStatusStrip({ workOrderId, refreshKey = 0 }: Props) {
         <div className="flex-1" />
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Resend — only when not yet submitted */}
+          {onResend && request.status !== "submitted" && request.status !== "revoked" && (
+            <button
+              type="button"
+              onClick={() => onResend(request.recipientName, request.recipientEmail)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] uppercase tracking-[0.15em] font-semibold transition-all"
+              style={{
+                background: "rgba(251,191,36,0.08)",
+                border:     "1px solid rgba(251,191,36,0.28)",
+                color:      "rgba(251,191,36,0.85)",
+              }}
+            >
+              <RotateCcw className="w-3 h-3" />
+              Resend
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => openPdf("unsigned")}

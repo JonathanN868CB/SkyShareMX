@@ -1014,6 +1014,7 @@ export function useUpsertAircraftDocument() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["mm_aircraft_doc_links"] })
+      qc.invalidateQueries({ queryKey: ["mm_aircraft_library_docs"] })
       qc.invalidateQueries({ queryKey: ["mm_fleet_overview"] })
       qc.invalidateQueries({ queryKey: ["mm_workspace"] })
     },
@@ -1029,9 +1030,63 @@ export function useDeleteAircraftDocument() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["mm_aircraft_doc_links"] })
+      qc.invalidateQueries({ queryKey: ["mm_aircraft_library_docs"] })
       qc.invalidateQueries({ queryKey: ["mm_fleet_overview"] })
       qc.invalidateQueries({ queryKey: ["mm_workspace"] })
     },
+  })
+}
+
+// ─── Per-aircraft library docs (for aircraft info documentation card) ────────
+
+export interface AircraftLibraryDoc {
+  id: string
+  source_document_id: string
+  assembly_type: string
+  requirement_type: string
+  section: string | null
+  assembly_detail: string | null
+  document_number: string
+  document_name: string
+  document_url: string | null
+  current_revision: string
+  current_rev_date: string | null
+}
+
+export function useAircraftLibraryDocs(aircraftId: string | undefined) {
+  return useQuery<AircraftLibraryDoc[]>({
+    queryKey: ["mm_aircraft_library_docs", aircraftId],
+    enabled: !!aircraftId,
+    queryFn: async () => {
+      const { data, error } = await db
+        .from("mm_aircraft_documents")
+        .select(`
+          id, source_document_id, assembly_type, requirement_type,
+          section, assembly_detail,
+          source_document:mm_source_documents(
+            id, document_number, document_name, document_url,
+            current_revision, current_rev_date
+          )
+        `)
+        .eq("aircraft_id", aircraftId!)
+        .eq("is_applicable", true)
+        .order("assembly_type")
+      if (error) throw error
+      return (data ?? []).map((row: any) => ({
+        id: row.id,
+        source_document_id: row.source_document_id,
+        assembly_type: row.assembly_type,
+        requirement_type: row.requirement_type,
+        section: row.section,
+        assembly_detail: row.assembly_detail,
+        document_number: row.source_document.document_number,
+        document_name: row.source_document.document_name,
+        document_url: row.source_document.document_url,
+        current_revision: row.source_document.current_revision,
+        current_rev_date: row.source_document.current_rev_date,
+      }))
+    },
+    staleTime: 30_000,
   })
 }
 

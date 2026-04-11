@@ -71,6 +71,65 @@ export async function autoGenerateInvoice(
     }
   }
 
+  // Also include approved items from any child change orders
+  const { data: childCOs } = await supabase
+    .from("bb_work_orders")
+    .select("id, wo_number")
+    .eq("parent_wo_id", wo.id)
+    .eq("wo_type", "change_order")
+    .eq("quote_status", "approved")
+
+  for (const co of childCOs ?? []) {
+    const { data: coItems } = await supabase
+      .from("bb_work_order_items")
+      .select("*, bb_work_order_item_parts(*), bb_work_order_item_labor(*)")
+      .eq("work_order_id", co.id)
+      .eq("customer_approval_status", "approved")
+      .order("item_number")
+
+    for (const item of coItems ?? []) {
+      const totalHours = ((item as any).bb_work_order_item_labor ?? []).reduce(
+        (s: number, l: any) => s + Number(l.hours ?? 0), 0
+      )
+      if (totalHours > 0) {
+        lines.push({
+          description: `[${co.wo_number}] Labor: Item #${(item as any).item_number} — ${String((item as any).discrepancy ?? (item as any).category ?? "").slice(0, 80)}`,
+          type: "labor",
+          qty: totalHours,
+          unitPrice: Number((item as any).labor_rate ?? 0),
+          taxable: false,
+        })
+      }
+      if (Number((item as any).outside_services_cost) > 0) {
+        lines.push({
+          description: `[${co.wo_number}] Outside Services: Item #${(item as any).item_number}`,
+          type: "outside_labor",
+          qty: 1,
+          unitPrice: Number((item as any).outside_services_cost),
+          taxable: false,
+        })
+      }
+      for (const part of ((item as any).bb_work_order_item_parts ?? []) as any[]) {
+        lines.push({
+          description: `[${co.wo_number}] Part: ${part.part_number ?? "—"} — ${String(part.description ?? "").slice(0, 60)}`,
+          type: "part",
+          qty: Number(part.qty),
+          unitPrice: Number(part.unit_price),
+          taxable: true,
+        })
+      }
+      if (Number((item as any).shipping_cost) > 0) {
+        lines.push({
+          description: `[${co.wo_number}] Shipping: Item #${(item as any).item_number}`,
+          type: "misc",
+          qty: 1,
+          unitPrice: Number((item as any).shipping_cost),
+          taxable: false,
+        })
+      }
+    }
+  }
+
   // Use dynamic import to avoid circular dependency
   const { createInvoice } = await import("./invoices")
 
