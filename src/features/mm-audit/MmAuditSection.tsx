@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card"
 import { useAuth } from "@/features/auth"
 import { useMmFleetOverview, useMmCampaigns, useCreateCampaign, useBackdateCampaign, useSourceDocuments } from "./useMmAuditData"
 import MmCampaignCard from "./MmCampaignCard"
+import MmCampaignHistory from "./MmCampaignHistory"
 import MmProfileGroup from "./MmProfileGroup"
 import MmAuditWorkspace from "./MmAuditWorkspace"
 import MmRevisionAlerts from "./MmRevisionAlerts"
@@ -34,6 +35,7 @@ export default function MmAuditSection() {
   const [showNewCampaign, setShowNewCampaign] = useState(false)
   const [showBackdate, setShowBackdate] = useState(false)
   const [showSourceDocs, setShowSourceDocs] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const fleet = useMmFleetOverview()
   const campaigns = useMmCampaigns()
   const createCampaign = useCreateCampaign()
@@ -249,21 +251,19 @@ export default function MmAuditSection() {
                           Backfill History
                         </button>
                       )}
+                      {pastCampaigns.length > 0 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowHistory(true) }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-opacity hover:opacity-90"
+                          style={{ background: rgba(0.04), color: rgba(0.4), border: `1px solid ${rgba(0.08)}`, fontFamily: "var(--font-heading)" }}
+                        >
+                          <History className="h-3.5 w-3.5" />
+                          Past Campaigns
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : null}
-
-                {/* ── Past Campaigns ──────────────────────────────────────── */}
-                {pastCampaigns.length > 0 && (
-                  <div>
-                    <SectionLabel label="Past Campaigns" />
-                    <div className="space-y-2">
-                      {pastCampaigns.slice(0, 3).map(c => (
-                        <MmCampaignCard key={c.id} campaign={c} />
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {/* ── Fleet Audit Profiles ────────────────────────────────── */}
                 <div>
@@ -317,6 +317,14 @@ export default function MmAuditSection() {
         <BackdateAuditDialog
           existingNames={(campaigns.data ?? []).map(c => c.name)}
           onClose={() => setShowBackdate(false)}
+        />
+      )}
+
+      {/* ── Campaign History Modal ────────────────────────────────────── */}
+      {showHistory && (
+        <MmCampaignHistory
+          campaigns={pastCampaigns}
+          onClose={() => setShowHistory(false)}
         />
       )}
     </>
