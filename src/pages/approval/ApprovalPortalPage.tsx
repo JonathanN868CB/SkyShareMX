@@ -37,6 +37,7 @@ type PdfItem = {
   shippingCost:        number
   outsideServicesCost: number
   lineTotal:           number
+  attachmentIds?:      string[]
 }
 
 type Snapshot = {
@@ -258,6 +259,7 @@ export default function ApprovalPortalPage() {
               <ItemRow
                 key={it.itemNumber}
                 item={it}
+                token={token!}
                 decision={decisions[it.itemNumber] ?? "pending"}
                 onDecide={(d) => setDecision(it.itemNumber, d)}
                 disabled={isSubmitting}
@@ -316,11 +318,13 @@ export default function ApprovalPortalPage() {
 
 function ItemRow({
   item,
+  token,
   decision,
   onDecide,
   disabled,
 }: {
   item: PdfItem
+  token: string
   decision: ItemDecision
   onDecide: (d: ItemDecision) => void
   disabled: boolean
@@ -375,6 +379,10 @@ function ItemRow({
             </div>
           </div>
 
+          {item.attachmentIds && item.attachmentIds.length > 0 && (
+            <PhotoStrip token={token} attachmentIds={item.attachmentIds} />
+          )}
+
           <div className="flex items-center gap-2 pt-1">
             <button
               disabled={disabled}
@@ -406,6 +414,103 @@ function ItemRow({
         </div>
       </div>
     </div>
+  )
+}
+
+// ─── Photo strip ───────────────────────────────────────────────────────────
+
+function PhotoStrip({ token, attachmentIds }: { token: string; attachmentIds: string[] }) {
+  const [urls, setUrls] = useState<Record<string, string | null>>({})
+  const [lightbox, setLightbox] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const results: Record<string, string | null> = {}
+      await Promise.all(
+        attachmentIds.map(async (id) => {
+          try {
+            const res = await fetch(
+              `${BASE}/bb-wo-attachment-public-url?token=${encodeURIComponent(token)}&attachmentId=${encodeURIComponent(id)}`
+            )
+            if (res.ok) {
+              const data = await res.json()
+              results[id] = data.url ?? null
+            } else {
+              results[id] = null
+            }
+          } catch {
+            results[id] = null
+          }
+        })
+      )
+      if (!cancelled) setUrls(results)
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [token, attachmentIds.join(",")])
+
+  const loaded = attachmentIds.filter(id => urls[id])
+  if (attachmentIds.length === 0) return null
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-2 pt-1">
+        {attachmentIds.map(id => {
+          const url = urls[id]
+          if (url === undefined) {
+            // still loading
+            return (
+              <div
+                key={id}
+                className="rounded"
+                style={{ width: 64, height: 64, background: "rgba(255,255,255,0.06)", animation: "pulse 1.5s ease-in-out infinite" }}
+              />
+            )
+          }
+          if (!url) return null
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setLightbox(url)}
+              className="rounded overflow-hidden transition-opacity hover:opacity-80"
+              style={{ width: 64, height: 64, border: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }}
+            >
+              <img src={url} alt="discrepancy photo" className="w-full h-full object-cover" />
+            </button>
+          )
+        })}
+        {loaded.length > 0 && (
+          <div className="self-end text-[9px] tracking-widest uppercase" style={{ color: "rgba(255,255,255,0.3)" }}>
+            {loaded.length} photo{loaded.length !== 1 ? "s" : ""}
+          </div>
+        )}
+      </div>
+
+      {/* Lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.88)" }}
+          onClick={() => setLightbox(null)}
+        >
+          <img
+            src={lightbox}
+            alt="discrepancy photo"
+            className="max-w-full max-h-full rounded-lg"
+            style={{ boxShadow: "0 0 40px rgba(0,0,0,0.8)" }}
+            onClick={e => e.stopPropagation()}
+          />
+          <button
+            className="absolute top-4 right-4 text-white/60 hover:text-white text-2xl leading-none"
+            onClick={() => setLightbox(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </>
   )
 }
 

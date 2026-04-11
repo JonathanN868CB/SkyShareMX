@@ -1973,6 +1973,58 @@ export default function WorkOrderDetail() {
   const [pullPartNumber, setPullPartNumber] = useState<string | null>(null)
   const [partsOverviewOpen, setPartsOverviewOpen] = useState(false)
 
+  // ── Approved change-order items for invoice preview ──────────────────────
+  type CoInvoiceItem = {
+    id: string; itemNumber: number; discrepancy: string; correctiveAction: string
+    estimatedHours: number; laborRate: number
+    shippingCost: number; outsideServicesCost: number
+    parts: { qty: number; unitPrice: number }[]
+  }
+  const [coSections, setCoSections] = useState<Array<{ coId: string; coNumber: string; items: CoInvoiceItem[] }>>([])
+
+  useEffect(() => {
+    if (!wo || wo.woType !== "work_order") { setCoSections([]); return }
+    let cancelled = false
+    async function loadCOInvoiceItems() {
+      const { data: childCOs } = await supabase
+        .from("bb_work_orders")
+        .select("id, wo_number")
+        .eq("parent_wo_id", wo!.id)
+        .eq("wo_type", "change_order")
+        .eq("quote_status", "approved")
+      if (cancelled || !childCOs?.length) { setCoSections([]); return }
+
+      const sections: Array<{ coId: string; coNumber: string; items: CoInvoiceItem[] }> = []
+      for (const co of childCOs) {
+        const { data: coItems } = await supabase
+          .from("bb_work_order_items")
+          .select("id, item_number, discrepancy, corrective_action, estimated_hours, labor_rate, shipping_cost, outside_services_cost, bb_work_order_item_parts(qty, unit_price)")
+          .eq("work_order_id", co.id)
+          .eq("customer_approval_status", "approved")
+          .order("item_number")
+        if (!coItems?.length) continue
+        sections.push({
+          coId: co.id,
+          coNumber: co.wo_number as string,
+          items: coItems.map((r: any) => ({
+            id: r.id,
+            itemNumber: r.item_number,
+            discrepancy: r.discrepancy ?? "",
+            correctiveAction: r.corrective_action ?? "",
+            estimatedHours: Number(r.estimated_hours ?? 0),
+            laborRate: Number(r.labor_rate ?? 0),
+            shippingCost: Number(r.shipping_cost ?? 0),
+            outsideServicesCost: Number(r.outside_services_cost ?? 0),
+            parts: (r.bb_work_order_item_parts ?? []).map((p: any) => ({ qty: Number(p.qty ?? 0), unitPrice: Number(p.unit_price ?? 0) })),
+          })),
+        })
+      }
+      if (!cancelled) setCoSections(sections)
+    }
+    void loadCOInvoiceItems()
+    return () => { cancelled = true }
+  }, [wo?.id, wo?.woType])
+
   async function handlePreviewPdf(type: "logbook" | "invoice", woNumber: string) {
     if (type === "logbook" && !logbookPrintRef.current) return
     if (type === "invoice" && !invoicePrintRef.current) return
@@ -4211,10 +4263,18 @@ export default function WorkOrderDetail() {
 
         {/* ── INVOICE TAB ────────────────────────────────────────────────────── */}
         {activeTab === "invoice" && (() => {
-          const laborTotal    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0)
-          const partsTotal    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0)
-          const shippingTotal = wo.items.reduce((s, i) => s + i.shippingCost, 0)
-          const outsideTotal  = wo.items.reduce((s, i) => s + i.outsideServicesCost, 0)
+          // CO helpers — mirrors itemLaborTotal/itemPartsTotal for CoInvoiceItem
+          const coItemLaborTotal   = (ci: { estimatedHours: number; laborRate: number }) => ci.estimatedHours * ci.laborRate
+          const coItemPartsTotal   = (ci: { parts: { qty: number; unitPrice: number }[] }) => ci.parts.reduce((s, p) => s + p.qty * p.unitPrice, 0)
+          const coLabor    = coSections.flatMap(s => s.items).reduce((s, i) => s + coItemLaborTotal(i), 0)
+          const coParts    = coSections.flatMap(s => s.items).reduce((s, i) => s + coItemPartsTotal(i), 0)
+          const coShipping = coSections.flatMap(s => s.items).reduce((s, i) => s + i.shippingCost, 0)
+          const coOutside  = coSections.flatMap(s => s.items).reduce((s, i) => s + i.outsideServicesCost, 0)
+
+          const laborTotal    = wo.items.reduce((s, i) => s + itemLaborTotal(i), 0) + coLabor
+          const partsTotal    = wo.items.reduce((s, i) => s + itemPartsTotal(i), 0) + coParts
+          const shippingTotal = wo.items.reduce((s, i) => s + i.shippingCost, 0) + coShipping
+          const outsideTotal  = wo.items.reduce((s, i) => s + i.outsideServicesCost, 0) + coOutside
           const shopSupplies  = Math.round(laborTotal * SHOP_SUPPLIES_RATE * 100) / 100
           const taxOnLabor    = Math.round(laborTotal * 0.0725 * 100) / 100
           const taxOnSupplies = Math.round(shopSupplies * 0.0725 * 100) / 100
@@ -4373,6 +4433,55 @@ export default function WorkOrderDetail() {
                         </div>
                       )
                     })}
+
+                    {/* ── Approved Change Order sections ── */}
+                    {coSections.map(section => (
+                      <div key={section.coId}>
+                        {/* CO divider header */}
+                        <div style={{ background: "#1a1a1a", color: "#fff", textAlign: "center", padding: "4px 8px", fontWeight: 700, fontSize: "11px", letterSpacing: "0.08em", marginTop: "14px" }}>
+                          CHANGE ORDER: {section.coNumber}
+                        </div>
+                        {section.items.map(ci => {
+                          const labor = coItemLaborTotal(ci)
+                          const parts = coItemPartsTotal(ci)
+                          const sub   = labor + parts + ci.shippingCost + ci.outsideServicesCost
+                          return (
+                            <div key={ci.id} style={{ marginTop: "10px" }}>
+                              <div style={{ background: "#e0e0e0", textAlign: "center", padding: "3px 8px", fontWeight: 700, borderTop: "1px solid #bbb", borderBottom: "1px solid #bbb" }}>
+                                Item: {ci.itemNumber} ({section.coNumber})
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", marginTop: "4px" }}>
+                                <div style={{ flex: 1 }}>
+                                  <p style={{ fontWeight: 700 }}>Discrepancy</p>
+                                  <p>{ci.discrepancy || "—"}</p>
+                                </div>
+                                <div style={{ textAlign: "right", minWidth: "110px" }}>
+                                  <div style={{ display: "flex", gap: "20px", justifyContent: "flex-end", fontWeight: 700 }}>
+                                    <span>Hours</span><span>Subtotal</span>
+                                  </div>
+                                  <div style={{ display: "flex", gap: "20px", justifyContent: "flex-end" }}>
+                                    <span>{ci.estimatedHours.toFixed(2)}</span>
+                                    <span>{$f(labor)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={{ marginTop: "4px" }}>
+                                <p style={{ fontWeight: 700 }}>Corrective Action</p>
+                                <p style={{ lineHeight: "1.5" }}>{ci.correctiveAction || "—"}</p>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "16px", background: "#f0f0f0", padding: "3px 8px", marginTop: "6px", borderTop: "1px solid #ccc", borderBottom: "1px solid #ccc", flexWrap: "wrap" }}>
+                                <span style={{ fontWeight: 700 }}>Item Summary</span>
+                                <span>Labor:&nbsp; {$f(labor)}</span>
+                                <span>Parts:&nbsp; {$f(parts)}</span>
+                                {ci.shippingCost > 0 && <span>Shipping:&nbsp; {$f(ci.shippingCost)}</span>}
+                                {ci.outsideServicesCost > 0 && <span>Outside Svcs:&nbsp; {$f(ci.outsideServicesCost)}</span>}
+                                <span style={{ marginLeft: "auto", fontWeight: 700 }}>Item Subtotal:&nbsp; {$f(sub)}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))}
                   </div>
 
                   {/* ═══ PAGE 2 (visual separator) ═══ */}
