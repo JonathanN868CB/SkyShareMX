@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react"
 import {
-  Search, X, ArrowDownUp, Clock, BookOpen,
-  FileText, AlertCircle, Loader2, FolderOpen, Globe, Plane,
+  Search, X, ArrowDownUp, Clock,
+  AlertCircle, Loader2, FolderOpen, Globe, Plane, Pencil,
 } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { Input } from "@/shared/ui/input"
@@ -10,7 +10,7 @@ import { useRecordSources } from "../hooks/useRecordSources"
 import { useRecordsSearch } from "../hooks/useRecordsSearch"
 import { RecordsResultsList } from "../components/RecordsResultsList"
 import { RecordsVaultViewer } from "../components/RecordsVaultViewer"
-import { SOURCE_CATEGORY_LABELS } from "../constants"
+import { LabelEditModal } from "../components/LabelEditModal"
 import type { SourceCategory, SearchHit, RecordSource } from "../types"
 import type { SortBy } from "../hooks/useRecordsSearch"
 
@@ -26,15 +26,6 @@ const CATEGORY_FILTERS: Array<{ value: SourceCategory | "all"; label: string }> 
   { value: "other",        label: "Other" },
 ]
 
-const CATEGORY_BADGE: Record<string, string> = {
-  logbook:      "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  work_package: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-  inspection:   "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  ad_compliance:"bg-red-500/10 text-red-600 dark:text-red-400",
-  major_repair: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-  other:        "bg-muted text-muted-foreground",
-}
-
 const CATEGORY_BORDER: Record<string, string> = {
   logbook:      "border-l-blue-500",
   work_package: "border-l-purple-500",
@@ -42,6 +33,16 @@ const CATEGORY_BORDER: Record<string, string> = {
   ad_compliance:"border-l-red-500",
   major_repair: "border-l-orange-500",
   other:        "border-l-border",
+}
+
+// Book spine colors — actual hex so we can drive inline inset-shadow spines
+const CATEGORY_SPINE: Record<string, string> = {
+  logbook:      "#3b82f6",
+  work_package: "#a855f7",
+  inspection:   "#f59e0b",
+  ad_compliance:"#ef4444",
+  major_repair: "#f97316",
+  other:        "#6b7280",
 }
 
 // ─── Stats strip ─────────────────────────────────────────────────────────────
@@ -85,108 +86,186 @@ function fmtMY(iso: string | null): string | null {
   return new Date(iso).toLocaleDateString([], { month: "short", year: "numeric" })
 }
 
-function DocumentCard({ source, onOpen }: { source: RecordSource; onOpen: () => void }) {
+function fmtCoverDate(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })
+}
+
+const COMPONENT_LABELS: Record<string, string> = {
+  airframe:  "Airframe",
+  engine:    "Engine",
+  propeller: "Propeller",
+}
+
+function DocumentCard({
+  source,
+  onOpen,
+  onEdit,
+}: {
+  source: RecordSource
+  onOpen: () => void
+  onEdit: () => void
+}) {
   const isIndexed    = source.ingestion_status === "indexed"
   const isProcessing = source.ingestion_status === "extracting"
   const isFailed     = source.ingestion_status === "failed"
   const isPending    = source.ingestion_status === "pending"
 
-  const badgeColor  = CATEGORY_BADGE[source.source_category]  ?? CATEGORY_BADGE.other
-  const borderColor = CATEGORY_BORDER[source.source_category] ?? CATEGORY_BORDER.other
-  const categoryLabel = SOURCE_CATEGORY_LABELS[source.source_category]
+  const spineColor = CATEGORY_SPINE[source.source_category] ?? CATEGORY_SPINE.other
 
   const v = source as RecordSource & { verification_status?: string }
 
-  const startStr = fmtMY(source.date_range_start)
-  const endStr   = fmtMY(source.date_range_end)
-  const dateLabel = startStr && endStr && startStr !== endStr
-    ? `${startStr} – ${endStr}`
-    : startStr ?? endStr ?? null
+  const label = source.display_label
+  const hasLabel = !!label && (label.registration || label.serial || label.component || label.logbook_number || label.date_start || label.date_end)
+
+  const dateStart = fmtCoverDate(label?.date_start ?? source.date_range_start)
+  const dateEnd   = fmtCoverDate(label?.date_end   ?? source.date_range_end)
+  const hasDateRange = !!dateStart && !!dateEnd && dateStart !== dateEnd
+  const singleDate   = !hasDateRange ? (dateStart ?? dateEnd ?? null) : null
 
   return (
-    <button
-      onClick={isIndexed ? onOpen : undefined}
-      disabled={!isIndexed}
+    <div
       className={cn(
-        "group relative w-full text-left rounded-lg border border-l-4 bg-card overflow-hidden",
-        "transition-all duration-150",
-        borderColor,
-        isIndexed
-          ? "border-border hover:border-border/60 hover:shadow-md hover:-translate-y-px cursor-pointer"
-          : "border-border cursor-default opacity-70"
+        "group relative aspect-square mx-auto rounded-md overflow-hidden",
+        "bg-card transition-all duration-150",
+        isIndexed ? "hover:-translate-y-0.5" : "opacity-70"
       )}
+      style={{
+        width:    "calc(100% - 10px)",
+        boxShadow: [
+          `inset 7px 0 0 0 ${spineColor}`,
+          "inset 8px 0 5px -3px rgba(0,0,0,0.45)",
+          "inset -2px 0 0 0 rgba(0,0,0,0.18)",
+          "0 2px 6px rgba(0,0,0,0.18)",
+        ].join(", "),
+      }}
     >
-      <div className="p-4">
-        {/* Category badge + status dot */}
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm ${badgeColor}`}>
-            {categoryLabel}
-          </span>
-          <span className={cn(
-            "w-2 h-2 rounded-full mt-0.5 shrink-0",
-            isIndexed && v.verification_status === "verified" && "bg-green-500",
-            isIndexed && v.verification_status === "partial"  && "bg-yellow-500",
-            isFailed   && "bg-red-500",
-            isProcessing && "bg-blue-500 animate-pulse",
-            isPending    && "bg-muted-foreground/30",
-          )} />
-        </div>
+      {/* Page-edge gradient on the right */}
+      <div
+        className="absolute top-1.5 right-0 bottom-1.5 w-[4px] pointer-events-none"
+        style={{ background: "linear-gradient(to right, transparent, rgba(255,255,255,0.04))" }}
+      />
 
-        {/* Filename */}
-        <p className="text-sm font-medium text-foreground leading-snug line-clamp-2 mb-3 min-h-[2.5rem]">
-          {source.original_filename}
-        </p>
-
-        {/* Metadata row */}
-        <div className="flex items-end justify-between gap-2 min-h-[1.5rem]">
-          <div className="flex flex-col gap-1 min-w-0">
-            {source.observed_registration && (
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {source.observed_registration}
-              </span>
-            )}
-            {dateLabel && (
-              <span className="text-[11px] text-muted-foreground truncate">{dateLabel}</span>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            {source.page_count && isIndexed && (
-              <span className="text-[11px] text-muted-foreground tabular-nums">
-                {source.page_count} pp
-              </span>
-            )}
-            {/* Hover: open hint */}
-            <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-              <BookOpen className="h-3 w-3" />
-              Open
-            </span>
-          </div>
-        </div>
-
-        {/* Processing indicator */}
-        {isProcessing && (
-          <div className="mt-2 pt-2 border-t border-border flex items-center gap-1.5">
-            <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />
-            <span className="text-[10px] text-blue-500">Indexing…</span>
-          </div>
+      {/* Click target — the full cover opens the viewer */}
+      <button
+        onClick={isIndexed ? onOpen : undefined}
+        disabled={!isIndexed}
+        title={source.original_filename}
+        className={cn(
+          "absolute inset-0 text-left",
+          isIndexed ? "cursor-pointer" : "cursor-default"
         )}
+      />
 
-        {/* Pending */}
-        {isPending && (
-          <div className="mt-2 pt-2 border-t border-border">
-            <span className="text-[10px] text-muted-foreground">Queued</span>
-          </div>
+      {/* Edit pencil + status dot — absolute so they don't reserve row space */}
+      <div className="absolute top-1.5 right-1.5 flex items-center gap-1 pointer-events-auto z-10">
+        {isIndexed && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit() }}
+            className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-opacity"
+            title="Edit label"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
         )}
-
-        {/* Error */}
-        {isFailed && source.ingestion_error && (
-          <div className="mt-2 pt-2 border-t border-destructive/20 flex items-start gap-1.5">
-            <AlertCircle className="h-3 w-3 text-destructive mt-0.5 shrink-0" />
-            <span className="text-[10px] text-destructive line-clamp-2">{source.ingestion_error}</span>
-          </div>
-        )}
+        <span className={cn(
+          "w-1.5 h-1.5 rounded-full shrink-0",
+          isIndexed && v.verification_status === "verified" && "bg-green-500",
+          isIndexed && v.verification_status === "partial"  && "bg-yellow-500",
+          isFailed   && "bg-red-500",
+          isProcessing && "bg-blue-500 animate-pulse",
+          isPending    && "bg-muted-foreground/30",
+        )} />
       </div>
-    </button>
+
+      {/* Content overlay — pointer-events: none so the button behind catches clicks */}
+      <div className="relative pl-4 pr-2.5 pt-3 pb-2.5 h-full flex flex-col items-center text-center pointer-events-none">
+        {hasLabel ? (
+          <>
+            {label?.registration && (
+              <p
+                className="text-3xl font-bold text-foreground leading-none tracking-wide break-words"
+                style={{ fontFamily: "var(--font-display)", letterSpacing: "0.04em" }}
+              >
+                {label.registration}
+              </p>
+            )}
+            {label?.serial && (
+              <p className="text-[12px] font-mono text-muted-foreground leading-tight break-all mt-1.5">
+                S/N {label.serial}
+              </p>
+            )}
+            {label?.component && (
+              <p
+                className="text-[11px] uppercase text-muted-foreground/90 leading-tight mt-1"
+                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.18em" }}
+              >
+                {COMPONENT_LABELS[label.component]}
+              </p>
+            )}
+            {label?.logbook_number && (
+              <p
+                className="text-[11px] uppercase text-muted-foreground/90 leading-tight mt-0.5"
+                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.18em" }}
+              >
+                {label.logbook_number}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-[12px] font-medium text-foreground leading-snug line-clamp-5 break-words mt-1">
+            {source.original_filename}
+          </p>
+        )}
+
+        {/* Bottom: stacked dates */}
+        <div className="flex flex-col items-center gap-0.5 mt-auto">
+          {hasDateRange ? (
+            <>
+              <span
+                className="text-[10px] font-semibold text-foreground/80 text-center truncate max-w-full"
+                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+              >
+                {dateStart}
+              </span>
+              <span
+                className="text-[10px] font-semibold text-foreground/80 text-center truncate max-w-full"
+                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+              >
+                {dateEnd}
+              </span>
+            </>
+          ) : singleDate ? (
+            <span
+              className="text-[10px] font-semibold text-foreground/80 text-center truncate max-w-full"
+              style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+            >
+              {singleDate}
+            </span>
+          ) : source.page_count && isIndexed ? (
+            <span className="text-[10px] text-muted-foreground tabular-nums">{source.page_count} pp</span>
+          ) : null}
+
+          {isProcessing && (
+            <div className="flex items-center gap-1">
+              <Loader2 className="h-2.5 w-2.5 text-blue-500 animate-spin" />
+              <span className="text-[10px] text-blue-500">Indexing…</span>
+            </div>
+          )}
+          {isPending && (
+            <span className="text-[10px] text-muted-foreground">Queued</span>
+          )}
+          {isFailed && (
+            <div className="flex items-center gap-1">
+              <AlertCircle className="h-2.5 w-2.5 text-destructive shrink-0" />
+              <span className="text-[10px] text-destructive truncate">Failed</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -197,11 +276,13 @@ function DocumentGrid({
   isLoading,
   categoryFilter,
   onOpen,
+  onEdit,
 }: {
   sources: RecordSource[]
   isLoading: boolean
   categoryFilter: SourceCategory | null
   onOpen: (source: RecordSource) => void
+  onEdit: (source: RecordSource) => void
 }) {
   const filtered = categoryFilter
     ? sources.filter((s) => s.source_category === categoryFilter)
@@ -209,14 +290,9 @@ function DocumentGrid({
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="rounded-lg border border-border bg-card p-4 animate-pulse">
-            <div className="h-3 bg-muted rounded w-1/3 mb-3" />
-            <div className="h-4 bg-muted rounded w-full mb-1.5" />
-            <div className="h-4 bg-muted rounded w-2/3 mb-4" />
-            <div className="h-3 bg-muted rounded w-1/4" />
-          </div>
+      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
+        {Array.from({ length: 12 }).map((_, i) => (
+          <div key={i} className="aspect-square rounded-md bg-card animate-pulse" />
         ))}
       </div>
     )
@@ -239,12 +315,13 @@ function DocumentGrid({
   }
 
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
       {filtered.map((source) => (
         <DocumentCard
           key={source.id}
           source={source}
           onOpen={() => onOpen(source)}
+          onEdit={() => onEdit(source)}
         />
       ))}
     </div>
@@ -271,6 +348,8 @@ export default function RecordsVaultSearchPage() {
   const [viewerIndex, setViewerIndex]     = useState(0)
   const [viewerQuery, setViewerQuery]     = useState("")
   const [viewerTotalPages, setViewerTotalPages] = useState(1)
+
+  const [editingSource, setEditingSource] = useState<RecordSource | null>(null)
 
   const { data: sources = [], isLoading: sourcesLoading } = useRecordSources(selectedAircraftId)
 
@@ -479,10 +558,19 @@ export default function RecordsVaultSearchPage() {
                 isLoading={sourcesLoading}
                 categoryFilter={selectedCategory}
                 onOpen={handleOpenSource}
+                onEdit={setEditingSource}
               />
             )}
           </main>
         </>
+      )}
+
+      {editingSource && (
+        <LabelEditModal
+          source={editingSource}
+          onClose={() => setEditingSource(null)}
+          aircraftId={selectedAircraftId}
+        />
       )}
     </div>
   )

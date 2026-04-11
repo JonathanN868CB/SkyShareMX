@@ -22,7 +22,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   X, ChevronLeft, ChevronRight, FileText,
-  ChevronDown, ChevronUp, Loader2, AlertTriangle, Search,
+  ChevronDown, ChevronUp, Loader2, AlertTriangle, Search, Hand, ZoomIn,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { useRecordPageUrl } from "../hooks/useRecordPageUrl"
@@ -85,13 +85,14 @@ const CAT_COLOUR: Record<SourceCategory | string, string> = {
 // ─── Thumbnail strip item ─────────────────────────────────────────────────────
 
 function ThumbnailItem({
-  pageNumber, recordSourceId, isActive, isMatch, matchIndex, onClick,
+  pageNumber, recordSourceId, isActive, isMatch, matchIndex, isS3Ingested, onClick,
 }: {
   pageNumber:     number
   recordSourceId: string
   isActive:       boolean
   isMatch:        boolean
   matchIndex:     number | null
+  isS3Ingested:   boolean
   onClick:        () => void
 }) {
   const ref     = useRef<HTMLButtonElement>(null)
@@ -114,7 +115,18 @@ function ThumbnailItem({
     return () => observer.disconnect()
   }, [])
 
-  const { data: pdfUrl } = useRecordPageUrl(inView ? recordSourceId : null, pageNumber)
+  // Prefer the per-page rasterized JPEG — one image per page means each
+  // thumbnail shows its actual content. Only fall back to the full-PDF
+  // iframe for legacy Supabase-uploaded docs that never get rasterized.
+  const { data: imageUrl } = useRecordPageImageUrl(
+    inView ? recordSourceId : null,
+    pageNumber,
+    { pollWhileMissing: isS3Ingested },
+  )
+  const { data: pdfUrl } = useRecordPageUrl(
+    inView && !imageUrl && !isS3Ingested ? recordSourceId : null,
+    pageNumber,
+  )
 
   const IFRAME_SIZE = 840
   const THUMB_WIDTH = 152
@@ -133,7 +145,14 @@ function ThumbnailItem({
         className="relative w-full overflow-hidden rounded bg-muted/20"
         style={{ height: `${thumbHeight}px` }}
       >
-        {pdfUrl ? (
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={`p.${pageNumber}`}
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+            draggable={false}
+          />
+        ) : pdfUrl ? (
           <iframe
             src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=page-fit`}
             className="absolute top-0 left-0 border-0 pointer-events-none"
@@ -477,7 +496,6 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   const [showJumpInput,  setShowJumpInput]  = useState(false)
   const jumpInputRef  = useRef<HTMLInputElement>(null)
   const centerRef     = useRef<HTMLDivElement>(null)
-  const wheelDebounce = useRef<number | null>(null)
 
   const { allAircraft } = useRecordsVaultCtx()
 
@@ -523,23 +541,6 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     window.addEventListener("keydown", handleKey)
     return () => window.removeEventListener("keydown", handleKey)
   }, [open, navigate, onClose, showJumpInput])
-
-  useEffect(() => {
-    if (!open) return
-    const handleWheel = (e: WheelEvent) => {
-      const el = centerRef.current
-      if (!el) return
-      const { left, right, top, bottom } = el.getBoundingClientRect()
-      if (e.clientX < left || e.clientX > right || e.clientY < top || e.clientY > bottom) return
-      e.preventDefault()
-      if (wheelDebounce.current) return
-      wheelDebounce.current = window.setTimeout(() => { wheelDebounce.current = null }, 350)
-      if (e.deltaY > 0) navigate(1)
-      else navigate(-1)
-    }
-    window.addEventListener("wheel", handleWheel, { passive: false })
-    return () => window.removeEventListener("wheel", handleWheel)
-  }, [open, navigate])
 
   const { data: source } = useQuery({
     queryKey: ["rv-source-detail", recordSourceId],
@@ -606,7 +607,15 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
         </div>
 
         {/* Page indicator + jump */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 text-muted-foreground/80">
+            <Hand className="h-7 w-7" />
+            <span className="text-[11px] leading-tight">Hold middle click to pan</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-muted-foreground/80">
+            <ZoomIn className="h-7 w-7" />
+            <span className="text-[11px] leading-tight">Scroll wheel to zoom</span>
+          </div>
           {showJumpInput ? (
             <input
               ref={jumpInputRef}
@@ -704,6 +713,7 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
                 isActive={pageNum === currentPage}
                 isMatch={matchPages.has(pageNum)}
                 matchIndex={matchPages.has(pageNum) ? (pageToHitIndex.get(pageNum) ?? null) : null}
+                isS3Ingested={isS3Ingested}
                 onClick={() => setCurrentPage(pageNum)}
               />
             ))}

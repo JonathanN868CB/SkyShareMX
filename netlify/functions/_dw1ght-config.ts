@@ -27,7 +27,7 @@ export const DW1GHT_CONFIG = {
 
   // RAG retrieval settings (Records Vault vector search)
   ragChunkLimit: 8,
-  ragThreshold: 0.4,
+  ragThreshold: 0.25,
 
   // ── Identity ─────────────────────────────────────────────────
   // Who DW1GHT is. Shared by ALL modes. Never changes.

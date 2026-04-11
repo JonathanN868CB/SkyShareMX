@@ -10,6 +10,22 @@ export type IngestionStatus   = "pending" | "extracting" | "indexed" | "failed"
 export type ExtractionStatus  = "pending" | "extracting" | "complete" | "failed"
 export type ChunkStatus       = "pending" | "chunking" | "chunked" | "failed"
 
+export type LogbookComponent = "airframe" | "engine" | "propeller"
+
+/**
+ * AI-generated display label for Records Vault document cards.
+ * Populated post-ingest by records-vault-label; editable via the card's
+ * pencil modal. When null, the card falls back to original_filename.
+ */
+export type DisplayLabel = {
+  registration:   string | null
+  serial:         string | null
+  component:      LogbookComponent | null
+  logbook_number: string | null   // e.g. "Logbook One", "Book 2", "Volume III"
+  date_start:     string | null   // ISO date or null
+  date_end:       string | null   // ISO date or null
+}
+
 export type EventType =
   | "logbook_entry"
   | "inspection"
@@ -55,6 +71,8 @@ export type RecordSource = {
   // AWS Textract pipeline fields
   s3_key: string | null
   textract_job_id: string | null
+  // AI-generated display label (editable)
+  display_label: DisplayLabel | null
   created_at: string
   updated_at: string
 }

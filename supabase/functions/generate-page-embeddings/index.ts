@@ -67,8 +67,9 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      input: texts,
-      model: VOYAGE_MODEL,
+      input:      texts,
+      model:      VOYAGE_MODEL,
+      input_type: "document",
     }),
   });
 

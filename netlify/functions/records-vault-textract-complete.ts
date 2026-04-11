@@ -735,6 +735,29 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     await log("rasterize_error", `rasterize trigger failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // Phase 5: generate AI display label (Haiku). Fire-and-forget — if this
+  // fails for any reason, the card just falls back to the filename. Must be
+  // the LAST step so OCR text + forms are all stored before Haiku reads them.
+  try {
+    const siteUrl = process.env.URL ?? process.env.DEPLOY_URL;
+    if (siteUrl) {
+      const labelUrl = `${siteUrl}/.netlify/functions/records-vault-label`;
+      fetch(labelUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": `Bearer ${serviceRole}`,
+        },
+        body: JSON.stringify({ recordSourceId, action: "generate" }),
+      }).catch((err) => {
+        console.error("[textract-complete] label trigger network error:", err);
+      });
+      await log("label_triggered", "Phase 5: records-vault-label (Haiku) triggered");
+    }
+  } catch (err) {
+    console.error("[textract-complete] label trigger failed:", err);
+  }
+
   return {
     statusCode: 200,
     body: JSON.stringify({
