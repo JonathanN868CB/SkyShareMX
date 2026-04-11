@@ -21,3 +21,12 @@
 [functions.bb-approval-expire]
   schedule = "0 6 * * *"
 
+# PDFium's package.json maps the "browser" export condition to a browser-only
+# build that crashes in Node (reads undefined `scriptDirectory`). Marking the
+# package as external forces Netlify's bundler to leave it alone and lets
+# Node's resolver pick the CJS entry at runtime, which has proper Node
+# environment detection.
+[functions."records-vault-rasterize-background"]
+  external_node_modules = ["@embedpdf/pdfium"]
+  node_bundler = "esbuild"
+

@@ -32,6 +32,7 @@ async function fetchPageImageUrl(
 export function useRecordPageImageUrl(
   recordSourceId: string | null,
   pageNumber: number,
+  options?: { pollWhileMissing?: boolean },
 ) {
   return useQuery({
     queryKey: ["record-page-image-url", recordSourceId, pageNumber],
@@ -39,5 +40,11 @@ export function useRecordPageImageUrl(
     enabled: !!recordSourceId,
     staleTime: 55 * 60 * 1000, // 55 min (images don't change)
     retry: false, // Don't retry 404s
+    // For S3-ingested docs the image may not exist yet because the
+    // rasterize-background function is still running. Poll every 5s until
+    // it appears so the viewer flips from "Processing" to the real page
+    // automatically as soon as rasterization finishes.
+    refetchInterval: (query) =>
+      options?.pollWhileMissing && !query.state.data ? 5_000 : false,
   })
 }
