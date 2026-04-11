@@ -29,7 +29,7 @@ export type RecordSource = {
   aircraft_id: string
   original_filename: string
   file_hash: string | null
-  storage_path: string
+  storage_path: string | null
   file_size_bytes: number | null
   page_count: number | null
   source_category: SourceCategory
@@ -52,6 +52,9 @@ export type RecordSource = {
   chunks_generated: number | null
   // Rendering
   page_images_stored: number | null
+  // AWS Textract pipeline fields
+  s3_key: string | null
+  textract_job_id: string | null
   created_at: string
   updated_at: string
 }
@@ -129,7 +132,48 @@ export type PageChunk = {
   similarity: number
 }
 
-// Shape for the upload modal form
+// ─── Textract geometry types (Phase A columns, consumed by Phase B viewer) ────
+
+/** Normalized bounding box from a Textract WORD block (all values 0.0–1.0) */
+export type WordGeometry = {
+  text:       string
+  confidence: number
+  geometry: {
+    left:   number
+    top:    number
+    width:  number
+    height: number
+  }
+}
+
+/** A single cell within a Textract-extracted table */
+export type TableCell = {
+  row:        number
+  col:        number
+  rowSpan:    number
+  colSpan:    number
+  text:       string
+  confidence: number
+}
+
+/** One table extracted by Textract AnalyzeTables */
+export type ExtractedTable = {
+  tableIndex: number
+  rows:       number
+  cols:       number
+  cells:      TableCell[]
+}
+
+/** One key/value pair extracted by Textract AnalyzeForms */
+export type ExtractedFormField = {
+  key:             string
+  value:           string
+  keyConfidence:   number
+  valueConfidence: number
+}
+
+// ─── Shape for the upload modal form ─────────────────────────────────────────
+
 export type UploadFormValues = {
   aircraftId: string
   sourceCategory: SourceCategory
