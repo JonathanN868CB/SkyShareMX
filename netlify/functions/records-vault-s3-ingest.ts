@@ -19,8 +19,8 @@
 //
 // Environment variables required:
 //   TEXTRACT_REGION           — e.g. "us-east-2" (AWS_REGION is reserved by Netlify)
-//   AWS_ACCESS_KEY_ID         — IAM user or role credentials
-//   AWS_SECRET_ACCESS_KEY     — IAM user or role credentials
+//   TEXTRACT_KEY_ID           — IAM access key ID (AWS_ACCESS_KEY_ID is reserved by Netlify)
+//   TEXTRACT_SECRET_KEY       — IAM secret access key
 //   TEXTRACT_S3_BUCKET        — S3 bucket name (e.g. "records-vault-skysharemx")
 //   TEXTRACT_SNS_TOPIC_ARN    — ARN of the SNS topic Textract publishes completion to
 //   TEXTRACT_ROLE_ARN         — ARN of the IAM role Textract assumes to publish SNS
@@ -231,11 +231,13 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const supabaseUrl  = process.env.SUPABASE_URL;
   const serviceRole  = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   const awsRegion    = process.env.TEXTRACT_REGION ?? "us-east-2";
+  const awsKeyId     = process.env.TEXTRACT_KEY_ID;
+  const awsSecret    = process.env.TEXTRACT_SECRET_KEY;
   const s3Bucket     = process.env.TEXTRACT_S3_BUCKET;
   const snsTopicArn  = process.env.TEXTRACT_SNS_TOPIC_ARN;
   const roleArn      = process.env.TEXTRACT_ROLE_ARN;
 
-  if (!supabaseUrl || !serviceRole || !s3Bucket || !snsTopicArn || !roleArn) {
+  if (!supabaseUrl || !serviceRole || !awsKeyId || !awsSecret || !s3Bucket || !snsTopicArn || !roleArn) {
     console.error("[s3-ingest] Missing required environment variables");
     return { statusCode: 500, body: "Server configuration error" };
   }
@@ -244,7 +246,10 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const textract = new TextractClient({ region: awsRegion });
+  const textract = new TextractClient({
+    region: awsRegion,
+    credentials: { accessKeyId: awsKeyId, secretAccessKey: awsSecret },
+  });
 
   const errors: string[] = [];
 
