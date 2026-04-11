@@ -1919,6 +1919,7 @@ export default function WorkOrderDetail() {
   const [showConvertModal, setShowConvertModal]         = useState(false)
   const [showSendApprovalModal, setShowSendApprovalModal] = useState(false)
   const [approvalRefreshKey, setApprovalRefreshKey]       = useState(0)
+  const [resendPrefill, setResendPrefill]                 = useState<{ name: string; email: string } | null>(null)
   const [discrepancyForItem, setDiscrepancyForItem]       = useState<WOItem | null>(null)
   const [showCreateCOModal,  setShowCreateCOModal]        = useState(false)
   const [coRefreshKey,       setCoRefreshKey]             = useState(0)
@@ -3237,7 +3238,14 @@ export default function WorkOrderDetail() {
       {/* ── APPROVAL STATUS STRIP (quote/CO after send) ─────────────────────── */}
       {((wo.woType === "quote" && wo.quoteStatus && ["sent","approved","declined","converted"].includes(wo.quoteStatus)) ||
         (wo.woType === "change_order" && wo.quoteStatus && ["sent","approved","declined"].includes(wo.quoteStatus))) && (
-        <ApprovalStatusStrip workOrderId={wo.id} refreshKey={approvalRefreshKey} />
+        <ApprovalStatusStrip
+          workOrderId={wo.id}
+          refreshKey={approvalRefreshKey}
+          onResend={(name, email) => {
+            setResendPrefill({ name, email })
+            setShowSendApprovalModal(true)
+          }}
+        />
       )}
 
       {/* ── QUOTE / CO TOTALS STRIP ─────────────────────────────────────────── */}
@@ -4678,15 +4686,19 @@ export default function WorkOrderDetail() {
       {/* ── SEND FOR APPROVAL MODAL ──────────────────────────────────────────── */}
       {wo && (wo.woType === "quote" || wo.woType === "change_order") && (
         <SendForApprovalModal
+          key={`send-approval-${resendPrefill?.email ?? "fresh"}`}
           open={showSendApprovalModal}
-          onClose={() => setShowSendApprovalModal(false)}
+          onClose={() => { setShowSendApprovalModal(false); setResendPrefill(null) }}
           onSent={() => {
             setApprovalRefreshKey(k => k + 1)
+            setResendPrefill(null)
             loadWO()
           }}
           workOrderId={wo.id}
           workOrderNumber={wo.woNumber}
           kind={wo.woType === "change_order" ? "change_order" : "quote"}
+          defaultRecipientName={resendPrefill?.name}
+          defaultRecipientEmail={resendPrefill?.email}
         />
       )}
 
