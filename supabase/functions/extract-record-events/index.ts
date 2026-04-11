@@ -199,13 +199,17 @@ function matchFormField(key: string): string | null {
 
 /**
  * Infer event type from available form fields and description text.
+ * selectedCheckboxFields: mapped field names whose Textract SELECTION_ELEMENT
+ *   was SELECTED — used to confirm completion of AD/inspection items.
  */
 function inferEventTypeFromForm(
   fields: Record<string, string>,
   adSbNumber: string | null,
   woNumber: string | null,
+  selectedCheckboxFields: Set<string> = new Set(),
 ): string {
-  if (adSbNumber) return "ad_compliance";
+  // AD/SB number present, or a selected "ad_sb_number" checkbox confirms compliance
+  if (adSbNumber || selectedCheckboxFields.has("ad_sb_number")) return "ad_compliance";
   const desc = (fields["description"] ?? "").toLowerCase();
   if (/\boverhaul\b/.test(desc)) return "overhaul";
   if (/\breturn to service|rts\b/.test(desc)) return "return_to_service";
@@ -232,16 +236,27 @@ function extractFromForms(
 
   const raw: Record<string, string[]> = {};
 
+  // Track which mapped field names have a SELECTED checkbox value.
+  // This improves event type inference without polluting text fields with ☑/☐.
+  const selectedCheckboxFields = new Set<string>();
+
   for (const field of forms) {
-    if (!field.value.trim()) continue;
+    const val = field.value.trim();
+    if (!val) continue;
     // Skip very low confidence values
     if (field.valueConfidence < 40) continue;
 
     const mapped = matchFormField(field.key);
     if (!mapped) continue;
 
+    // Checkbox values emitted by Textract SELECTION_ELEMENT (via getChildText)
+    if (val === "☑" || val === "☐") {
+      if (val === "☑") selectedCheckboxFields.add(mapped);
+      continue;   // don't put checkbox symbols into text fields
+    }
+
     if (!raw[mapped]) raw[mapped] = [];
-    raw[mapped].push(field.value.trim());
+    raw[mapped].push(val);
   }
 
   // Must have at least a description or date to be a meaningful event
@@ -265,7 +280,7 @@ function extractFromForms(
   const eventDate       = sanitizeDate(eventDateRaw);
   const aircraftTotalTime = sanitizeHours(totalTimeRaw);
   const aircraftCycles  = sanitizeCycles(cyclesRaw);
-  const eventType       = inferEventTypeFromForm(raw as Record<string, string>, adSbNumber, woNumber);
+  const eventType       = inferEventTypeFromForm(raw as Record<string, string>, adSbNumber, woNumber, selectedCheckboxFields);
 
   // Confidence: average of value confidences for the fields we captured
   const usedFields = forms.filter((f) => matchFormField(f.key) && f.value.trim() && f.valueConfidence >= 40);

@@ -172,6 +172,25 @@ export type ExtractedFormField = {
   valueConfidence: number
 }
 
+/**
+ * One checkbox (SELECTION_ELEMENT) extracted by Textract.
+ * context: "form"   — the VALUE of a KEY_VALUE_SET pair
+ *          "table"  — a child of a TABLE CELL
+ *          "inline" — standalone checkbox on the page
+ */
+export type CheckboxElement = {
+  selected:   boolean
+  confidence: number
+  geometry: {
+    left:   number
+    top:    number
+    width:  number
+    height: number
+  }
+  label:   string | null   // adjacent key text (form) or column header (table)
+  context: "form" | "table" | "inline"
+}
+
 // ─── Shape for the upload modal form ─────────────────────────────────────────
 
 export type UploadFormValues = {

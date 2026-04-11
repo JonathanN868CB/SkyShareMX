@@ -35,6 +35,7 @@ import {
   type Block,
   BlockType,
   RelationshipType,
+  SelectionStatus,
   JobStatus,
 } from "@aws-sdk/client-textract";
 import https from "https";
@@ -87,6 +88,19 @@ interface ExtractedForm {
   valueConfidence: number;
 }
 
+interface CheckboxElement {
+  selected:   boolean;
+  confidence: number;
+  geometry: {
+    left:   number;
+    top:    number;
+    width:  number;
+    height: number;
+  };
+  label:   string | null;   // adjacent key text (form) or null
+  context: "form" | "table" | "inline";
+}
+
 // Per-page aggregated data built from the Textract block tree
 interface PageData {
   pageNumber:    number;
@@ -94,6 +108,7 @@ interface PageData {
   wordGeometry:  WordGeometry[];
   tables:        ExtractedTable[];
   forms:         ExtractedForm[];
+  checkboxes:    CheckboxElement[];
   dimensions?:   { width: number; height: number };
 }
 
@@ -195,17 +210,25 @@ async function fetchAllBlocks(textract: TextractClient, jobId: string): Promise<
 
 /**
  * Given a block's child relationship IDs, concatenates the text of WORD child blocks.
+ * SELECTION_ELEMENT children are emitted as ☑ (SELECTED) or ☐ (NOT_SELECTED) so that
+ * checkbox state flows naturally into forms_extracted and tables_extracted values.
  */
 function getChildText(block: Block, blockMap: Map<string, Block>): string {
   const childIds = block.Relationships
     ?.filter((r) => r.Type === RelationshipType.CHILD)
     .flatMap((r) => r.Ids ?? []) ?? [];
 
-  return childIds
-    .map((id) => blockMap.get(id))
-    .filter((b): b is Block => b?.BlockType === BlockType.WORD)
-    .map((b) => b.Text ?? "")
-    .join(" ");
+  const parts: string[] = [];
+  for (const id of childIds) {
+    const child = blockMap.get(id);
+    if (!child) continue;
+    if (child.BlockType === BlockType.WORD) {
+      parts.push(child.Text ?? "");
+    } else if (child.BlockType === BlockType.SELECTION_ELEMENT) {
+      parts.push(child.SelectionStatus === SelectionStatus.SELECTED ? "☑" : "☐");
+    }
+  }
+  return parts.join(" ");
 }
 
 /**
@@ -229,9 +252,37 @@ function processBlocks(blocks: Block[]): Map<number, PageData> {
         wordGeometry: [],
         tables:       [],
         forms:        [],
+        checkboxes:   [],
       });
     }
     return pages.get(pageNumber)!;
+  }
+
+  // ── Pre-pass 1: child→parent map (for SELECTION_ELEMENT context lookup) ──────
+  const parentMap = new Map<string, Block>();
+  for (const block of blocks) {
+    const childIds = block.Relationships
+      ?.filter((r) => r.Type === RelationshipType.CHILD)
+      .flatMap((r) => r.Ids ?? []) ?? [];
+    for (const id of childIds) {
+      parentMap.set(id, block);
+    }
+  }
+
+  // ── Pre-pass 2: VALUE block ID → key label text (for form checkbox labels) ───
+  // KEY blocks reference VALUE blocks via a VALUE relationship; we reverse that
+  // map so that when processing a SELECTION_ELEMENT whose parent is a VALUE block,
+  // we can look up the human-readable label (the key text from the KEY block).
+  const valueIdToKeyText = new Map<string, string>();
+  for (const block of blocks) {
+    if (block.BlockType !== BlockType.KEY_VALUE_SET) continue;
+    if (!block.EntityTypes?.includes("KEY")) continue;
+    const valueId = block.Relationships
+      ?.find((r) => r.Type === RelationshipType.VALUE)
+      ?.Ids?.[0];
+    if (valueId) {
+      valueIdToKeyText.set(valueId, getChildText(block, blockMap));
+    }
   }
 
   // Track table index per page
@@ -343,6 +394,44 @@ function processBlocks(blocks: Block[]): Map<number, PageData> {
             valueConfidence: valueConf,
           });
         }
+        break;
+      }
+
+      // ── SELECTION_ELEMENT: checkbox state + geometry ────────────────────
+      case BlockType.SELECTION_ELEMENT: {
+        if (!geo || !block.Id) break;
+
+        const isSelected = block.SelectionStatus === SelectionStatus.SELECTED;
+
+        // Determine context by looking up the immediate parent block
+        const parent = parentMap.get(block.Id);
+        let label:   string | null         = null;
+        let context: CheckboxElement["context"] = "inline";
+
+        if (parent?.BlockType === BlockType.KEY_VALUE_SET) {
+          // Parent is a VALUE block — this checkbox is the answer to a form field
+          context = "form";
+          // Look up the KEY text that paired with this VALUE block
+          label = parent.Id ? (valueIdToKeyText.get(parent.Id) ?? null) : null;
+        } else if (parent?.BlockType === BlockType.CELL) {
+          // Checkbox inside a table cell
+          context = "table";
+          // Column header label resolution would require the full table structure;
+          // skip here — the cell text (☑/☐) already flows into tables_extracted.
+        }
+
+        page.checkboxes.push({
+          selected:   isSelected,
+          confidence: block.Confidence ?? 0,
+          geometry: {
+            left:   geo.Left   ?? 0,
+            top:    geo.Top    ?? 0,
+            width:  geo.Width  ?? 0,
+            height: geo.Height ?? 0,
+          },
+          label,
+          context,
+        });
         break;
       }
     }
@@ -521,10 +610,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         page_number:       pd.pageNumber,
         raw_ocr_text:      rawOcrText,
         ocr_status:        "extracted" as const,
-        word_geometry:     pd.wordGeometry.length > 0 ? pd.wordGeometry : null,
-        tables_extracted:  pd.tables.length     > 0 ? pd.tables         : null,
-        forms_extracted:   pd.forms.length      > 0 ? pd.forms          : null,
-        page_dimensions:   pd.dimensions ?? null,
+        word_geometry:        pd.wordGeometry.length > 0 ? pd.wordGeometry  : null,
+        tables_extracted:     pd.tables.length     > 0 ? pd.tables         : null,
+        forms_extracted:      pd.forms.length      > 0 ? pd.forms          : null,
+        checkboxes_extracted: pd.checkboxes.length > 0 ? pd.checkboxes     : null,
+        page_dimensions:      pd.dimensions ?? null,
       };
     });
 
@@ -564,7 +654,8 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     `✓ Textract complete — ${insertedCount}/${totalPages} pages stored | ` +
     `avg word confidence: ${avgConfidence !== null ? (avgConfidence).toFixed(1) + "%" : "n/a"} | ` +
     `${pageDataArray.reduce((n, p) => n + p.tables.length, 0)} tables, ` +
-    `${pageDataArray.reduce((n, p) => n + p.forms.length, 0)} form fields`,
+    `${pageDataArray.reduce((n, p) => n + p.forms.length, 0)} form fields, ` +
+    `${pageDataArray.reduce((n, p) => n + p.checkboxes.length, 0)} checkboxes`,
     insertedCount
   );
 

@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { supabase } from "@/lib/supabase"
-import type { WordGeometry } from "../types"
+import type { WordGeometry, CheckboxElement } from "../types"
 
 export interface PageGeometryData {
-  page_image_path:  string | null
-  word_geometry:    WordGeometry[] | null
-  page_dimensions:  { width: number; height: number } | null
-  raw_ocr_text:     string | null   // kept for search excerpt fallback
+  page_image_path:      string | null
+  word_geometry:        WordGeometry[]     | null
+  page_dimensions:      { width: number; height: number } | null
+  raw_ocr_text:         string | null   // kept for search excerpt fallback
+  checkboxes_extracted: CheckboxElement[] | null
 }
 
 /**
@@ -28,7 +29,7 @@ export function usePageGeometry(
     queryFn: async () => {
       const { data, error } = await supabase
         .from("rv_pages")
-        .select("page_image_path, word_geometry, page_dimensions, raw_ocr_text")
+        .select("page_image_path, word_geometry, page_dimensions, raw_ocr_text, checkboxes_extracted")
         .eq("record_source_id", recordSourceId!)
         .eq("page_number", pageNumber)
         .single()

@@ -24,7 +24,7 @@
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import { Loader2, AlertTriangle } from "lucide-react"
-import type { WordGeometry } from "../types"
+import type { WordGeometry, CheckboxElement } from "../types"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,8 @@ function wordMatches(wordText: string, query: string): boolean {
 
 interface Props {
   imageUrl:     string
-  wordGeometry: WordGeometry[] | null
+  wordGeometry: WordGeometry[]     | null
+  checkboxes?:  CheckboxElement[]  | null
   searchQuery?: string
   pageNumber:   number
 }
@@ -70,7 +71,7 @@ function injectSelectionStyle() {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function PageTextOverlay({ imageUrl, wordGeometry, searchQuery, pageNumber }: Props) {
+export function PageTextOverlay({ imageUrl, wordGeometry, checkboxes, searchQuery, pageNumber }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null)
   const imgRef        = useRef<HTMLImageElement>(null)
 
@@ -196,6 +197,39 @@ export function PageTextOverlay({ imageUrl, wordGeometry, searchQuery, pageNumbe
                     }}
                   >
                     {word.text}
+                  </span>
+                )
+              })}
+
+              {/* ── Checkbox overlays — SELECTION_ELEMENT highlights ──────── */}
+              {checkboxes?.map((cb, i) => {
+                if (!cb.selected) return null  // un-checked: no overlay needed, image shows it
+                const px = cb.geometry.left   * containerSize.w
+                const py = cb.geometry.top    * containerSize.h
+                const pw = cb.geometry.width  * containerSize.w
+                const ph = cb.geometry.height * containerSize.h
+                return (
+                  <span
+                    key={`cb-${i}`}
+                    title={cb.label ?? "Checked"}
+                    style={{
+                      position:     "absolute",
+                      left:         `${px}px`,
+                      top:          `${py}px`,
+                      width:        `${pw}px`,
+                      height:       `${ph}px`,
+                      fontSize:     `${ph * 0.85}px`,
+                      lineHeight:   "1",
+                      color:        "transparent",
+                      // Selected checkboxes get a soft green highlight so reviewers
+                      // can immediately see which items are checked on AD/inspection
+                      // forms without having to scrutinize the scan pixel-by-pixel.
+                      background:   "rgba(16, 185, 129, 0.30)",
+                      borderRadius: "2px",
+                      cursor:       "default",
+                    }}
+                  >
+                    ☑
                   </span>
                 )
               })}

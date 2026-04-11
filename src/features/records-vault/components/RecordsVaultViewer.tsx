@@ -206,6 +206,7 @@ function CenterPanel({
         <PageTextOverlay
           imageUrl={pageImageUrl}
           wordGeometry={geometry?.word_geometry ?? null}
+          checkboxes={geometry?.checkboxes_extracted ?? null}
           searchQuery={searchQuery || undefined}
           pageNumber={pageNumber}
         />
