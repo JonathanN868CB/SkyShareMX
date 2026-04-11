@@ -13,7 +13,7 @@ import IdentityEditorOverlay from "./IdentityEditorOverlay"
 import PropulsionEditorOverlay from "./PropulsionEditorOverlay"
 import DocumentationEditorOverlay from "./DocumentationEditorOverlay"
 import ExportModal from "./ExportModal"
-import { useSourceDocuments, useMmFleetOverview } from "@/features/mm-audit/useMmAuditData"
+import { useAircraftLibraryDocs, useMmFleetOverview } from "@/features/mm-audit/useMmAuditData"
 
 interface Props {
   aircraft: AircraftBase
@@ -2214,38 +2214,43 @@ function DocAuditShield({ status }: { status: "current" | "due_soon" | "overdue"
 }
 
 // ─── Documentation Card ───────────────────────────────────────────────────────
+
+const DOC_ASSEMBLY_BADGE: Record<string, { bg: string; color: string }> = {
+  airframe:  { bg: "rgba(70,100,129,0.18)",  color: "#7aa5c8" },
+  engine:    { bg: "rgba(212,160,23,0.12)",   color: "rgba(212,160,23,0.85)" },
+  apu:       { bg: "rgba(16,185,129,0.12)",   color: "#10b981" },
+  propeller: { bg: "rgba(167,139,250,0.12)",  color: "#a78bfa" },
+}
+
+const DOC_ASSEMBLY_LABELS: Record<string, string> = {
+  airframe: "Airframe", engine: "Engine", apu: "APU", propeller: "Prop",
+}
+
 function DocumentationCard({
-  fields,
+  aircraftId,
   tailNumber,
   cmms,
   familyGroup,
   canDelete,
   canEdit,
   onEdit,
-  mmAuditAircraftId,
 }: {
-  fields: DataField[]
+  aircraftId: string
   tailNumber: string
   cmms: CMMDocument[]
   familyGroup: string | null
   canDelete: boolean
   canEdit: boolean
   onEdit: () => void
-  mmAuditAircraftId?: string
 }) {
   const [showCMMs, setShowCMMs] = useState(false)
-  const { data: sourceDocs } = useSourceDocuments()
+  const { data: libraryDocs, isLoading } = useAircraftLibraryDocs(aircraftId)
   const { data: fleetData } = useMmFleetOverview()
 
-  function resolveField(f: DataField) {
-    if (!f.libraryManualId || !sourceDocs) return null
-    return sourceDocs.find(d => d.id === f.libraryManualId) ?? null
-  }
-
   function getDocAuditStatus(sourceDocumentId: string): "current" | "due_soon" | "overdue" | "never_audited" {
-    if (!fleetData || !mmAuditAircraftId) return "never_audited"
+    if (!fleetData) return "never_audited"
     const row = fleetData.rows.find(
-      r => r.aircraft_id === mmAuditAircraftId && r.source_document_id === sourceDocumentId
+      r => r.aircraft_id === aircraftId && r.source_document_id === sourceDocumentId
     )
     if (!row?.latest_audit) return "never_audited"
     const due = new Date(row.latest_audit.next_due_date)
@@ -2327,21 +2332,35 @@ function DocumentationCard({
           </div>
 
         <div className="px-5 py-1">
-          {fields.map((f, i) => {
-            const libDoc = resolveField(f)
-
-            // ── Library-linked row ──
-            if (libDoc) {
-              const href = libDoc.document_url
-              const note = `${libDoc.document_number} · Rev ${libDoc.current_revision}${libDoc.current_rev_date ? " · " + formatRevDate(libDoc.current_rev_date) : ""}`
-              const auditStatus = getDocAuditStatus(libDoc.id)
+          {isLoading ? (
+            <div className="py-4 space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-10 rounded skeleton-gold" style={{ opacity: 0.5 }} />
+              ))}
+            </div>
+          ) : !libraryDocs || libraryDocs.length === 0 ? (
+            <div className="py-6 text-center">
+              <p style={{ fontSize: "12px", color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
+                No manuals linked — use Edit to add from the compliance library.
+              </p>
+            </div>
+          ) : (
+            libraryDocs.map(doc => {
+              const href        = doc.document_url
+              const note        = `${doc.document_number} · Rev ${doc.current_revision}${doc.current_rev_date ? " · " + formatRevDate(doc.current_rev_date) : ""}`
+              const auditStatus = getDocAuditStatus(doc.source_document_id)
+              const badge       = DOC_ASSEMBLY_BADGE[doc.assembly_type] ?? { bg: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.4)" }
               const inner = (
                 <div className="flex items-start gap-3">
                   <DocAuditShield status={auditStatus} />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-sm" style={{ color: "hsl(var(--foreground))", fontWeight: 500 }}>
-                        {libDoc.document_name}
+                        {doc.document_name}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider"
+                        style={{ fontFamily: "var(--font-heading)", background: badge.bg, color: badge.color }}>
+                        {DOC_ASSEMBLY_LABELS[doc.assembly_type] ?? doc.assembly_type}
                       </span>
                       {href && <span style={{ color: "#a78bfa", fontSize: "0.8rem", lineHeight: 1, flexShrink: 0 }}>↗</span>}
                     </div>
@@ -2352,7 +2371,7 @@ function DocumentationCard({
                 </div>
               )
               return (
-                <div key={i} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
+                <div key={doc.id} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
                   {href ? (
                     <a href={href} target="_blank" rel="noopener noreferrer"
                       style={{ display: "block", textDecoration: "none", borderRadius: 4, margin: "-4px -6px", padding: "4px 6px", transition: "background 0.12s ease" }}
@@ -2363,59 +2382,8 @@ function DocumentationCard({
                   ) : inner}
                 </div>
               )
-            }
-
-            // ── Standard row ──
-            const s          = fieldStatus(f.value)
-            const trimmedVal = f.value.trim()
-            const href       = f.link || (trimmedVal.toLowerCase().startsWith("http") ? trimmedVal : null)
-            const isOnFile   = !!href || (s === "enrolled" && !f.value.startsWith("None"))
-            const note       = f.note && f.note.trim() ? f.note.trim() : null
-
-            const inner = (
-              <div className="flex items-start gap-3">
-                <StatusDot value={isOnFile ? "active" : f.value} size={8} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm"
-                      style={{
-                        color: href ? "hsl(var(--foreground))" : s === "enrolled" ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
-                        opacity: href ? 1 : s === "enrolled" ? 1 : 0.8,
-                        fontWeight: href ? 500 : 400,
-                      }}>
-                      {f.label}
-                    </span>
-                    {href && (
-                      <span style={{ color: "var(--skyshare-gold)", fontSize: "0.8rem", lineHeight: 1, flexShrink: 0 }}>↗</span>
-                    )}
-                  </div>
-                  {note && (
-                    <div className="text-xs mt-0.5"
-                      style={{
-                        color: href ? "var(--skyshare-gold)" : "hsl(var(--muted-foreground))",
-                        opacity: href ? 0.75 : 0.6,
-                        fontFamily: "'Courier Prime','Courier New',monospace",
-                      }}>
-                      {note}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-
-            return (
-              <div key={i} className="py-2.5" style={{ borderBottom: "0.5px solid hsl(var(--border))" }}>
-                {href ? (
-                  <a href={href} target="_blank" rel="noopener noreferrer"
-                    style={{ display: "block", textDecoration: "none", borderRadius: 4, margin: "-4px -6px", padding: "4px 6px", transition: "background 0.12s ease" }}
-                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(212,160,23,0.07)")}
-                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                    {inner}
-                  </a>
-                ) : inner}
-              </div>
-            )
-          })}
+            })
+          )}
         </div>
 
       </div>   {/* card-elevated */}
@@ -2676,9 +2644,6 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
   async function handlePropulsionSave(powerplant: DataField[], apu: DataField[] | null, hobbsDifferential: number | null) {
     await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, powerplant, apu, hobbsDifferential } })
   }
-  async function handleDocumentationSave(documentation: DataField[]) {
-    await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, documentation } })
-  }
   async function handleNotesSave(notes: string) {
     await upsert.mutateAsync({ tailNumber: aircraft.tailNumber, detail: { ...baseDetail, notes } })
   }
@@ -2808,14 +2773,13 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
                 onEdit={() => setShowProgramsEditor(true)}
               />
               <DocumentationCard
-                fields={baseDetail.documentation}
+                aircraftId={aircraft.id}
                 tailNumber={aircraft.tailNumber}
                 cmms={baseDetail.cmms ?? []}
                 familyGroup={familyGroup}
                 canDelete={canDelete}
                 canEdit={canEditSection}
                 onEdit={() => setShowDocumentationEditor(true)}
-                mmAuditAircraftId={aircraft.id}
               />
             </div>
           </div>
@@ -2879,10 +2843,9 @@ export default function AircraftDetailOverlay({ aircraft, detail: fallbackDetail
       )}
       {showDocumentationEditor && (
         <DocumentationEditorOverlay
-          initialFields={baseDetail.documentation}
+          aircraftId={aircraft.id}
           tailNumber={aircraft.tailNumber}
-          canLinkLibrary={canEditSection}
-          onSave={handleDocumentationSave}
+          canEdit={canEditSection}
           onClose={() => setShowDocumentationEditor(false)}
         />
       )}
