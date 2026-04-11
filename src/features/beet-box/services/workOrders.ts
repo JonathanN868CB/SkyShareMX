@@ -493,6 +493,45 @@ export async function updateWorkOrder(
 
 // ─── Items ────────────────────────────────────────────────────────────────────
 
+export async function findDiscrepancy(payload: {
+  workOrderId:    string
+  parentItemId:   string
+  logbookSection: string
+  discrepancyType: "airworthy" | "recommendation"
+  discrepancy:    string
+  correctiveAction: string
+  estimatedHours: number
+  laborRate:      number
+  partNumber?:    string
+  itemNumber:     number
+  reportedById:   string | null
+}): Promise<WOItem> {
+  const { data, error } = await supabase
+    .from("bb_work_order_items")
+    .insert({
+      work_order_id:          payload.workOrderId,
+      parent_item_id:         payload.parentItemId,
+      item_number:            payload.itemNumber,
+      category:               payload.discrepancyType === "airworthy" ? "Airworthy Discrepancy" : "Recommendation",
+      logbook_section:        payload.logbookSection,
+      discrepancy:            payload.discrepancy,
+      corrective_action:      payload.correctiveAction,
+      estimated_hours:        payload.estimatedHours,
+      labor_rate:             payload.laborRate,
+      part_number:            payload.partNumber ?? null,
+      discrepancy_type:       payload.discrepancyType,
+      customer_approval_status: "pending",
+      sign_off_required:      true,
+      item_status:            "pending",
+      mechanic_id:            payload.reportedById,
+    })
+    .select("*")
+    .single()
+
+  if (error) throw error
+  return mapItemRow({ ...data, bb_work_order_item_parts: [], bb_work_order_item_labor: [], bb_wo_item_attachments: [] })
+}
+
 export async function upsertWOItem(
   item: Partial<WOItem> & { workOrderId: string; category: string; itemNumber: number }
 ): Promise<WOItem> {
