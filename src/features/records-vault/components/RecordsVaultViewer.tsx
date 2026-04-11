@@ -228,6 +228,7 @@ function CenterPanel({
               pageNumber={pageNumber}
               pageKey={`${recordSourceId}-${pageNumber}`}
               searchQuery={searchQuery || undefined}
+              wordGeometry={geometry?.word_geometry ?? null}
               onNextPage={onNextPage}
               onPrevPage={onPrevPage}
             />

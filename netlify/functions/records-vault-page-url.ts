@@ -15,6 +15,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl as getS3SignedUrl } from "@aws-sdk/s3-request-presigner";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -116,7 +118,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   const { data: source, error: sourceErr } = await userClient
     .from("rv_record_sources")
-    .select("id, storage_path")
+    .select("id, storage_path, s3_key")
     .eq("id", recordSourceId)
     .single();
 
@@ -124,7 +126,39 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(404, { error: "Record source not found or access denied" });
   }
 
-  // ── No page number → full PDF signed URL (legacy path) ──────────────────────
+  // ── S3-ingested document: generate presigned URL from S3 ─────────────────────
+  // Documents ingested via the Textract pipeline have no Supabase storage_path —
+  // they live in S3 only. Return a presigned GET URL for the full PDF and let
+  // PDF.js use HTTP range requests to fetch only the pages it needs.
+  if (!source.storage_path && source.s3_key) {
+    const awsRegion = process.env.TEXTRACT_REGION ?? "us-east-2";
+    const awsKeyId  = process.env.TEXTRACT_KEY_ID;
+    const awsSecret = process.env.TEXTRACT_SECRET_KEY;
+    const s3Bucket  = process.env.TEXTRACT_S3_BUCKET;
+
+    if (!awsKeyId || !awsSecret || !s3Bucket) {
+      return jsonResponse(500, { error: "S3 credentials not configured" });
+    }
+
+    const s3 = new S3Client({
+      region: awsRegion,
+      credentials: { accessKeyId: awsKeyId, secretAccessKey: awsSecret },
+    });
+
+    const command = new GetObjectCommand({ Bucket: s3Bucket, Key: source.s3_key });
+    const signedUrl = await getS3SignedUrl(s3, command, { expiresIn: SIGNED_URL_EXPIRY_SECONDS });
+
+    // S3 docs: return full PDF URL. The page number, if provided, is used by the
+    // caller (PDF.js) to navigate within the document — no server-side extraction needed.
+    return jsonResponse(200, { signedUrl, source: "s3", isFullPdf: true });
+  }
+
+  // ── No Supabase storage_path and no s3_key — unrecoverable ───────────────────
+  if (!source.storage_path) {
+    return jsonResponse(404, { error: "Document file not available" });
+  }
+
+  // ── No page number → full PDF signed URL (Supabase Storage) ─────────────────
   if (pageNumber === null || pageNumber < 1) {
     const { data, error: urlError } = await adminClient.storage
       .from("records-vault")
