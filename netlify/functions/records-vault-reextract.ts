@@ -96,16 +96,30 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   // Fire-and-forget: don't await the edge functions — they run independently
   // on Supabase and report progress via rv_ingestion_log + Realtime.
   // Awaiting them here caused Netlify function timeouts on larger documents.
-  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
+  const headers     = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
+  const siteUrl     = process.env.URL ?? process.env.DEPLOY_URL;
+  const rasterizeUrl = siteUrl
+    ? `${siteUrl}/.netlify/functions/records-vault-rasterize-background`
+    : null;
+
   for (const id of sourceIds) {
-    const body = JSON.stringify({ record_source_id: id });
+    const edgeBody = JSON.stringify({ record_source_id: id });
     // Reset statuses so the Pipeline UI shows them as running
     await adminClient
       .from("rv_record_sources")
       .update({ extraction_status: "extracting", chunk_status: "chunking" })
       .eq("id", id);
-    fetch(edgeFnUrl,  { method: "POST", headers, body }).catch(() => {});
-    fetch(embedFnUrl, { method: "POST", headers, body }).catch(() => {});
+    fetch(edgeFnUrl,  { method: "POST", headers, body: edgeBody }).catch(() => {});
+    fetch(embedFnUrl, { method: "POST", headers, body: edgeBody }).catch(() => {});
+
+    // Also trigger background rasterization so page images are refreshed.
+    if (rasterizeUrl) {
+      fetch(rasterizeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recordSourceId: id }),
+      }).catch(() => {});
+    }
   }
 
   return json(200, {
