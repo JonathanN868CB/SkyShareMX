@@ -173,24 +173,35 @@ function ThumbnailItem({
 // ─── Center panel — image overlay OR PDF.js fallback ─────────────────────────
 
 function CenterPanel({
-  recordSourceId, pageNumber, searchQuery, onNextPage, onPrevPage,
+  recordSourceId, pageNumber, searchQuery, isS3Ingested, onNextPage, onPrevPage,
 }: {
   recordSourceId: string
   pageNumber:     number
   searchQuery:    string
+  isS3Ingested:   boolean
   onNextPage:     () => void
   onPrevPage:     () => void
 }) {
-  const { data: pageImageUrl, isLoading: imageUrlLoading } = useRecordPageImageUrl(recordSourceId, pageNumber)
+  const { data: pageImageUrl, isLoading: imageUrlLoading } = useRecordPageImageUrl(
+    recordSourceId,
+    pageNumber,
+    // S3-ingested docs rely on the background rasterizer — poll until it lands
+    // so the viewer flips from "Processing" to the rendered page automatically.
+    { pollWhileMissing: isS3Ingested },
+  )
   const { data: geometry,    isLoading: geoLoading }       = usePageGeometry(recordSourceId, pageNumber)
 
-  // Only fetch the full PDF URL when falling back to PDF.js (no stored image)
-  const needsPdf = !pageImageUrl && !imageUrlLoading
+  // S3-ingested docs never fall back to PDF.js — PDF.js cannot decode the
+  // codecs that server-side rasterization exists to work around (JBIG2,
+  // CCITTFax). Show a processing state instead until the image lands.
+  const needsPdf = !pageImageUrl && !imageUrlLoading && !isS3Ingested
   const { data: pdfUrl, isLoading: pdfLoading, error: pdfError } = useRecordPageUrl(
     needsPdf ? recordSourceId : null,
   )
 
   const isLoading = imageUrlLoading || geoLoading || (needsPdf && pdfLoading)
+  const showProcessing =
+    isS3Ingested && !pageImageUrl && !imageUrlLoading
 
   return (
     <div className="relative w-full h-full">
@@ -212,8 +223,25 @@ function CenterPanel({
         />
       )}
 
-      {/* Path B — no stored image: fallback to PDF.js */}
-      {!pageImageUrl && !imageUrlLoading && (
+      {/* Path B — S3-ingested doc, rasterization still running. Polling the
+          image URL every 5s will flip us into Path A as soon as the page
+          image lands in Supabase Storage. */}
+      {showProcessing && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-8 text-center">
+          <Loader2 className="h-8 w-8 animate-spin" style={{ color: "var(--skyshare-gold)" }} />
+          <p className="text-xs font-semibold uppercase tracking-widest text-foreground/80">
+            Preparing page {pageNumber}
+          </p>
+          <p className="text-[11px] text-muted-foreground max-w-xs leading-relaxed">
+            This document is being rendered on the server. Pages will appear automatically as they become available — usually within a minute of upload.
+          </p>
+        </div>
+      )}
+
+      {/* Path C — legacy Supabase-uploaded docs (client-side rasterized):
+          fall back to PDF.js, which renders cleanly because the upload
+          modal pre-normalized the PDF. */}
+      {!pageImageUrl && !imageUrlLoading && !isS3Ingested && (
         <>
           {pdfError && (
             <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
@@ -518,15 +546,21 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     queryFn: async () => {
       const { data, error } = await supabase
         .from("rv_record_sources")
-        .select("id, page_count, ocr_quality_score, notes, events_extracted, extraction_status")
+        .select("id, page_count, ocr_quality_score, notes, events_extracted, extraction_status, s3_key, storage_path")
         .eq("id", recordSourceId!)
         .single()
       if (error) throw error
-      return data as RecordSource
+      return data as RecordSource & { s3_key: string | null; storage_path: string | null }
     },
     enabled: open && !!recordSourceId,
     staleTime: 5 * 60 * 1000,
   })
+
+  // S3-ingested docs skip the PDF.js fallback entirely — PDF.js cannot render
+  // the compression codecs that the server-side rasterizer exists to work
+  // around (JBIG2, CCITTFax). Detected by presence of s3_key with no
+  // storage_path, which is the canonical shape for Textract pipeline docs.
+  const isS3Ingested = !!source?.s3_key && !source?.storage_path
 
   const hasPrevHit = currentHitIdx > 0
   const hasNextHit = currentHitIdx < hits.length - 1
@@ -684,6 +718,7 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
                 recordSourceId={recordSourceId}
                 pageNumber={currentPage}
                 searchQuery={query}
+                isS3Ingested={isS3Ingested}
                 onNextPage={() => navigate(1)}
                 onPrevPage={() => navigate(-1)}
               />

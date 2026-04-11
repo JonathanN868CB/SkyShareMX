@@ -204,6 +204,10 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     }
   }
 
+  // Outer safety net — any throw below this point writes rasterize_error so
+  // the UI's Pipeline tab doesn't stick at "rasterizing…" forever. Without
+  // this, a crash before line 319 leaves the user guessing what went wrong.
+  try {
   // ── 1. Look up the record source ──────────────────────────────────────────
   const { data: source, error: sourceErr } = await supabase
     .from("rv_record_sources")
@@ -323,4 +327,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     statusCode: 200,
     body: JSON.stringify({ recordSourceId, pageCount, succeeded, failed }),
   };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack ?? "" : "";
+    console.error(`[rasterize] Fatal for ${recordSourceId}:`, msg, stack);
+    await log("rasterize_error", `Fatal: ${msg}`);
+    return { statusCode: 500, body: JSON.stringify({ error: msg }) };
+  }
 };
