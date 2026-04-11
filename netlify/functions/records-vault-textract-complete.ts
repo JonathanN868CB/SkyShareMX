@@ -710,6 +710,31 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     await log("embedding_error", `generate-page-embeddings trigger failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // Phase 4: rasterize PDF pages to JPEG via PDFium (background function)
+  // Runs in parallel with extraction/embedding — doesn't block the response.
+  // The viewer shows rendered images once they land; until then it falls back
+  // to PDF.js rendering which may fail on JBIG2/CCITTFax pages.
+  try {
+    const siteUrl = process.env.URL ?? process.env.DEPLOY_URL;
+    if (siteUrl) {
+      const rasterizeUrl = `${siteUrl}/.netlify/functions/records-vault-rasterize-background`;
+      // Fire-and-forget — background functions return 202 immediately
+      fetch(rasterizeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recordSourceId }),
+      }).catch((err) => {
+        console.error("[textract-complete] rasterize trigger network error:", err);
+      });
+      await log("rasterize_triggered", "Phase 4: records-vault-rasterize-background triggered");
+    } else {
+      console.warn("[textract-complete] URL env missing — cannot trigger rasterize");
+    }
+  } catch (err) {
+    console.error("[textract-complete] rasterize trigger failed:", err);
+    await log("rasterize_error", `rasterize trigger failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   return {
     statusCode: 200,
     body: JSON.stringify({
