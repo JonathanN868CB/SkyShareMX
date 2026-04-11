@@ -286,6 +286,7 @@ export type AuditEntryType =
   | "item_status_change"
   | "text_edit"
   | "item_created"
+  | "item_deleted"
   | "wo_created"
 
 export interface AuditEntry {

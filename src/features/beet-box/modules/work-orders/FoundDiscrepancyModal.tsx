@@ -118,7 +118,7 @@ export function FoundDiscrepancyModal({ open, onClose, parentItem, laborRate, on
           <textarea
             value={discrepancy}
             onChange={e => setDiscrepancy(e.target.value)}
-            placeholder="Describe what was found…"
+            placeholder=""
             rows={3}
             className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none resize-none"
             style={{ background: "hsl(0,0%,9%)", border: "1px solid hsl(0,0%,22%)" }}
@@ -133,7 +133,7 @@ export function FoundDiscrepancyModal({ open, onClose, parentItem, laborRate, on
           <textarea
             value={correctiveAction}
             onChange={e => setCorrectiveAction(e.target.value)}
-            placeholder="What repair or action is recommended…"
+            placeholder=""
             rows={2}
             className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none resize-none"
             style={{ background: "hsl(0,0%,9%)", border: "1px solid hsl(0,0%,22%)" }}
@@ -169,7 +169,7 @@ export function FoundDiscrepancyModal({ open, onClose, parentItem, laborRate, on
               type="text"
               value={partNumber}
               onChange={e => setPartNumber(e.target.value)}
-              placeholder="e.g. 3003648-1"
+            placeholder=""
               className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none"
               style={{ background: "hsl(0,0%,9%)", border: "1px solid hsl(0,0%,22%)" }}
             />
