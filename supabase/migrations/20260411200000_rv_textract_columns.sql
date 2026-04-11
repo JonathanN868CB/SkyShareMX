@@ -7,7 +7,7 @@
 --                        Each word includes normalized coordinates (0.0–1.0)
 --                        relative to the page image. The Phase B viewer uses
 --                        these to project a transparent selectable text layer
---                        onto the scanned page image (Blue Tail style).
+--                        onto the scanned page image as a selectable text layer.
 --
 --   tables_extracted   — TABLE/CELL block structures. Each table is stored as
 --                        a row/column grid of cells. Phase C extraction uses

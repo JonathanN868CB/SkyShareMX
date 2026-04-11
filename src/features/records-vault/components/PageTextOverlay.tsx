@@ -1,5 +1,5 @@
 /**
- * PageTextOverlay — Blue Tail style page viewer
+ * PageTextOverlay — Textract word-overlay page viewer
  *
  * Renders a scanned page image with a transparent, selectable text layer
  * projected exactly onto the image using Textract word-level bounding boxes.
@@ -49,7 +49,7 @@ interface Props {
 }
 
 // ─── CSS injected once for ::selection ───────────────────────────────────────
-// Keeps the drag-select highlight consistent with the Blue Tail blue.
+// Keeps the drag-select highlight consistent across the viewer.
 
 let selectionStyleInjected = false
 function injectSelectionStyle() {

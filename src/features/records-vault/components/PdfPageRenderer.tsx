@@ -52,7 +52,7 @@ interface PdfPageRendererProps {
   /**
    * Textract word-level geometry for the current page.
    * When provided, a transparent text overlay is projected over the canvas
-   * using normalized bounding boxes — same as the Blue Tail PageTextOverlay.
+   * using normalized bounding boxes — same approach as PageTextOverlay.
    * Search matches are highlighted gold. Text selection works natively.
    * When provided, the PDF.js built-in text layer is disabled to avoid duplication.
    */

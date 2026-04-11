@@ -1,5 +1,5 @@
 /**
- * RecordsVaultViewer — Phase B viewer (Blue Tail style)
+ * RecordsVaultViewer — Phase B document viewer
  *
  * Layout:
  *   [LEFT 15%: page strip] | [CENTER 85%: scanned page + text overlay]
