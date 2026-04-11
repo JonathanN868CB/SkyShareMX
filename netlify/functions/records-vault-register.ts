@@ -1,6 +1,8 @@
 // records-vault-register — AUTH REQUIRED
-// Registers an uploaded PDF as an rv_record_sources row, then fires the
-// process-record-source Supabase Edge Function (fire-and-forget) to kick off OCR.
+// Registers an uploaded document as an rv_record_sources row (ingestion_status: "pending").
+// OCR is handled by the AWS Textract pipeline — documents uploaded to S3 trigger
+// records-vault-s3-ingest automatically via SNS. This function only handles the
+// Supabase Storage path (legacy upload flow) for metadata registration.
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -40,8 +42,6 @@ function getAccessToken(event: HandlerEvent): string | null {
   return token.length > 0 ? token : null;
 }
 
-const SUPABASE_PROJECT_URL = "https://xzcrkzvonjyznzxdbpjj.supabase.co";
-const EDGE_FUNCTION_URL    = `${SUPABASE_PROJECT_URL}/functions/v1/process-record-source`;
 
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
   if (event.httpMethod === "OPTIONS") {
@@ -153,27 +153,8 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(500, { error: "Failed to register record source" });
   }
 
-  // Fire-and-forget: trigger OCR ingestion.
-  // process-record-source chains event extraction + embeddings internally
-  // after OCR completes via EdgeRuntime.waitUntil — no chaining needed here.
-  (async () => {
-    try {
-      const ocrResp = await fetch(EDGE_FUNCTION_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` },
-        body: JSON.stringify({
-          record_source_id: newSource.id,
-          page_images_pre_uploaded: pageImagesPreRendered > 0,
-        }),
-      });
-
-      if (!ocrResp.ok) {
-        console.error("[records-vault-register] OCR Edge Function failed:", await ocrResp.text());
-      }
-    } catch (err) {
-      console.error("[records-vault-register] Pipeline trigger failed:", err);
-    }
-  })();
-
+  // OCR ingestion is handled by the Textract pipeline (S3 → SNS → records-vault-s3-ingest).
+  // For documents uploaded via Supabase Storage (this path), the document sits at
+  // ingestion_status: "pending" until it is re-submitted through the Textract path.
   return jsonResponse(200, { recordSourceId: newSource.id });
 };
