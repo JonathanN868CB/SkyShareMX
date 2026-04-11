@@ -9,8 +9,8 @@
  * image using bounding-box geometry. Search matches are highlighted in gold
  * directly on the scan.
  *
- * For documents without a stored page image (standard Mistral-indexed PDFs
- * where PDF.js handles rendering), the center falls back to PdfPageRenderer.
+ * For documents without a stored page image, the center falls back to
+ * PdfPageRenderer (PDF.js) which renders directly from the stored PDF.
  *
  * Navigation:
  *   - Scroll the page strip OR use ←/→/↑/↓ keyboard arrows
@@ -201,7 +201,7 @@ function CenterPanel({
         </div>
       )}
 
-      {/* Path A — stored page image: Textract documents, or Mistral JBIG2/CCITTFax scans */}
+      {/* Path A — stored page image: Textract documents with word-level overlay */}
       {pageImageUrl && (
         <PageTextOverlay
           imageUrl={pageImageUrl}
@@ -212,7 +212,7 @@ function CenterPanel({
         />
       )}
 
-      {/* Path B — no stored image: standard Mistral PDFs rendered by PDF.js */}
+      {/* Path B — no stored image: fallback to PDF.js */}
       {!pageImageUrl && !imageUrlLoading && (
         <>
           {pdfError && (

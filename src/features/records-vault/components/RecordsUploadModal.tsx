@@ -266,8 +266,8 @@ export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId 
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Page rendering failed"
       console.warn(`[RecordsUpload] PDFium rendering failed for ${fileKey}:`, msg)
-      // Fall back to queued without rendered pages — the server-side pipeline
-      // will still attempt Mistral image extraction as a backup.
+      // Fall back to queued without rendered pages — the document will be
+      // processed by the Textract pipeline after S3 upload.
       setQueue((prev) =>
         prev.map((f) =>
           f.key === fileKey

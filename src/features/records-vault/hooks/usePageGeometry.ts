@@ -13,9 +13,8 @@ export interface PageGeometryData {
 /**
  * Fetches the geometry and rendering data for a single rv_pages row.
  *
- * word_geometry is populated by the Textract pipeline. For Mistral-indexed
- * documents it will be null — the viewer falls back to plain image rendering
- * with no text overlay.
+ * word_geometry is populated by the Textract pipeline. For documents not yet
+ * indexed by Textract it will be null — the viewer falls back to PdfPageRenderer.
  *
  * page_image_path is populated by either pipeline when a page image is stored
  * in Supabase Storage. When null the viewer falls back to PdfPageRenderer.
