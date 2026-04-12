@@ -14,8 +14,8 @@
 // of the pipeline (using the service role as Bearer), and from the UI when
 // a manager clicks "Regenerate" or submits the edit modal.
 
-import { createClient } from "@supabase/supabase-js";
-import Anthropic from "@anthropic-ai/sdk";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { runHaikuTask } from "./_haiku-task";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -78,8 +78,8 @@ function coerceLabel(raw: unknown): DisplayLabel {
 }
 
 // ─── Haiku generation ────────────────────────────────────────────────────────
-
-const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+// All Haiku traffic routes through _haiku-task.runHaikuTask so we get task
+// tagging, bounded tokens, a timeout, and a log row per call.
 
 const LABEL_SYSTEM_PROMPT = `You label aviation maintenance logbook PDFs for a records vault. You will receive OCR text from the first few pages of a scanned document plus any form fields the OCR engine pulled out. Return ONE JSON object with exactly these keys:
 
@@ -101,13 +101,15 @@ RULES:
 - logbook_number: look for volume markers on the cover or first page like "LOG BOOK NO. 2", "Book 1 of 3", "Volume III", "Logbook #4". Normalize to the form "Logbook One", "Logbook Two", "Logbook Three", etc. using the English word for the number (One through Ten; for 11+ use "Logbook 11"). If no volume marker is visible, return null — do NOT guess.`;
 
 async function generateLabel(args: {
-  anthropic: Anthropic;
-  originalFilename: string;
+  apiKey:               string;
+  adminClient:          SupabaseClient;
+  recordSourceId:       string;
+  originalFilename:     string;
   observedRegistration: string | null;
-  dateRangeHintStart: string | null;
-  dateRangeHintEnd: string | null;
-  ocrText: string;
-  forms: string;
+  dateRangeHintStart:   string | null;
+  dateRangeHintEnd:     string | null;
+  ocrText:              string;
+  forms:                string;
 }): Promise<DisplayLabel> {
   const userContent = [
     `FILENAME: ${args.originalFilename}`,
@@ -123,20 +125,17 @@ async function generateLabel(args: {
     args.forms.slice(0, 2000),
   ].filter(Boolean).join("\n");
 
-  const resp = await args.anthropic.messages.create({
-    model:     HAIKU_MODEL,
-    max_tokens: 400,
-    system:    LABEL_SYSTEM_PROMPT,
-    messages:  [{ role: "user", content: userContent }],
+  const { parsed } = await runHaikuTask({
+    task:           "label_generate",
+    apiKey:         args.apiKey,
+    adminClient:    args.adminClient,
+    recordSourceId: args.recordSourceId,
+    system:         LABEL_SYSTEM_PROMPT,
+    user:           userContent,
+    maxTokens:      400,
+    timeoutMs:      30_000,
   });
 
-  let raw = resp.content[0]?.type === "text" ? resp.content[0].text : "{}";
-  raw = raw.trim();
-  if (raw.startsWith("```")) {
-    raw = raw.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-  }
-  const match = raw.match(/\{[\s\S]*\}/);
-  const parsed = match ? JSON.parse(match[0]) : {};
   return coerceLabel(parsed);
 }
 
@@ -198,7 +197,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     const label = coerceLabel(payload.label);
     const { error: updErr } = await adminClient
       .from("rv_record_sources")
-      .update({ display_label: label })
+      .update({ display_label: label, label_status: "generated" })
       .eq("id", recordSourceId);
     if (updErr) return json(500, { error: `Update failed: ${updErr.message}` });
     return json(200, { ok: true, label });
@@ -245,12 +244,13 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return json(200, { ok: false, skipped: "No OCR text available yet" });
   }
 
-  // 3. Call Haiku
+  // 3. Call Haiku (via _haiku-task guardrail)
   let label: DisplayLabel;
   try {
-    const anthropic = new Anthropic({ apiKey: anthropicKey });
     label = await generateLabel({
-      anthropic,
+      apiKey:               anthropicKey,
+      adminClient,
+      recordSourceId,
       originalFilename:     source.original_filename,
       observedRegistration: source.observed_registration,
       dateRangeHintStart:   source.date_range_start,
@@ -261,17 +261,30 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[label] Haiku failed for ${recordSourceId}:`, msg);
+    await adminClient
+      .from("rv_record_sources")
+      .update({ label_status: "failed" })
+      .eq("id", recordSourceId);
+    await adminClient.from("rv_ingestion_log").insert({
+      record_source_id: recordSourceId,
+      step:             "label_failed",
+      message:          `Label generation failed: ${msg}`,
+    });
     return json(200, { ok: false, skipped: `Haiku error: ${msg}` });
   }
 
   // 4. Persist
   const { error: updErr } = await adminClient
     .from("rv_record_sources")
-    .update({ display_label: label })
+    .update({ display_label: label, label_status: "generated" })
     .eq("id", recordSourceId);
 
   if (updErr) {
     console.error(`[label] Update failed for ${recordSourceId}:`, updErr.message);
+    await adminClient
+      .from("rv_record_sources")
+      .update({ label_status: "failed" })
+      .eq("id", recordSourceId);
     return json(500, { error: `Update failed: ${updErr.message}` });
   }
 

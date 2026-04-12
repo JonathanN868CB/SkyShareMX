@@ -71,7 +71,6 @@ const RecordsVaultApp      = lazy(() => import("@/features/records-vault/Records
 const RecordsVaultRedirect = lazy(() => import("@/features/records-vault/RecordsVaultApp").then(m => ({ default: m.RecordsVaultRedirect })))
 const RecordsVaultSearch   = lazy(() => import("@/features/records-vault/pages/RecordsVaultSearchPage"))
 const RecordsVaultBrowse   = lazy(() => import("@/features/records-vault/pages/RecordsVaultBrowsePage"))
-const RecordsVaultTimeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultTimelinePage"))
 const RecordsVaultPipeline = lazy(() => import("@/features/records-vault/pages/RecordsVaultPipelinePage"))
 const NotFound = lazy(() => import("@/pages/NotFound"))
 const ProjectsApp = lazy(() => import("@/features/projects/ProjectsApp"))
@@ -243,7 +242,6 @@ const routes: RouteObject[] = [
       { index: true,           element: guard("Records Vault", <RecordsVaultRedirect />) },
       { path: "search",        element: guard("Records Vault", <RecordsVaultSearch />) },
       { path: "browse",        element: guard("Records Vault", <RecordsVaultBrowse />) },
-      { path: "timeline",      element: guard("Records Vault", <RecordsVaultTimeline />) },
       { path: "pipeline",      element: guard("Records Vault", <RecordsVaultPipeline />) },
     ],
   },

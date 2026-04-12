@@ -9,6 +9,9 @@ export type SourceCategory =
 export type IngestionStatus   = "pending" | "extracting" | "indexed" | "failed"
 export type ExtractionStatus  = "pending" | "extracting" | "complete" | "failed"
 export type ChunkStatus       = "pending" | "chunking" | "chunked" | "failed"
+export type RasterizeStatus   = "pending" | "rasterized" | "partial" | "failed"
+export type EventsStatus      = "pending" | "extracted" | "partial" | "failed"
+export type LabelStatus       = "pending" | "generated" | "failed"
 
 export type LogbookComponent = "airframe" | "engine" | "propeller"
 
@@ -66,6 +69,10 @@ export type RecordSource = {
   // Phase 3 fields
   chunk_status: ChunkStatus
   chunks_generated: number | null
+  // Per-stage status (Phase 4) — parallel to legacy columns
+  rasterize_status: RasterizeStatus
+  events_status:    EventsStatus
+  label_status:     LabelStatus
   // Rendering
   page_images_stored: number | null
   // AWS Textract pipeline fields

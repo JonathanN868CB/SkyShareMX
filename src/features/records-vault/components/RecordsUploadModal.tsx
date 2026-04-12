@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import { Upload, X, File, FileArchive, Image, CheckCircle2, AlertCircle, Loader2, MonitorCog } from "lucide-react"
 import { unzipSync } from "fflate"
 import { useQueryClient } from "@tanstack/react-query"
@@ -28,7 +29,15 @@ import { pdfHasProblematicCodec, renderPdfPages, type RenderedPage, type RenderP
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type FileStatus = "queued" | "rendering" | "uploading" | "processing" | "done" | "failed"
+type FileStatus =
+  | "queued"
+  | "rendering"
+  | "uploading"
+  | "verifying"
+  | "awaiting_register"
+  | "processing"
+  | "done"
+  | "failed"
 
 interface QueuedFile {
   key: string              // unique key for React rendering
@@ -38,11 +47,32 @@ interface QueuedFile {
   importBatch: string | null  // set when extracted from a zip
   status: FileStatus
   error?: string
+  // Byte-progress during the storage PUT (0..sizeBytes)
+  uploadedBytes?: number
   // JBIG2/CCITTFax rendering
   needsRendering?: boolean          // true if problematic codec detected
   detectedCodec?: string | null     // "JBIG2Decode" | "CCITTFaxDecode"
   renderedPages?: RenderedPage[]    // JPEG page images from PDFium
   renderProgress?: RenderProgress   // live rendering progress
+}
+
+/** Result of phase-A storage upload, consumed by phase-B register. */
+type PutResult = {
+  storagePath: string
+  fileHash:    string
+}
+
+// Phase A: how many files to PUT to Supabase Storage in parallel. Cheap at
+// the storage layer, and the client's uplink is the bottleneck anyway.
+const PUT_CONCURRENCY = 4
+
+// Phase B: gap between register() calls. Each register fires a Textract
+// start-job, so staggering avoids the provisioned-throughput stampede we
+// saw in the N477KR batch test.
+const REGISTER_STAGGER_MS = 1000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -115,12 +145,6 @@ function extractFilesFromZip(
     }))
 }
 
-// Upload concurrency — process files one at a time to avoid overwhelming
-// downstream AI APIs (Claude Haiku for extraction, Voyage AI for embeddings).
-// Each file triggers a full pipeline: OCR → extract → embed. Running multiple
-// files concurrently causes rate limit errors (429s) on those APIs.
-const CONCURRENCY = 1
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -132,6 +156,7 @@ interface Props {
 
 export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId }: Props) {
   const { toast } = useToast()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   // Shared metadata (applies to all files in the batch)
@@ -306,140 +331,206 @@ export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId 
     []
   )
 
-  // ─── Upload single file ───────────────────────────────────────────────────
+  // ─── Phase A — PUT file to Supabase Storage (with byte progress) ──────────
 
-  async function uploadFile(
+  /**
+   * Issues a direct XHR PUT against the Supabase Storage signed upload URL so
+   * the browser gives us real byte-progress events. The supabase-js SDK's
+   * `uploadToSignedUrl` wraps fetch() and doesn't surface progress at all,
+   * which is why we're hand-rolling this.
+   */
+  async function putFileToStorage(
     file: QueuedFile,
     token: string,
-  ): Promise<void> {
+  ): Promise<PutResult> {
     setQueue((prev) =>
-      prev.map((f) => f.key === file.key ? { ...f, status: "uploading" } : f)
+      prev.map((f) => f.key === file.key ? { ...f, status: "uploading", uploadedBytes: 0 } : f)
     )
 
-    try {
-      const fileHash = await sha256Hex(file.bytes)
-      const safeName = sanitizeFileName(file.name)
+    const fileHash     = await sha256Hex(file.bytes)
+    const safeName     = sanitizeFileName(file.name)
+    const fileMimeType = getMimeType(file.name)
 
-      // Step 1: get signed upload URL
-      const fileMimeType = getMimeType(file.name)
-      const urlResp = await fetch("/.netlify/functions/records-vault-upload-url", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          fileName: safeName,
-          mimeType: fileMimeType,
-          aircraftId,
-        }),
+    // Step 1: get signed upload URL
+    const urlResp = await fetch("/.netlify/functions/records-vault-upload-url", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        fileName: safeName,
+        mimeType: fileMimeType,
+        aircraftId,
+      }),
+    })
+    if (!urlResp.ok) {
+      const err = await urlResp.json().catch(() => ({}))
+      throw new Error((err as { error?: string }).error ?? "Failed to get upload URL")
+    }
+    const { signedUrl, storagePath } = await urlResp.json() as {
+      signedUrl:   string
+      storagePath: string
+    }
+
+    // Step 2: XHR PUT with progress events.
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open("PUT", signedUrl, true)
+      xhr.setRequestHeader("Content-Type", fileMimeType)
+      xhr.setRequestHeader("x-upsert", "false")
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (!e.lengthComputable) return
+        setQueue((prev) =>
+          prev.map((f) =>
+            f.key === file.key ? { ...f, uploadedBytes: e.loaded } : f
+          )
+        )
       })
-      if (!urlResp.ok) {
-        const err = await urlResp.json().catch(() => ({}))
-        throw new Error((err as { error?: string }).error ?? "Failed to get upload URL")
-      }
-      const { token: uploadToken, uploadPath, storagePath } = await urlResp.json()
 
-      // Step 2: upload via Supabase SDK's signed-URL method
-      // This handles proper headers, large files, and content-type automatically.
-      const { error: uploadErr } = await supabase.storage
-        .from("records-vault")
-        .uploadToSignedUrl(uploadPath, uploadToken, file.bytes, {
-          contentType: fileMimeType,
-          upsert: false,
-        })
-      if (uploadErr) {
-        throw new Error(`Storage upload failed: ${uploadErr.message}`)
-      }
-
-      // Step 3: register source + trigger OCR
-      setQueue((prev) =>
-        prev.map((f) => f.key === file.key ? { ...f, status: "processing" } : f)
-      )
-
-      const pageImages = file.renderedPages ?? []
-
-      const regResp = await fetch("/.netlify/functions/records-vault-register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          storagePath,
-          originalFilename: file.name,
-          fileHash,
-          fileSizeBytes: file.sizeBytes,
-          aircraftId,
-          sourceCategory: category,
-          observedRegistration: observedReg || null,
-          dateRangeStart: dateStart || null,
-          dateRangeEnd: dateEnd || null,
-          notes: notes || null,
-          importBatch: file.importBatch,
-          pageImagesPreRendered: pageImages.length,
-        }),
-      })
-      if (!regResp.ok) {
-        const err = await regResp.json().catch(() => ({}))
-        throw new Error((err as { error?: string }).error ?? "Failed to register record")
-      }
-
-      const { recordSourceId } = await regResp.json()
-
-      // Step 4: upload pre-rendered page images (JBIG2/CCITTFax docs only)
-      if (pageImages.length > 0 && recordSourceId) {
-        // Get batch signed upload URLs
-        const urlsResp = await fetch("/.netlify/functions/records-vault-page-image-urls", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            recordSourceId,
-            pageCount: pageImages.length,
-          }),
-        })
-
-        if (urlsResp.ok) {
-          const { urls } = await urlsResp.json() as {
-            urls: Array<{ pageNumber: number; token: string; uploadPath: string }>
-          }
-
-          // Upload page images in parallel (batches of 10)
-          const IMG_CONCURRENCY = 10
-          for (let i = 0; i < urls.length; i += IMG_CONCURRENCY) {
-            const batch = urls.slice(i, i + IMG_CONCURRENCY)
-            await Promise.all(
-              batch.map(async (urlInfo) => {
-                const page = pageImages.find((p) => p.pageNumber === urlInfo.pageNumber)
-                if (!page) return
-                await supabase.storage
-                  .from("records-vault")
-                  .uploadToSignedUrl(urlInfo.uploadPath, urlInfo.token, page.jpeg, {
-                    contentType: "image/jpeg",
-                    upsert: true,
-                  })
-              }),
-            )
-          }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve()
+        } else {
+          reject(new Error(`Storage PUT failed (${xhr.status}): ${xhr.responseText || xhr.statusText}`))
         }
-
       }
+      xhr.onerror = () => reject(new Error("Network error during storage upload"))
+      xhr.onabort = () => reject(new Error("Storage upload aborted"))
 
-      setQueue((prev) =>
-        prev.map((f) => f.key === file.key ? { ...f, status: "done" } : f)
-      )
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload failed"
-      setQueue((prev) =>
-        prev.map((f) => f.key === file.key ? { ...f, status: "failed", error: msg } : f)
+      // Wrap the raw bytes in a Blob so XHR reports length-computable progress.
+      xhr.send(new Blob([file.bytes], { type: fileMimeType }))
+    })
+
+    // Step 3: ask the server to HEAD the object to confirm it landed. This
+    // catches the rare case where the XHR reports 200 OK but the storage
+    // write was dropped (browser tab closed mid-flight, body truncation, etc).
+    setQueue((prev) =>
+      prev.map((f) => f.key === file.key ? { ...f, status: "verifying" } : f)
+    )
+    const verifyResp = await fetch("/.netlify/functions/records-vault-verify-upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ storagePath }),
+    })
+    if (!verifyResp.ok) {
+      const err = await verifyResp.json().catch(() => ({}))
+      throw new Error(
+        (err as { error?: string }).error
+          ?? `Upload verification failed (${verifyResp.status})`
       )
     }
+
+    return { storagePath, fileHash }
   }
 
-  // ─── Run upload queue with concurrency limit ──────────────────────────────
+  // ─── Phase B — register source + pre-rendered page images ─────────────────
+
+  async function registerSource(
+    file: QueuedFile,
+    putResult: PutResult,
+    token: string,
+  ): Promise<{ recordSourceId: string }> {
+    setQueue((prev) =>
+      prev.map((f) => f.key === file.key ? { ...f, status: "processing" } : f)
+    )
+
+    const pageImages = file.renderedPages ?? []
+
+    const regResp = await fetch("/.netlify/functions/records-vault-register", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        storagePath:          putResult.storagePath,
+        originalFilename:     file.name,
+        fileHash:             putResult.fileHash,
+        fileSizeBytes:        file.sizeBytes,
+        aircraftId,
+        sourceCategory:       category,
+        observedRegistration: observedReg || null,
+        dateRangeStart:       dateStart || null,
+        dateRangeEnd:         dateEnd || null,
+        notes:                notes || null,
+        importBatch:          file.importBatch,
+        pageImagesPreRendered: pageImages.length,
+      }),
+    })
+    if (!regResp.ok) {
+      const err = await regResp.json().catch(() => ({}))
+      throw new Error((err as { error?: string }).error ?? "Failed to register record")
+    }
+
+    const { recordSourceId } = await regResp.json() as { recordSourceId: string }
+
+    // Step 4: upload pre-rendered page images (JBIG2/CCITTFax docs only)
+    if (pageImages.length > 0 && recordSourceId) {
+      const urlsResp = await fetch("/.netlify/functions/records-vault-page-image-urls", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          recordSourceId,
+          pageCount: pageImages.length,
+        }),
+      })
+
+      if (urlsResp.ok) {
+        const { urls } = await urlsResp.json() as {
+          urls: Array<{ pageNumber: number; token: string; uploadPath: string }>
+        }
+
+        const IMG_CONCURRENCY = 10
+        for (let i = 0; i < urls.length; i += IMG_CONCURRENCY) {
+          const batch = urls.slice(i, i + IMG_CONCURRENCY)
+          await Promise.all(
+            batch.map(async (urlInfo) => {
+              const page = pageImages.find((p) => p.pageNumber === urlInfo.pageNumber)
+              if (!page) return
+              await supabase.storage
+                .from("records-vault")
+                .uploadToSignedUrl(urlInfo.uploadPath, urlInfo.token, page.jpeg, {
+                  contentType: "image/jpeg",
+                  upsert: true,
+                })
+            }),
+          )
+        }
+      }
+    }
+
+    setQueue((prev) =>
+      prev.map((f) => f.key === file.key ? { ...f, status: "done" } : f)
+    )
+
+    return { recordSourceId }
+  }
+
+  // ─── Two-phase upload queue ───────────────────────────────────────────────
+
+  async function runInParallel<T>(
+    items: T[],
+    limit: number,
+    worker: (item: T) => Promise<void>,
+  ): Promise<void> {
+    let cursor = 0
+    const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+      while (true) {
+        const idx = cursor++
+        if (idx >= items.length) return
+        await worker(items[idx])
+      }
+    })
+    await Promise.all(runners)
+  }
 
   async function startUpload() {
     if (!aircraftId) {
@@ -459,31 +550,88 @@ export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId 
       setRunning(false)
       return
     }
-
     const token = session.access_token
-    // Only upload files that are fully queued (rendering complete or not needed)
-    const pending = queue.filter((f) => f.status === "queued"
+
+    const pending = queue.filter((f) =>
+      f.status === "queued"
       && (!f.needsRendering || (f.renderedPages && f.renderedPages.length > 0))
     )
 
-    // Process in chunks of CONCURRENCY
-    for (let i = 0; i < pending.length; i += CONCURRENCY) {
-      const batch = pending.slice(i, i + CONCURRENCY)
-      await Promise.all(batch.map((f) => uploadFile(f, token)))
+    // Phase A — PUT files to Supabase Storage in parallel.
+    const putResults = new Map<string, PutResult>()
+    await runInParallel(pending, PUT_CONCURRENCY, async (file) => {
+      try {
+        const res = await putFileToStorage(file, token)
+        putResults.set(file.key, res)
+        setQueue((prev) =>
+          prev.map((f) => f.key === file.key ? { ...f, status: "awaiting_register" } : f)
+        )
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Upload failed"
+        setQueue((prev) =>
+          prev.map((f) => f.key === file.key ? { ...f, status: "failed", error: msg } : f)
+        )
+      }
+    })
+
+    // Phase B — register each successfully-uploaded file, serialized with a
+    // stagger so Textract start-job calls don't all fire at once.
+    let firstRegistered: string | null = null
+    let isFirst = true
+    for (const file of pending) {
+      const putResult = putResults.get(file.key)
+      if (!putResult) continue  // failed phase A
+      if (!isFirst) await sleep(REGISTER_STAGGER_MS)
+      isFirst = false
+      try {
+        const { recordSourceId } = await registerSource(file, putResult, token)
+        if (!firstRegistered) firstRegistered = recordSourceId
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Register failed"
+        setQueue((prev) =>
+          prev.map((f) => f.key === file.key ? { ...f, status: "failed", error: msg } : f)
+        )
+      }
     }
 
     await queryClient.invalidateQueries({ queryKey: ["record-sources"] })
     setRunning(false)
 
-    const failed = queue.filter((f) => f.status === "failed").length
-    if (failed === 0) {
+    // Re-read the latest queue state via a functional callback so the counts
+    // reflect any failures flipped by the phase handlers above.
+    let successCount = 0
+    let failureCount = 0
+    setQueue((prev) => {
+      successCount = prev.filter((f) => f.status === "done").length
+      failureCount = prev.filter((f) => f.status === "failed").length
+      return prev
+    })
+
+    if (failureCount === 0 && successCount > 0) {
       toast({
-        title: `${pending.length} file${pending.length !== 1 ? "s" : ""} uploaded`,
-        description: "OCR processing has started. Records will appear in search once complete.",
+        title: `${successCount} file${successCount !== 1 ? "s" : ""} uploaded`,
+        description: "Pipeline processing has started. Opening Pipeline view…",
       })
-    } else {
+      // Hand off to the Pipeline Operations Panel so the user can watch the
+      // stage rows flip from pending → running → green. If register produced
+      // at least one recordSourceId, deep-link to it via the URL hash so the
+      // Pipeline page can scroll/highlight that row in the future.
+      reset()
+      onClose()
+      if (firstRegistered) {
+        navigate(`/app/records-vault/pipeline#${firstRegistered}`)
+      } else {
+        navigate("/app/records-vault/pipeline")
+      }
+    } else if (failureCount > 0 && successCount > 0) {
       toast({
-        title: `${pending.length - failed} uploaded, ${failed} failed`,
+        title: `${successCount} uploaded, ${failureCount} failed`,
+        description: "Check the failed files below — successful uploads are in Pipeline.",
+        variant: "destructive",
+      })
+    } else if (failureCount > 0) {
+      toast({
+        title: `${failureCount} file${failureCount !== 1 ? "s" : ""} failed`,
         description: "Check the failed files below.",
         variant: "destructive",
       })
@@ -497,7 +645,7 @@ export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId 
     if (status === "failed") return <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
     if (status === "rendering")
       return <MonitorCog className="h-4 w-4 animate-pulse text-amber-500 shrink-0" />
-    if (status === "uploading" || status === "processing")
+    if (status === "uploading" || status === "processing" || status === "verifying" || status === "awaiting_register")
       return <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />
     return <File className="h-4 w-4 text-muted-foreground shrink-0" />
   }
@@ -510,7 +658,20 @@ export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId 
       }
       return "Loading PDFium…"
     }
-    return { queued: "Queued", rendering: "Rendering…", uploading: "Uploading…", processing: "Registering…", done: "Done", failed: "Failed" }[status]
+    if (status === "uploading" && file && file.uploadedBytes != null && file.sizeBytes > 0) {
+      const pct = Math.min(100, Math.round((file.uploadedBytes / file.sizeBytes) * 100))
+      return `Uploading ${pct}%`
+    }
+    return ({
+      queued:             "Queued",
+      rendering:          "Rendering…",
+      uploading:          "Uploading…",
+      verifying:          "Verifying…",
+      awaiting_register:  "Waiting to register…",
+      processing:         "Registering…",
+      done:               "Done",
+      failed:             "Failed",
+    })[status]
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -690,6 +851,16 @@ export function RecordsUploadModal({ open, onClose, aircraft, defaultAircraftId 
                             </>
                           )}
                         </div>
+                        {file.status === "uploading" && file.sizeBytes > 0 && (
+                          <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full bg-blue-500 transition-[width] duration-150"
+                              style={{
+                                width: `${Math.min(100, Math.round(((file.uploadedBytes ?? 0) / file.sizeBytes) * 100))}%`,
+                              }}
+                            />
+                          </div>
+                        )}
                         {file.error && (
                           <p className="text-destructive mt-0.5">{file.error}</p>
                         )}

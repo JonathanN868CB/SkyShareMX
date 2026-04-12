@@ -188,10 +188,36 @@ async function verifySnsSignature(msg: SnsEnvelope): Promise<boolean> {
 /**
  * Fetches all blocks from a completed Textract job via paginated calls.
  * Returns the flat block array — all pages combined.
+ *
+ * Retries on Textract throttling (ThrottlingException,
+ * ProvisionedThroughputExceededException) with exponential backoff, and spaces
+ * paginated requests with fixed jitter so a large document doesn't hammer the
+ * API. Concurrent big jobs used to surface `Provisioned rate exceeded` as a
+ * hard failure — now they back off instead.
  */
-async function fetchAllBlocks(textract: TextractClient, jobId: string): Promise<Block[]> {
+async function fetchAllBlocks(
+  textract: TextractClient,
+  jobId: string,
+  onRetry?: (attempt: number, errName: string, delayMs: number) => Promise<void>,
+): Promise<Block[]> {
   const blocks: Block[] = [];
   let nextToken: string | undefined = undefined;
+  let pageIndex = 0;
+
+  const BACKOFF_MS = [300, 600, 1200, 2400, 4800];
+  const MAX_ATTEMPTS = BACKOFF_MS.length;
+  const PAGE_JITTER_MS = 150;
+
+  const isThrottle = (err: unknown): boolean => {
+    const name = (err as { name?: string } | null)?.name ?? "";
+    const code = (err as { Code?: string } | null)?.Code ?? "";
+    return (
+      name === "ThrottlingException" ||
+      name === "ProvisionedThroughputExceededException" ||
+      code === "ThrottlingException" ||
+      code === "ProvisionedThroughputExceededException"
+    );
+  };
 
   do {
     const cmd = new GetDocumentAnalysisCommand({
@@ -200,9 +226,34 @@ async function fetchAllBlocks(textract: TextractClient, jobId: string): Promise<
       ...(nextToken ? { NextToken: nextToken } : {}),
     });
 
-    const resp = await textract.send(cmd);
+    let resp: Awaited<ReturnType<typeof textract.send<typeof cmd>>> | undefined;
+    let lastErr: unknown;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      try {
+        resp = await textract.send(cmd);
+        lastErr = undefined;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (!isThrottle(err)) throw err;
+        const delayMs = BACKOFF_MS[attempt];
+        if (onRetry) {
+          const errName = (err as { name?: string } | null)?.name ?? "Throttle";
+          try { await onRetry(attempt + 1, errName, delayMs); } catch { /* swallow log errors */ }
+        }
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+
+    if (!resp) throw lastErr ?? new Error("Textract fetch failed after retries");
+
     blocks.push(...(resp.Blocks ?? []));
     nextToken = resp.NextToken;
+    pageIndex++;
+
+    // Space out paginated fetches on large jobs to stay under the throttle ceiling.
+    if (nextToken) await new Promise((r) => setTimeout(r, PAGE_JITTER_MS));
   } while (nextToken);
 
   return blocks;
@@ -544,6 +595,28 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     });
   }
 
+  // ── 6b. SNS idempotency guard ─────────────────────────────────────────────
+  // SNS can redeliver the same notification (HTTP 200 not received in time,
+  // retries from the SNS side, etc.). We atomically claim this source by
+  // setting textract_handled_at and checking how many rows actually updated.
+  // If zero, someone already handled this job — exit 200 so SNS stops retrying.
+  const { data: claimed, error: claimErr } = await supabase
+    .from("rv_record_sources")
+    .update({ textract_handled_at: new Date().toISOString() })
+    .eq("id", recordSourceId)
+    .is("textract_handled_at", null)
+    .select("id");
+
+  if (claimErr) {
+    console.error(`[textract-complete] Idempotency claim failed: ${claimErr.message}`);
+    // Don't block the pipeline on a claim error — log and continue.
+    await log("sns_claim_error", `Idempotency claim failed: ${claimErr.message}`);
+  } else if (!claimed || claimed.length === 0) {
+    await log("sns_redelivery_ignored", `SNS redelivery for job ${jobId} ignored — already handled`);
+    console.log(`[textract-complete] Ignoring SNS redelivery for ${recordSourceId}`);
+    return { statusCode: 200, body: "Already handled" };
+  }
+
   // ── 7. Handle failed Textract job ─────────────────────────────────────────
   if (status !== JobStatus.SUCCEEDED) {
     const msg = `Textract job ${jobId} ended with status: ${status}`;
@@ -566,7 +639,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   let allBlocks: Block[];
   try {
-    allBlocks = await fetchAllBlocks(textract, jobId);
+    allBlocks = await fetchAllBlocks(textract, jobId, async (attempt, errName, delayMs) => {
+      await log(
+        "textract_throttled",
+        `Textract throttled (${errName}) on attempt ${attempt} — backing off ${delayMs}ms`,
+      );
+    });
   } catch (err) {
     const msg = `Failed to fetch Textract results: ${err instanceof Error ? err.message : String(err)}`;
     console.error(`[textract-complete] ${msg}`);

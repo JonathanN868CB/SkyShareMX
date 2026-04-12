@@ -1,8 +1,9 @@
-// records-vault-page-image-url — AUTH REQUIRED
-// Returns a short-lived signed URL for a pre-rendered page image stored in
-// the records-vault bucket under {recordSourceId}/pages/{pageNumber}.jpg.
-// These images are uploaded during OCR ingestion and bypass browser pdfjs
-// codec limitations (JBIG2, CCITTFax, etc.).
+// records-vault-page-image-urls-batch — AUTH REQUIRED
+//
+// Returns signed URLs for a batch of page images in one round trip. The
+// viewer's thumbnail strip calls this once per visible window instead of
+// firing N individual requests. Input: { recordSourceId, pageNumbers: number[] }
+// Output: { urls: { [pageNumber]: string | null } } — null means not yet ready.
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -23,6 +24,9 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const SIGNED_URL_EXPIRY_SECONDS = 3600;
+const MAX_BATCH = 50;
+
 function jsonResponse(statusCode: number, body: Record<string, unknown>): HandlerResponse {
   return {
     statusCode,
@@ -42,21 +46,12 @@ function getAccessToken(event: HandlerEvent): string | null {
   return token.length > 0 ? token : null;
 }
 
-const SIGNED_URL_EXPIRY_SECONDS = 3600; // 60 minutes
-
 export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => {
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers: corsHeaders };
-  }
-
-  if (event.httpMethod !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
-  }
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: corsHeaders };
+  if (event.httpMethod !== "POST") return jsonResponse(405, { error: "Method not allowed" });
 
   const accessToken = getAccessToken(event);
-  if (!accessToken) {
-    return jsonResponse(401, { error: "Authentication required" });
-  }
+  if (!accessToken) return jsonResponse(401, { error: "Authentication required" });
 
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -66,7 +61,6 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(500, { error: "Server configuration error" });
   }
 
-  // Verify caller session
   const authClient = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
@@ -75,9 +69,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(401, { error: "Invalid or expired session" });
   }
 
-  if (!event.body) {
-    return jsonResponse(400, { error: "Missing request body" });
-  }
+  if (!event.body) return jsonResponse(400, { error: "Missing request body" });
 
   let payload: Record<string, unknown>;
   try {
@@ -87,68 +79,73 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   const recordSourceId = typeof payload.recordSourceId === "string" ? payload.recordSourceId.trim() : "";
-  const pageNumber     = typeof payload.pageNumber === "number" ? payload.pageNumber : parseInt(String(payload.pageNumber), 10);
+  const rawPageNumbers = Array.isArray(payload.pageNumbers) ? payload.pageNumbers : null;
 
-  if (!recordSourceId) {
-    return jsonResponse(400, { error: "recordSourceId is required" });
+  if (!recordSourceId) return jsonResponse(400, { error: "recordSourceId is required" });
+  if (!rawPageNumbers) return jsonResponse(400, { error: "pageNumbers must be an array" });
+
+  const pageNumbers = Array.from(
+    new Set(
+      rawPageNumbers
+        .map((n) => (typeof n === "number" ? n : parseInt(String(n), 10)))
+        .filter((n) => Number.isFinite(n) && n >= 1),
+    ),
+  ).slice(0, MAX_BATCH);
+
+  if (pageNumbers.length === 0) {
+    return jsonResponse(200, { urls: {} });
   }
-  if (isNaN(pageNumber) || pageNumber < 1) {
-    return jsonResponse(400, { error: "pageNumber must be a positive integer" });
+
+  // RLS check via user client — confirms the caller can see this source.
+  const userClient = createClient(supabaseUrl, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+  const { data: source, error: sourceErr } = await userClient
+    .from("rv_record_sources")
+    .select("id")
+    .eq("id", recordSourceId)
+    .single();
+  if (sourceErr || !source) {
+    return jsonResponse(404, { error: "Record source not found or access denied" });
   }
 
   const adminClient = createClient(supabaseUrl, serviceRole, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Verify the user has Records Vault permission — use user JWT for RLS check
-  const userClient = createClient(supabaseUrl, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-  });
-
-  const { data: source, error: sourceErr } = await userClient
-    .from("rv_record_sources")
-    .select("id")
-    .eq("id", recordSourceId)
-    .single();
-
-  if (sourceErr || !source) {
-    return jsonResponse(404, { error: "Record source not found or access denied" });
-  }
-
-  // Check readiness via rv_pages.page_image_uploaded_at — a single indexed DB
-  // lookup instead of two storage.list() scans per request. For 300-page docs
-  // the list scans were the root cause of the "Preparing page…" hang: every
-  // thumbnail request fired them in parallel and each scan was slow.
-  const { data: pageRow, error: pageErr } = await adminClient
+  // One DB query for all requested pages' readiness.
+  const { data: rows, error: rowsErr } = await adminClient
     .from("rv_pages")
-    .select("page_image_uploaded_at")
+    .select("page_number, page_image_uploaded_at")
     .eq("record_source_id", recordSourceId)
-    .eq("page_number", pageNumber)
-    .maybeSingle();
+    .in("page_number", pageNumbers);
 
-  if (pageErr) {
-    console.error("[records-vault-page-image-url] rv_pages lookup error:", pageErr);
+  if (rowsErr) {
+    console.error("[page-image-urls-batch] rv_pages lookup error:", rowsErr);
     return jsonResponse(500, { error: "Failed to check page readiness" });
   }
 
-  if (!pageRow?.page_image_uploaded_at) {
-    return jsonResponse(404, { error: "Page image not available" });
-  }
-
-  const adminStorage = adminClient.storage.from("records-vault");
-  const imagePath = `${recordSourceId}/pages/${pageNumber}.jpg`;
-
-  // Generate signed download URL
-  const { data, error: urlError } = await adminStorage.createSignedUrl(
-    imagePath,
-    SIGNED_URL_EXPIRY_SECONDS,
+  const readyPages = new Set(
+    (rows ?? [])
+      .filter((r: { page_image_uploaded_at: string | null }) => !!r.page_image_uploaded_at)
+      .map((r: { page_number: number }) => r.page_number),
   );
 
-  if (urlError || !data?.signedUrl) {
-    console.error("[records-vault-page-image-url] createSignedUrl error:", urlError);
-    return jsonResponse(500, { error: "Failed to generate image URL" });
-  }
+  const storage = adminClient.storage.from("records-vault");
+  const urls: Record<number, string | null> = {};
 
-  return jsonResponse(200, { signedUrl: data.signedUrl });
+  await Promise.all(
+    pageNumbers.map(async (pageNumber) => {
+      if (!readyPages.has(pageNumber)) {
+        urls[pageNumber] = null;
+        return;
+      }
+      const path = `${recordSourceId}/pages/${pageNumber}.jpg`;
+      const { data, error } = await storage.createSignedUrl(path, SIGNED_URL_EXPIRY_SECONDS);
+      urls[pageNumber] = error || !data?.signedUrl ? null : data.signedUrl;
+    }),
+  );
+
+  return jsonResponse(200, { urls });
 };
