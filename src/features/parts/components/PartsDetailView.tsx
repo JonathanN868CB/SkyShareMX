@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   ArrowLeft, Package, AlertTriangle, Send, Clock, User,
-  ChevronDown, Pencil, Check, X,
+  Pencil, Check, X, Ban, RotateCcw, Search,
 } from "lucide-react"
 import { toast } from "sonner"
 import { supabase } from "@/lib/supabase"
@@ -15,7 +15,7 @@ import { PartsApprovalPanel } from "./PartsApprovalPanel"
 import { TrackingTimeline } from "./TrackingTimeline"
 import { notifyProfileIds, notifyByRoles } from "../helpers"
 import {
-  REQUEST_STATUSES, LINE_STATUSES, CONDITIONS,
+  LINE_STATUSES, CONDITIONS,
   STATUS_CONFIG,
   type RequestStatus, type LineStatus,
 } from "../constants"
@@ -82,6 +82,179 @@ interface ProfileCache {
   [id: string]: string
 }
 
+// ─── Send for Approval modal ──────────────────────────────────────────────────
+
+const APPROVAL_RECIPIENTS = [
+  { email: "jonathan@skyshare.com", name: "Jonathan Schaedig" },
+  { email: "rpaden@skyshare.com",   name: "R. Paden" },
+  { email: "charles@skyshare.com",  name: "Charles" },
+  { email: "esantana@skyshare.com", name: "E. Santana" },
+]
+
+interface SendApprovalModalProps {
+  request: RequestDetail
+  linesCount: number
+  onClose: () => void
+  onSent: () => void
+}
+
+function SendApprovalModal({ request, linesCount, onClose, onSent }: SendApprovalModalProps) {
+  const [selected, setSelected] = useState<string[]>(["jonathan@skyshare.com"])
+  const [message, setMessage] = useState("")
+  const [sending, setSending] = useState(false)
+
+  const jobTitle = request.order_type === "stock"
+    ? `Stock — ${request.job_description}`
+    : `${request.aircraft_tail} — ${request.job_description}`
+
+  function toggleRecipient(email: string) {
+    setSelected(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email])
+  }
+
+  async function handleSend() {
+    if (selected.length === 0) return
+    setSending(true)
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) throw new Error("Not authenticated")
+
+      const res = await fetch("/.netlify/functions/parts-approval-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          requestId: request.id,
+          recipients: selected,
+          message: message.trim() || undefined,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((json as { error?: string }).error ?? "Send failed")
+
+      toast.success(`Sent for approval to ${selected.length} recipient${selected.length !== 1 ? "s" : ""}`)
+      onSent()
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to send approval request")
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.75)" }}>
+      <div className="rounded-xl w-full max-w-md space-y-5 p-6" style={{ background: "hsl(0 0% 10%)", border: "1px solid hsl(0 0% 22%)" }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 style={{ fontFamily: "var(--font-heading)", fontSize: "12px", letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.9)" }}>
+              Send for Approval
+            </h3>
+            <p className="text-xs mt-0.5 truncate" style={{ color: "rgba(255,255,255,0.4)" }}>{jobTitle}</p>
+          </div>
+          <button onClick={onClose} className="text-white/30 hover:text-white/60 p-1 rounded transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Request summary */}
+        <div className="rounded-lg px-4 py-3" style={{ background: "rgba(212,160,23,0.06)", border: "1px solid rgba(212,160,23,0.15)" }}>
+          {request.work_order && (
+            <p className="text-xs mb-1" style={{ color: "rgba(255,255,255,0.45)" }}>WO {request.work_order}</p>
+          )}
+          <p className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.9)" }}>
+            {linesCount} part line{linesCount !== 1 ? "s" : ""}
+          </p>
+          {request.date_needed && (
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Need by {new Date(request.date_needed + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </p>
+          )}
+        </div>
+
+        {/* Recipients */}
+        <div>
+          <p className="text-[10px] uppercase tracking-widest mb-2" style={{ fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.35)" }}>
+            Send to
+          </p>
+          <div className="space-y-1.5">
+            {APPROVAL_RECIPIENTS.map(r => {
+              const checked = selected.includes(r.email)
+              return (
+                <button
+                  key={r.email}
+                  onClick={() => toggleRecipient(r.email)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left cursor-pointer"
+                  style={{
+                    background: checked ? "rgba(212,160,23,0.08)" : "rgba(255,255,255,0.025)",
+                    borderColor: checked ? "rgba(212,160,23,0.3)" : "rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <div
+                    className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-all"
+                    style={{
+                      background: checked ? "var(--skyshare-gold)" : "transparent",
+                      border: `1px solid ${checked ? "var(--skyshare-gold)" : "rgba(255,255,255,0.25)"}`,
+                    }}
+                  >
+                    {checked && <Check className="w-2.5 h-2.5" style={{ color: "#000" }} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium leading-none" style={{ color: "rgba(255,255,255,0.85)" }}>{r.name}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>{r.email}</p>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Optional message */}
+        <div>
+          <p className="text-[10px] uppercase tracking-widest mb-1.5" style={{ fontFamily: "var(--font-heading)", color: "rgba(255,255,255,0.35)" }}>
+            Message (optional)
+          </p>
+          <textarea
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            placeholder="Add context for the approver…"
+            rows={3}
+            className="w-full rounded-lg px-3 py-2.5 text-sm resize-none"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "rgba(255,255,255,0.8)",
+              outline: "none",
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = "rgba(212,160,23,0.4)" }}
+            onBlur={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)" }}
+          />
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="inline-flex items-center h-8 px-3 rounded-md border text-xs font-medium transition-all cursor-pointer"
+            style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)" }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSend}
+            disabled={selected.length === 0 || sending}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border text-xs font-semibold transition-all cursor-pointer disabled:opacity-40"
+            style={{ background: "var(--skyshare-gold)", borderColor: "rgba(212,160,23,0.5)", color: "#000" }}
+          >
+            <Send className="w-3.5 h-3.5" />
+            {sending ? "Sending…" : `Send to ${selected.length} Recipient${selected.length !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -114,8 +287,8 @@ export function PartsDetailView({ requestId }: Props) {
   const [editingCell, setEditingCell] = useState<{ lineId: string; field: string } | null>(null)
   const [editValue, setEditValue] = useState("")
 
-  // Status change
-  const [showStatusMenu, setShowStatusMenu] = useState(false)
+  // Send for Approval modal
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false)
 
   // ─── Load ─────────────────────────────────────────────────────────────────
 
@@ -504,6 +677,16 @@ export function PartsDetailView({ requestId }: Props) {
   return (
     <div className="space-y-6">
 
+      {/* ── Send for Approval modal ──────────────────────────────────── */}
+      {approvalModalOpen && (
+        <SendApprovalModal
+          request={request}
+          linesCount={lines.length}
+          onClose={() => setApprovalModalOpen(false)}
+          onSent={() => { setApprovalModalOpen(false); loadData() }}
+        />
+      )}
+
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
@@ -522,10 +705,42 @@ export function PartsDetailView({ requestId }: Props) {
           </div>
         </div>
 
-        {/* Status + controls */}
-        <div className="flex items-center gap-3">
+        {/* ── Status & action bar ──────────────────────────────────── */}
+        <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
           <PartsStatusBadge status={request.status} size="md" />
-          {request.status !== "cancelled" && request.status !== "closed" && request.status !== "denied" && (
+
+          {!["closed"].includes(request.status) && (
+            <div className="w-px h-4 flex-shrink-0" style={{ background: "rgba(255,255,255,0.12)" }} />
+          )}
+
+          {/* Mark Sourcing — only when still at requested */}
+          {canEdit && request.status === "requested" && (
+            <button
+              onClick={() => changeStatus("sourcing")}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+              style={{ background: "rgba(245,158,11,0.1)", borderColor: "rgba(245,158,11,0.3)", color: "rgba(245,158,11,0.9)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "rgba(245,158,11,0.18)" }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(245,158,11,0.1)" }}
+            >
+              <Search className="w-3 h-3" /> Sourcing
+            </button>
+          )}
+
+          {/* Send for Approval — when requested or sourcing */}
+          {canEdit && (request.status === "requested" || request.status === "sourcing") && (
+            <button
+              onClick={() => setApprovalModalOpen(true)}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+              style={{ background: "rgba(96,165,250,0.1)", borderColor: "rgba(96,165,250,0.3)", color: "rgba(96,165,250,0.9)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "rgba(96,165,250,0.18)" }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(96,165,250,0.1)" }}
+            >
+              <Send className="w-3 h-3" /> Send for Approval
+            </button>
+          )}
+
+          {/* Create PO — gold primary, shown until parts are ordered/beyond */}
+          {!["ordered", "shipped", "received", "closed", "cancelled", "denied"].includes(request.status) && (
             <button
               onClick={() => navigate("/app/beet-box/purchase-orders/new", {
                 state: {
@@ -546,105 +761,63 @@ export function PartsDetailView({ requestId }: Props) {
                   }
                 }
               })}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
-              style={{
-                background: "rgba(212,160,23,0.12)",
-                border: "1px solid rgba(212,160,23,0.3)",
-                color: "rgba(212,160,23,0.9)",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = "rgba(212,160,23,0.2)" }}
-              onMouseLeave={e => { e.currentTarget.style.background = "rgba(212,160,23,0.12)" }}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+              style={{ background: "var(--skyshare-gold)", borderColor: "rgba(212,160,23,0.5)", color: "#000" }}
+              onMouseEnter={e => { e.currentTarget.style.filter = "brightness(1.1)" }}
+              onMouseLeave={e => { e.currentTarget.style.filter = "" }}
             >
-              <Package className="w-3.5 h-3.5" />
-              Create PO
+              <Package className="w-3 h-3" /> Create PO
             </button>
           )}
-          {canEdit && request.status === "cancelled" && (
+
+          {/* Deny — visible while request is actionable */}
+          {canEdit && ["requested", "sourcing", "pending_approval"].includes(request.status) && (
+            <button
+              onClick={() => changeStatus("denied")}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+              style={{ background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.25)", color: "rgba(239,68,68,0.7)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.color = "rgba(239,68,68,0.9)" }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; e.currentTarget.style.color = "rgba(239,68,68,0.7)" }}
+            >
+              <Ban className="w-3 h-3" /> Deny
+            </button>
+          )}
+
+          {/* Reopen — for denied or cancelled */}
+          {canEdit && (request.status === "denied" || request.status === "cancelled") && (
             <button
               onClick={() => changeStatus("requested")}
-              className="px-2 py-1 rounded text-xs font-medium transition-colors"
-              style={{
-                background: "rgba(100,180,255,0.12)",
-                border: "1px solid rgba(100,180,255,0.3)",
-                color: "rgba(100,180,255,0.9)",
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = "rgba(100,180,255,0.2)"
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = "rgba(100,180,255,0.12)"
-              }}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+              style={{ background: "rgba(96,165,250,0.1)", borderColor: "rgba(96,165,250,0.3)", color: "rgba(96,165,250,0.9)" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "rgba(96,165,250,0.18)" }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(96,165,250,0.1)" }}
             >
-              Reopen
+              <RotateCcw className="w-3 h-3" /> Reopen
             </button>
           )}
-          {canEdit && request.status !== "closed" && request.status !== "cancelled" && (
-            <div className="relative">
-              <button
-                onClick={() => setShowStatusMenu(!showStatusMenu)}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors"
-                style={{
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  color: "rgba(255,255,255,0.5)",
-                }}
-              >
-                Update <ChevronDown className="w-3 h-3" />
-              </button>
-              {showStatusMenu && (
-                <div
-                  className="absolute right-0 top-full mt-1 rounded-md py-1 z-50 min-w-[160px]"
-                  style={{
-                    background: "hsl(0 0% 12%)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-                  }}
-                >
-                  {REQUEST_STATUSES.filter(s => s !== request.status && s !== "cancelled").map(s => (
-                    <button
-                      key={s}
-                      onClick={() => changeStatus(s)}
-                      className="w-full text-left px-3 py-1.5 text-sm transition-colors flex items-center gap-2"
-                      style={{ color: "rgba(255,255,255,0.7)" }}
-                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.05)")}
-                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                    >
-                      <PartsStatusBadge status={s} />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {(canEdit || request.requested_by === profile?.id) && request.status !== "closed" && request.status !== "cancelled" && (
+
+          {/* Cancel */}
+          {(canEdit || request.requested_by === profile?.id) && !["closed", "cancelled", "denied"].includes(request.status) && (
             confirmCancel ? (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>Cancel order:</span>
+                <span className="text-[11px]" style={{ color: "rgba(255,255,255,0.4)" }}>Cancel request:</span>
                 <button
                   onClick={() => { setConfirmCancel(false); handleCancelDelete() }}
-                  className="px-2 py-1 rounded text-xs font-medium transition-colors"
-                  style={{
-                    background: "rgba(255,60,60,0.2)",
-                    border: "1px solid rgba(255,60,60,0.4)",
-                    color: "rgba(255,100,100,0.95)",
-                  }}
+                  className="inline-flex items-center h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+                  style={{ background: "rgba(239,68,68,0.15)", borderColor: "rgba(239,68,68,0.4)", color: "rgba(239,68,68,0.95)" }}
                 >
                   Delete
                 </button>
                 <button
                   onClick={() => { setConfirmCancel(false); changeStatus("cancelled") }}
-                  className="px-2 py-1 rounded text-xs font-medium transition-colors"
-                  style={{
-                    background: "rgba(255,165,80,0.15)",
-                    border: "1px solid rgba(255,165,80,0.3)",
-                    color: "rgba(255,165,80,0.9)",
-                  }}
+                  className="inline-flex items-center h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+                  style={{ background: "rgba(251,146,60,0.12)", borderColor: "rgba(251,146,60,0.3)", color: "rgba(251,146,60,0.85)" }}
                 >
                   Archive
                 </button>
                 <button
                   onClick={() => setConfirmCancel(false)}
-                  className="px-2 py-1 rounded text-xs transition-colors"
+                  className="inline-flex items-center h-7 px-2 rounded text-[11px] transition-all cursor-pointer"
                   style={{ color: "rgba(255,255,255,0.4)" }}
                 >
                   Nevermind
@@ -653,20 +826,10 @@ export function PartsDetailView({ requestId }: Props) {
             ) : (
               <button
                 onClick={() => setConfirmCancel(true)}
-                className="px-2 py-1 rounded text-xs transition-colors"
-                style={{
-                  background: "rgba(255,100,100,0.08)",
-                  border: "1px solid rgba(255,100,100,0.2)",
-                  color: "rgba(255,100,100,0.7)",
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = "rgba(255,100,100,0.15)"
-                  e.currentTarget.style.color = "rgba(255,100,100,0.9)"
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = "rgba(255,100,100,0.08)"
-                  e.currentTarget.style.color = "rgba(255,100,100,0.7)"
-                }}
+                className="inline-flex items-center h-7 px-2.5 rounded-md border text-[11px] font-semibold transition-all cursor-pointer"
+                style={{ background: "rgba(239,68,68,0.07)", borderColor: "rgba(239,68,68,0.2)", color: "rgba(239,68,68,0.65)" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.13)"; e.currentTarget.style.color = "rgba(239,68,68,0.85)" }}
+                onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,0.07)"; e.currentTarget.style.color = "rgba(239,68,68,0.65)" }}
               >
                 Cancel
               </button>

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { DW1GHT_CONFIG } from "./_dw1ght-config";
+import { resolvePlaybook } from "./_dw1ght-playbooks";
 
 // ── Types ────────────────────────────────────────────────────────
 type HandlerEvent = {
@@ -84,54 +85,8 @@ Airframe: ${data.airframe_hours || "N/A"} hrs / ${data.airframe_cycles || "N/A"}
 Status: ${data.status}`;
 }
 
-// ── Fetch active learnings for injection into system prompt ────
-// Locked lessons always inject (no slot limit).
-// Rolling lessons fill remaining slots up to 30, newest first.
-async function getLearningsContext(supabase: ReturnType<typeof createClient>): Promise<string> {
-  const now = new Date().toISOString();
-
-  // 1. Locked — always injected, no cap
-  const { data: locked } = await supabase
-    .from("dw1ght_learnings")
-    .select("lesson, category, aircraft_type")
-    .eq("context", "interview")
-    .eq("pin_status", "locked")
-    .order("created_at", { ascending: false });
-
-  const lockedRows = locked ?? [];
-
-  // 2. Rolling active — fill remaining slots (respect snooze: skip if inactive_until is in the future)
-  const remainingSlots = Math.max(0, 30 - lockedRows.length);
-  const { data: rolling } = remainingSlots > 0
-    ? await supabase
-        .from("dw1ght_learnings")
-        .select("lesson, category, aircraft_type, inactive_until")
-        .eq("context", "interview")
-        .eq("pin_status", "rolling")
-        .eq("active", true)
-        .order("created_at", { ascending: false })
-        .limit(remainingSlots * 2) // fetch extra to filter snoozed
-    : { data: [] };
-
-  // Filter out snoozed lessons (inactive_until in the future)
-  const rollingRows = (rolling ?? [])
-    .filter((l: { inactive_until: string | null }) => !l.inactive_until || l.inactive_until <= now)
-    .slice(0, remainingSlots);
-
-  const allRows = [...lockedRows, ...rollingRows];
-  if (allRows.length === 0) return "";
-
-  const lines = allRows.map((l: { lesson: string; aircraft_type?: string | null }) => {
-    const prefix = l.aircraft_type ? `[${l.aircraft_type}] ` : "";
-    return `- ${prefix}${l.lesson}`;
-  });
-
-  const lockedCount = lockedRows.length;
-  const rollingCount = rollingRows.length;
-  const header = `\n\nLESSONS FROM PAST INTERVIEWS — apply these (${lockedCount} locked, ${rollingCount} rolling):`;
-
-  return header + "\n" + lines.join("\n");
-}
+// getLearningsContext() removed — replaced by getPlaybookLearnings() in _dw1ght-playbooks.ts
+// System prompt is now assembled by resolvePlaybook("mechanic-interview", supabase)
 
 // ── Start Interview: create enrichment row + return opening ─────
 async function handleStart(
@@ -199,13 +154,13 @@ async function handleStart(
     ? `\n\nThe DOM (Jonathan) left this note for the interview: "${assignment.dom_note}"\nWork this context into your questions naturally — don't read it verbatim.`
     : "";
 
-  const learningsContext = await getLearningsContext(supabase);
+  // resolvePlaybook builds: identity + instructions + decision_logic + tone_calibration + active learnings
+  const playbookPrompt = await resolvePlaybook("mechanic-interview", supabase);
 
   const response = await client.messages.create({
     model: DW1GHT_CONFIG.model,
     max_tokens: 500,
-    system: DW1GHT_CONFIG.identity + "\n\n" + DW1GHT_CONFIG.interviewSystemPrompt
-      + learningsContext
+    system: playbookPrompt
       + `\n\nYou are in the OPENING phase. The mechanic's name is ${profile?.full_name || "the technician"}.`
       + domNoteContext
       + `\n\n${context}`
@@ -276,13 +231,13 @@ async function handleMessage(
     { role: "user", content: message },
   ];
 
-  const learningsContext = await getLearningsContext(supabase);
+  // resolvePlaybook builds: identity + instructions + decision_logic + tone_calibration + active learnings
+  const playbookPrompt = await resolvePlaybook("mechanic-interview", supabase);
 
   const response = await client.messages.create({
     model: DW1GHT_CONFIG.model,
     max_tokens: 400,
-    system: DW1GHT_CONFIG.identity + "\n\n" + DW1GHT_CONFIG.interviewSystemPrompt
-      + learningsContext
+    system: playbookPrompt
       + phaseInstruction
       + `\n\n${context}`,
     messages,
@@ -449,9 +404,13 @@ async function handleComplete(
   }
 
   // ── Self-critique via Sonnet (async, non-blocking) ────────────
-  // Fire and forget — don't block the completion response
-  generateSelfCritique(client, supabase, enrichment_id, transcriptText, context || "").catch((err) => {
-    console.error("[DW1GHT Self-Critique] Failed:", err);
+  // Resolve the live playbook so Sonnet critiques against actual rules, not code defaults
+  resolvePlaybook("mechanic-interview", supabase).then((playbookPrompt) => {
+    generateSelfCritique(client, supabase, enrichment_id, transcriptText, context || "", playbookPrompt).catch((err) => {
+      console.error("[DW1GHT Self-Critique] Failed:", err);
+    });
+  }).catch((err) => {
+    console.error("[DW1GHT Self-Critique] resolvePlaybook failed:", err);
   });
 
   return json(200, {
@@ -474,6 +433,7 @@ async function generateSelfCritique(
   enrichmentId: string,
   transcriptText: string,
   discrepancyContext: string,
+  playbookPrompt: string,
 ) {
   console.log("[DW1GHT Self-Critique] Starting Sonnet review for enrichment:", enrichmentId);
 
@@ -481,7 +441,7 @@ async function generateSelfCritique(
     model: DW1GHT_CONFIG.reviewModel,
     max_tokens: 1500,
     system: DW1GHT_CONFIG.selfCritiquePrompt
-      + `\n\nDW1GHT'S INTERVIEW RULES (what it was supposed to follow):\n${DW1GHT_CONFIG.interviewSystemPrompt}`
+      + `\n\nDW1GHT'S CURRENT PLAYBOOK RULES (what it was running with):\n${playbookPrompt}`
       + `\n\n${discrepancyContext}`,
     messages: [{ role: "user", content: `Review this interview transcript:\n\n${transcriptText}` }],
   });
@@ -495,11 +455,11 @@ async function generateSelfCritique(
   let critique: {
     overall_grade?: string;
     exchange_efficiency?: string;
-    learnings?: Array<{
-      lesson: string;
-      category: string;
-      aircraft_type?: string | null;
-      severity?: string;
+    playbook_suggestions?: Array<{
+      section_key: string;
+      change_type: string;
+      suggested_text: string;
+      reasoning?: string;
     }>;
   };
 
@@ -514,34 +474,31 @@ async function generateSelfCritique(
     }
   }
 
-  const validCategories = ["question_quality", "record_validation", "domain_knowledge", "interview_flow", "prompt_behavior"];
-  const learnings = (critique.learnings || []).filter(
-    (l) => l.lesson && validCategories.includes(l.category),
+  console.log("[DW1GHT Self-Critique] Grade:", critique.overall_grade || "N/A", "| Efficiency:", critique.exchange_efficiency || "N/A");
+
+  // Save any playbook suggestions to the suggestions table
+  const validSectionKeys = ["allowed_context", "instructions", "decision_logic", "output_definition", "post_processing", "tone_calibration"];
+  const suggestions = (critique.playbook_suggestions || []).filter(
+    (s) => s.section_key && s.suggested_text && validSectionKeys.includes(s.section_key) && ["append", "replace_section"].includes(s.change_type),
   );
-
-  if (learnings.length === 0) {
-    console.log("[DW1GHT Self-Critique] No learnings generated. Grade:", critique.overall_grade || "N/A");
-    return;
-  }
-
-  // Insert learnings
-  const rows = learnings.map((l) => ({
-    source_type: "self_critique" as const,
-    source_id: enrichmentId,
-    lesson: l.lesson,
-    category: l.category,
-    aircraft_type: l.aircraft_type || null,
-    active: true,
-  }));
-
-  const { error: insertErr } = await supabase.from("dw1ght_learnings").insert(rows);
-
-  if (insertErr) {
-    console.error("[DW1GHT Self-Critique] Insert failed:", insertErr.message);
-  } else {
-    console.log(
-      `[DW1GHT Self-Critique] Generated ${learnings.length} learnings. Grade: ${critique.overall_grade || "N/A"}. Efficiency: ${critique.exchange_efficiency || "N/A"}`,
+  if (suggestions.length > 0) {
+    const { error: suggErr } = await supabase.from("dw1ght_playbook_suggestions").insert(
+      suggestions.map((s) => ({
+        playbook_slug: "mechanic-interview",
+        section_key: s.section_key,
+        change_type: s.change_type,
+        suggested_text: s.suggested_text,
+        reasoning: s.reasoning || null,
+        source_type: "self_critique",
+        source_id: enrichmentId,
+        review_status: "pending",
+      })),
     );
+    if (suggErr) {
+      console.error("[DW1GHT Self-Critique] Suggestion insert failed:", suggErr.message);
+    } else {
+      console.log(`[DW1GHT Self-Critique] Saved ${suggestions.length} playbook suggestion(s).`);
+    }
   }
 }
 

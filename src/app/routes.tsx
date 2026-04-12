@@ -53,7 +53,8 @@ const AccessRestricted = lazy(() => import("@/pages/AccessRestricted"))
 const AircraftInfo = lazy(() => import("@/pages/AircraftInfo"))
 const MyTraining   = lazy(() => import("@/pages/training/MyTraining"))
 const MyJourney    = lazy(() => import("@/pages/training/MyJourney"))
-const AiAssistant  = lazy(() => import("@/pages/AiAssistant"))
+const AiAssistant           = lazy(() => import("@/pages/AiAssistant"))
+const DwightPlaybookWorkbench = lazy(() => import("@/pages/DwightPlaybookWorkbench"))
 const VendorMap    = lazy(() => import("@/pages/VendorMap"))
 const VendorDetailPage = lazy(() => import("@/pages/VendorDetailPage"))
 const Compliance   = lazy(() => import("@/pages/Compliance"))
@@ -145,6 +146,7 @@ const routes: RouteObject[] = [
       // ── Overview ───────────────────────────────────────────────────
       { path: "aircraft",                  element: guard("Aircraft Info", <AircraftInfo />) },
       { path: "ai-assistant",              element: guard("AI Assistant", <AiAssistant />) },
+      { path: "ai-assistant/playbook",    element: guard("AI Assistant", <DwightPlaybookWorkbench />, { adminOnly: true }) },
 
       // ── Operations ─────────────────────────────────────────────────
       { path: "discrepancy-intelligence",  element: guard("Discrepancy Intelligence", <DiscrepancyIntelligence />) },

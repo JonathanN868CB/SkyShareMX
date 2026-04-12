@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
+import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Sparkles } from "lucide-react"
 import { useFleet } from "./aircraft/useFleet"
 import { useDiscrepancyCounts } from "./aircraft/useDiscrepancyCounts"
 import { useFleetStats } from "./aircraft/useFleetStats"
@@ -1735,23 +1735,16 @@ function DomReviewView({
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
-  const [showLearnings, setShowLearnings] = useState(true)
-  const [learnings, setLearnings] = useState<Array<{ id: string; lesson: string; category: string; source_type: string; active: boolean; created_at: string }>>([])
-  const [learningsLoaded, setLearningsLoaded] = useState(false)
-
-  // Auto-load learnings on mount
-  useEffect(() => {
-    async function loadLearnings() {
-      const { data } = await (supabase as any)
-        .from("dw1ght_learnings")
-        .select("id, lesson, category, source_type, active, created_at")
-        .order("created_at", { ascending: false })
-        .limit(50)
-      if (data) setLearnings(data)
-      setLearningsLoaded(true)
-    }
-    loadLearnings()
-  }, [])
+  const [critiqueSuggestions, setCritiqueSuggestions] = useState<Array<{
+    id: string
+    section_key: string
+    change_type: string
+    suggested_text: string
+    reasoning: string | null
+    created_at: string
+  }>>([])
+  const [refiring, setRefiring] = useState(false)
+  const [refireMessage, setRefireMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -1785,6 +1778,45 @@ function DomReviewView({
     }
     load()
   }, [discrepancyId])
+
+  async function loadCritiqueSuggestions(enrichmentId: string) {
+    const { data } = await supabase
+      .from("dw1ght_playbook_suggestions")
+      .select("id, section_key, change_type, suggested_text, reasoning, created_at")
+      .eq("source_id", enrichmentId)
+      .eq("review_status", "pending")
+      .order("created_at", { ascending: false })
+    if (data) setCritiqueSuggestions(data)
+  }
+
+  useEffect(() => {
+    if (enrichment?.id) loadCritiqueSuggestions(enrichment.id)
+  }, [enrichment?.id])
+
+  async function refireCritique() {
+    if (!enrichment) return
+    setRefiring(true)
+    setRefireMessage(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error("Not authenticated")
+      const res = await fetch("/.netlify/functions/dw1ght-refire-critique", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ enrichment_id: enrichment.id }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || "Re-fire failed")
+      await loadCritiqueSuggestions(enrichment.id)
+      const count = body.suggestions_count ?? 0
+      const gradeStr = body.grade ? ` — Grade: ${body.grade}` : ""
+      setRefireMessage({ type: "success", text: `Review complete${gradeStr}. ${count} new suggestion${count !== 1 ? "s" : ""} added.` })
+    } catch (err) {
+      setRefireMessage({ type: "error", text: err instanceof Error ? err.message : "Re-fire failed" })
+    } finally {
+      setRefiring(false)
+    }
+  }
 
   function setCorrectionState(idx: number, state: "pending" | "accepted" | "rejected" | "editing") {
     setCorrectionStates(prev => new Map(prev).set(idx, state))
@@ -2230,6 +2262,104 @@ function DomReviewView({
         )}
       </div>
 
+      {/* Sonnet Review — suggestions + re-fire */}
+      {(["Admin", "Super Admin"].includes(profile?.role || "")) && (
+        <div
+          className="rounded-lg px-4 py-3 flex flex-col gap-3"
+          style={{ background: "rgba(148,103,189,0.04)", border: "1px solid rgba(148,103,189,0.15)" }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5" style={{ color: "rgba(148,103,189,0.9)" }} />
+              <h3 className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: "rgba(148,103,189,0.9)", fontFamily: "var(--font-heading)" }}>
+                Sonnet Review
+              </h3>
+              {critiqueSuggestions.length > 0 && (
+                <span
+                  className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: "rgba(193,2,48,0.15)", color: "rgba(193,2,48,0.9)" }}
+                >
+                  {critiqueSuggestions.length}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={refireCritique}
+              disabled={refiring}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-widest transition-all hover:brightness-110 disabled:opacity-50"
+              style={{ color: "rgba(148,103,189,0.9)", background: "rgba(148,103,189,0.08)", border: "1px solid rgba(148,103,189,0.2)" }}
+            >
+              <RefreshCw className={`w-3 h-3 ${refiring ? "animate-spin" : ""}`} />
+              {refiring ? "Running…" : "Re-run Sonnet Review"}
+            </button>
+          </div>
+
+          {refireMessage && (
+            <div
+              className="rounded px-3 py-2 text-sm"
+              style={{
+                background: refireMessage.type === "success" ? "rgba(100,220,100,0.06)" : "rgba(255,100,100,0.06)",
+                border: `1px solid ${refireMessage.type === "success" ? "rgba(100,220,100,0.15)" : "rgba(255,100,100,0.15)"}`,
+                color: refireMessage.type === "success" ? "rgba(100,220,100,0.9)" : "rgba(255,100,100,0.9)",
+              }}
+            >
+              {refireMessage.text}
+            </div>
+          )}
+
+          {critiqueSuggestions.length === 0 && !refireMessage && (
+            <p className="text-[12px] text-white/30">
+              No pending suggestions for this interview. Run a review to generate playbook improvement ideas.
+            </p>
+          )}
+
+          {critiqueSuggestions.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {critiqueSuggestions.map((s) => {
+                const sectionLabel = s.section_key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+                return (
+                  <div
+                    key={s.id}
+                    className="rounded-lg px-3 py-3 flex flex-col gap-2"
+                    style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(148,103,189,0.1)" }}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className="text-[10px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded"
+                        style={{ background: "rgba(212,160,23,0.12)", color: "var(--skyshare-gold)" }}
+                      >
+                        {sectionLabel}
+                      </span>
+                      <span
+                        className="text-[10px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
+                        style={{
+                          background: s.change_type === "append" ? "rgba(100,220,100,0.08)" : "rgba(255,165,0,0.08)",
+                          color: s.change_type === "append" ? "rgba(100,220,100,0.8)" : "rgba(255,165,0,0.8)",
+                        }}
+                      >
+                        {s.change_type === "append" ? "Append" : "Replace"}
+                      </span>
+                      <span className="text-[10px] text-white/25 ml-auto">
+                        {new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                    {s.reasoning && (
+                      <p className="text-[12px] text-white/50 italic leading-relaxed">{s.reasoning}</p>
+                    )}
+                    <pre
+                      className="text-[12px] text-white/70 whitespace-pre-wrap leading-relaxed rounded px-2 py-1.5"
+                      style={{ fontFamily: "'Courier Prime','Courier New',monospace", background: "rgba(255,255,255,0.03)" }}
+                    >
+                      {s.suggested_text}
+                    </pre>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Review actions */}
       {!readOnly && !saved && enrichment.status === "completed" && (
         <div
@@ -2285,87 +2415,6 @@ function DomReviewView({
         </div>
       )}
 
-      {/* DW1GHT Learnings */}
-      {enrichment && (
-        <div className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(212,160,23,0.15)", background: "rgba(255,255,255,0.01)" }}>
-          {/* Header */}
-          <button
-            onClick={() => setShowLearnings(!showLearnings)}
-            className="w-full px-4 py-2.5 flex items-center gap-2 transition-colors hover:brightness-110"
-            style={{ borderBottom: showLearnings ? "1px solid rgba(255,255,255,0.06)" : "none", background: "rgba(212,160,23,0.03)" }}
-          >
-            {showLearnings ? <ChevronDown className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} /> : <ChevronRight className="w-3 h-3" style={{ color: "var(--skyshare-gold)" }} />}
-            <span className="text-[10px] font-bold tracking-widest uppercase" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)" }}>
-              DW1GHT Learning Library
-            </span>
-            <span className="text-[9px] text-white/30 ml-auto">
-              {learningsLoaded ? `${learnings.filter(l => l.active).length} active · ${learnings.filter(l => !l.active).length} inactive` : "loading..."}
-            </span>
-          </button>
-
-          {showLearnings && (
-            <div className="px-4 py-3 flex flex-col gap-1">
-              {!learningsLoaded && (
-                <p className="text-sm text-white/25 py-2">Loading learnings...</p>
-              )}
-              {learnings.length === 0 && learningsLoaded && (
-                <p className="text-sm text-white/30 py-4 text-center">No learnings yet. Complete and review more interviews to generate them.</p>
-              )}
-              {learnings.map((l) => (
-                <div
-                  key={l.id}
-                  className="flex items-start gap-3 rounded-lg px-3 py-2.5 transition-all"
-                  style={{
-                    background: l.active ? "rgba(100,220,100,0.03)" : "rgba(255,255,255,0.015)",
-                    border: `1px solid ${l.active ? "rgba(100,220,100,0.12)" : "rgba(255,255,255,0.04)"}`,
-                    opacity: l.active ? 1 : 0.55,
-                  }}
-                >
-                  {/* Lesson text */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm leading-relaxed" style={{ color: l.active ? "rgba(255,255,255,0.80)" : "rgba(255,255,255,0.45)" }}>
-                      {l.lesson}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      <span
-                        className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
-                        style={{
-                          background: l.source_type === "self_critique" ? "rgba(100,180,255,0.1)" : "rgba(212,160,23,0.1)",
-                          color: l.source_type === "self_critique" ? "rgba(100,180,255,0.7)" : "var(--skyshare-gold)",
-                        }}
-                      >
-                        {l.source_type === "self_critique" ? "Self-Critique" : "DOM Review"}
-                      </span>
-                      <span className="text-[8px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)" }}>
-                        {l.category.replace(/_/g, " ")}
-                      </span>
-                      <span className="text-[9px] text-white/20">
-                        {new Date(l.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Active/Inactive toggle — clearly labeled */}
-                  <button
-                    onClick={async () => {
-                      await (supabase as any).from("dw1ght_learnings").update({ active: !l.active }).eq("id", l.id)
-                      setLearnings(prev => prev.map(x => x.id === l.id ? { ...x, active: !x.active } : x))
-                    }}
-                    className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded text-[9px] font-bold uppercase tracking-widest transition-all hover:brightness-125"
-                    style={l.active
-                      ? { background: "rgba(100,220,100,0.12)", color: "rgba(100,220,100,0.85)", border: "1px solid rgba(100,220,100,0.25)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.1)" }
-                    }
-                    title={l.active ? "DW1GHT is learning this — click to remove" : "Inactive — click to teach this to DW1GHT"}
-                  >
-                    {l.active ? <><CheckCircle className="w-3 h-3" /> Teaching</> : <>○ Ignored</>}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

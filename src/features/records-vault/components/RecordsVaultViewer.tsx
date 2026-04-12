@@ -18,11 +18,11 @@
  *   - Search match navigation (prev / next match buttons in topbar)
  */
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
-  X, ChevronLeft, ChevronRight, FileText,
-  ChevronDown, ChevronUp, Loader2, AlertTriangle, Search, Hand, ZoomIn,
+  X, ChevronLeft, ChevronRight, FileText, BookOpen,
+  ChevronDown, ChevronUp, Loader2, AlertTriangle, Search, Hand, ZoomIn, Download,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { useRecordPageUrl } from "../hooks/useRecordPageUrl"
@@ -499,11 +499,19 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   const [propsPanelOpen, setPropsPanelOpen] = useState(false)
   const [pageJumpValue,  setPageJumpValue]  = useState("")
   const [showJumpInput,  setShowJumpInput]  = useState(false)
-  // Banner state: set when we had to redirect off the requested page because
-  // rasterization hasn't reached it yet.
+  // Banner: rasterization redirect (set when we land on a different page than requested)
   const [redirectBanner, setRedirectBanner] = useState<{ requested: number; shown: number } | null>(null)
+  // Banner: shown briefly when cross-book navigation changes the active document
+  const [docTransition, setDocTransition] = useState<{ filename: string; tailNumber: string | null } | null>(null)
+  const prevSourceIdRef = useRef<string | null>(null)
   const jumpInputRef  = useRef<HTMLInputElement>(null)
   const centerRef     = useRef<HTMLDivElement>(null)
+  // Print
+  const [printMenuOpen,   setPrintMenuOpen]   = useState(false)
+  const [printScope,      setPrintScope]      = useState<"current" | "all">("current")
+  const [printHighlights, setPrintHighlights] = useState(true)
+  const [isPrinting,      setIsPrinting]      = useState(false)
+  const printMenuRef = useRef<HTMLDivElement>(null)
 
   const { allAircraft } = useRecordsVaultCtx()
 
@@ -511,8 +519,31 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   const recordSourceId = currentHit?.record_source_id ?? null
   const aircraft       = allAircraft.find((a) => a.id === currentHit?.aircraft_id)
 
-  const matchPages     = new Set(hits.map((h) => h.page_number))
-  const pageToHitIndex = new Map(hits.map((h, i) => [h.page_number, i]))
+  // Only use hits from the current document for thumbnail badges and page→hit mapping.
+  // When the viewer holds cross-doc hits, page numbers collide across documents
+  // (page 5 of doc A is not the same page as page 5 of doc B).
+  const currentDocHits = hits.filter((h) => h.record_source_id === recordSourceId)
+  const matchPages     = new Set(currentDocHits.map((h) => h.page_number))
+  const pageToHitIndex = new Map(
+    hits.reduce((acc, h, i) => {
+      if (h.record_source_id === recordSourceId) acc.push([h.page_number, i] as [number, number])
+      return acc
+    }, [] as [number, number][])
+  )
+  const isMultiDoc = hits.some((h) => h.record_source_id !== recordSourceId)
+
+  // Unique (doc, page) pairs across all hits — used for "all result pages" print scope
+  const uniquePrintPages = useMemo(() => {
+    const seen = new Set<string>()
+    return hits.filter((h) => {
+      const key = `${h.record_source_id}:${h.page_number}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }).sort((a, b) =>
+      a.record_source_id.localeCompare(b.record_source_id) || a.page_number - b.page_number
+    )
+  }, [hits])
 
   useEffect(() => {
     if (open) {
@@ -521,6 +552,8 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
       setExcerptOpen(true)
       setShowJumpInput(false)
       setRedirectBanner(null)
+      setDocTransition(null)
+      prevSourceIdRef.current = null
     }
   }, [open, hitIndex, hits])
 
@@ -580,9 +613,13 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     if (idx !== undefined) setCurrentHitIdx(idx)
   }, [currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Use a ref so navigate always reads the latest effectiveTotalPages without
+  // needing it as a dependency (avoids stale closure with cross-doc navigation).
+  const effectiveTotalPagesRef = useRef(totalPages || 1)
+
   const navigate = useCallback((delta: number) => {
-    setCurrentPage((p) => Math.max(1, Math.min(totalPages, p + delta)))
-  }, [totalPages])
+    setCurrentPage((p) => Math.max(1, Math.min(effectiveTotalPagesRef.current, p + delta)))
+  }, [])
 
   const jumpToHit = useCallback((idx: number) => {
     const clamped = Math.max(0, Math.min(hits.length - 1, idx))
@@ -601,6 +638,21 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     window.addEventListener("keydown", handleKey)
     return () => window.removeEventListener("keydown", handleKey)
   }, [open, navigate, onClose, showJumpInput])
+
+  // Show a brief transition banner when cross-book navigation changes the active document
+  useEffect(() => {
+    if (!recordSourceId) return
+    if (prevSourceIdRef.current && prevSourceIdRef.current !== recordSourceId) {
+      const a = allAircraft.find((x) => x.id === currentHit?.aircraft_id)
+      setDocTransition({
+        filename:   currentHit?.original_filename ?? "Document",
+        tailNumber: a?.tailNumber ?? null,
+      })
+      const t = setTimeout(() => setDocTransition(null), 3500)
+      return () => clearTimeout(t)
+    }
+    prevSourceIdRef.current = recordSourceId
+  }, [recordSourceId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: source } = useQuery({
     queryKey: ["rv-source-detail", recordSourceId],
@@ -636,7 +688,133 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     setPageJumpValue("")
   }
 
-  const effectiveTotalPages = totalPages || source?.page_count || hits.length
+  // Close print popover when clicking outside
+  useEffect(() => {
+    if (!printMenuOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (printMenuRef.current && !printMenuRef.current.contains(e.target as Node)) {
+        setPrintMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [printMenuOpen])
+
+  async function handlePrint() {
+    if (!recordSourceId) return
+
+    // Open the window SYNCHRONOUSLY before any await — browsers block window.open()
+    // called after an async operation (popup blocker treats it as unsolicited).
+    const win = window.open("", "_blank", "width=960,height=720")
+    if (!win) return
+    win.document.write(
+      `<html><head><meta charset="utf-8"><title>Preparing…</title>` +
+      `<style>body{background:#111;color:#888;font-family:sans-serif;display:flex;` +
+      `align-items:center;justify-content:center;height:100vh;margin:0;font-size:14px}</style>` +
+      `</head><body>Preparing pages…</body></html>`
+    )
+
+    setIsPrinting(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { win.close(); return }
+
+      const pagesToPrint = printScope === "current"
+        ? [{ recordSourceId, pageNumber: currentPage }]
+        : uniquePrintPages.map((h) => ({ recordSourceId: h.record_source_id, pageNumber: h.page_number }))
+
+      const pageData = await Promise.all(
+        pagesToPrint.map(async ({ recordSourceId: srcId, pageNumber }) => {
+          // Fetch signed image URL
+          const resp = await fetch("/.netlify/functions/records-vault-page-image-url", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ recordSourceId: srcId, pageNumber }),
+          })
+          const { signedUrl } = resp.ok ? await resp.json() : { signedUrl: null }
+
+          // Fetch word geometry for highlights
+          type HighlightBox = { left: number; top: number; width: number; height: number }
+          let highlights: HighlightBox[] = []
+          if (printHighlights && query) {
+            const { data: pageRow } = await supabase
+              .from("rv_pages")
+              .select("word_geometry")
+              .eq("record_source_id", srcId)
+              .eq("page_number", pageNumber)
+              .maybeSingle()
+            if (pageRow?.word_geometry) {
+              const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+              highlights = (pageRow.word_geometry as Array<{ text: string; geometry: HighlightBox }>)
+                .filter((w) => terms.some((t) => w.text.toLowerCase().includes(t)))
+                .map((w) => w.geometry)
+            }
+          }
+
+          return { pageNumber, signedUrl: signedUrl as string | null, highlights }
+        })
+      )
+
+      // Build print HTML
+      const pagesHtml = pageData.map(({ pageNumber, signedUrl, highlights }) => {
+        if (!signedUrl) {
+          return `<div class="page-missing">Page ${pageNumber} — image not available</div>`
+        }
+        const overlayHtml = highlights.map((h) =>
+          `<div class="hl" style="left:${h.left * 100}%;top:${h.top * 100}%;width:${h.width * 100}%;height:${h.height * 100}%"></div>`
+        ).join("")
+        return `
+          <div class="page">
+            <div class="wrap">
+              <img src="${signedUrl}" class="img" />
+              ${overlayHtml ? `<div class="overlays">${overlayHtml}</div>` : ""}
+            </div>
+            <div class="pnum">p.${pageNumber}</div>
+          </div>`
+      }).join("")
+
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${currentHit?.original_filename ?? "Records Vault"}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#fff;font-family:sans-serif}
+  .page{page-break-after:always;padding:12px 16px}
+  .page:last-child{page-break-after:auto}
+  .wrap{position:relative;display:inline-block;max-width:100%}
+  .img{display:block;max-width:100%;height:auto}
+  .overlays{position:absolute;inset:0;pointer-events:none}
+  .hl{position:absolute;background:rgba(212,160,23,0.32);border:1px solid rgba(212,160,23,0.65);border-radius:1px}
+  .pnum{margin-top:4px;font-size:9px;color:#aaa;text-align:right}
+  .page-missing{padding:24px;color:#999;font-size:13px}
+  @media print{
+    body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .page{padding:0}
+  }
+</style>
+</head>
+<body>${pagesHtml}</body>
+</html>`
+
+      win.document.open()
+      win.document.write(html)
+      win.document.close()
+      win.onload = () => win.print()
+    } finally {
+      setIsPrinting(false)
+      setPrintMenuOpen(false)
+    }
+  }
+
+  // Prefer source.page_count (auto-updates per document during cross-book nav)
+  // over the totalPages prop, which is only set for the initially-opened document.
+  const effectiveTotalPages = source?.page_count || totalPages || hits.length
+  effectiveTotalPagesRef.current = effectiveTotalPages
 
   // Strip page list — always sparse. The previous "<=200 → render all" path
   // fired a page-image-url request per thumbnail on open, which was the root
@@ -672,6 +850,29 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-background">
 
+      {/* ── Document transition banner (cross-book navigation) ───────────────── */}
+      {docTransition && (
+        <div
+          className="flex-none flex items-center gap-2 px-4 py-1.5 text-xs border-b border-border shrink-0"
+          style={{ background: "rgba(212,160,23,0.08)" }}
+        >
+          <BookOpen className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+          <span className="text-foreground/80">
+            Now viewing:{" "}
+            <span className="font-medium text-foreground">{docTransition.filename}</span>
+            {docTransition.tailNumber && (
+              <span className="ml-2 font-mono text-muted-foreground">{docTransition.tailNumber}</span>
+            )}
+          </span>
+          <button
+            onClick={() => setDocTransition(null)}
+            className="ml-auto text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
       {/* ── Top bar ──────────────────────────────────────────────────────────── */}
       <div className="flex-none flex items-center gap-3 px-4 py-2 border-b border-border bg-background">
         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -689,6 +890,104 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
 
         {/* Page indicator + jump */}
         <div className="flex items-center gap-3 shrink-0">
+
+          {/* Print button — only when there are search results */}
+          {hits.length > 0 && query && (
+            <div className="relative shrink-0" ref={printMenuRef}>
+              <button
+                onClick={() => setPrintMenuOpen((v) => !v)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded transition-colors text-xs font-medium ${
+                  printMenuOpen
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.06em" }}
+                title="Print result pages"
+              >
+                <Download className="h-4 w-4 shrink-0" />
+                PDF
+              </button>
+
+              {printMenuOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1.5 w-56 rounded-md border border-border bg-background shadow-xl z-50 p-3 space-y-3"
+                  style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.35)" }}
+                >
+                  {/* Scope */}
+                  <div className="space-y-2">
+                    <p
+                      className="text-[9px] font-semibold uppercase tracking-widest"
+                      style={{ color: "var(--skyshare-gold)", opacity: 0.7 }}
+                    >
+                      Pages
+                    </p>
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="radio"
+                        name="print-scope"
+                        checked={printScope === "current"}
+                        onChange={() => setPrintScope("current")}
+                        className="accent-amber-500"
+                      />
+                      <span className="text-xs text-foreground/80 group-hover:text-foreground transition-colors">
+                        Current page
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="radio"
+                        name="print-scope"
+                        checked={printScope === "all"}
+                        onChange={() => setPrintScope("all")}
+                        className="accent-amber-500"
+                      />
+                      <span className="text-xs text-foreground/80 group-hover:text-foreground transition-colors">
+                        All result pages
+                        <span className="ml-1 tabular-nums text-muted-foreground">
+                          ({uniquePrintPages.length})
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* Highlights toggle */}
+                  <div className="border-t border-border pt-2.5">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={printHighlights}
+                        onChange={(e) => setPrintHighlights(e.target.checked)}
+                        className="accent-amber-500"
+                      />
+                      <span className="text-xs text-foreground/80 group-hover:text-foreground transition-colors">
+                        Include highlights
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* Action */}
+                  <button
+                    onClick={handlePrint}
+                    disabled={isPrinting}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(212,160,23,0.18) 0%, rgba(212,160,23,0.06) 100%)",
+                      border: "1px solid rgba(212,160,23,0.35)",
+                      color: "rgba(255,255,255,0.9)",
+                      fontFamily: "var(--font-heading)",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    {isPrinting
+                      ? <><Loader2 className="h-3 w-3 animate-spin" /> Preparing…</>
+                      : <><Download className="h-3 w-3" style={{ color: "var(--skyshare-gold)" }} /> Print to PDF</>
+                    }
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center gap-1.5 text-muted-foreground/80">
             <Hand className="h-7 w-7" />
             <span className="text-[11px] leading-tight">Hold middle click to pan</span>
@@ -725,7 +1024,7 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
         </div>
 
         {/* Match navigation */}
-        {hits.length > 1 && query && (
+        {hits.length > 0 && query && (
           <div className="flex items-center gap-1 shrink-0 border-l border-border pl-3">
             <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <button
@@ -736,8 +1035,10 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="text-xs text-muted-foreground tabular-nums min-w-[70px] text-center">
-              {currentHitIdx + 1} / {hits.length} matches
+            <span className="text-xs text-muted-foreground tabular-nums min-w-[80px] text-center">
+              {isMultiDoc
+                ? `${currentHitIdx + 1} / ${hits.length} total`
+                : `${currentHitIdx + 1} / ${hits.length} matches`}
             </span>
             <button
               onClick={() => jumpToHit(currentHitIdx + 1)}

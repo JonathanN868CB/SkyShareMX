@@ -101,25 +101,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     });
   }
 
-  // Skip if there's nothing meaningful to learn from (approved, high rating, no notes, no rejections)
+  // Skip if there's no meaningful signal to generate suggestions from
   const hasSignal = decision === "rejected"
     || (rating != null && rating <= 3)
     || (review_notes && review_notes.trim().length > 0)
     || (rejected_corrections && rejected_corrections.length > 0);
 
-  // Even approvals with high ratings generate a positive reinforcement learning
-  if (!hasSignal && decision === "approved" && (rating == null || rating >= 4)) {
-    // Insert a simple positive reinforcement
-    await supabase.from("dw1ght_learnings").insert({
-      source_type: "dom_review",
-      source_id: enrichment_id,
-      lesson: `KEEP: DOM approved this interview${rating ? ` with ${rating}/5 stars` : ""}. The approach used was validated.`,
-      category: "interview_flow",
-      active: true,
-    });
-
-    console.log("[DW1GHT DOM Learning] Positive reinforcement saved for enrichment:", enrichment_id);
-    return json(200, { ok: true, learnings_count: 1 });
+  if (!hasSignal) {
+    console.log("[DW1GHT DOM Review] No signal — skipping suggestion generation for enrichment:", enrichment_id);
+    return json(200, { ok: true, suggestions_count: 0 });
   }
 
   const client = new Anthropic({ apiKey });
@@ -138,11 +128,11 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   let result: {
-    learnings?: Array<{
-      lesson: string;
-      category: string;
-      aircraft_type?: string | null;
-      severity?: string;
+    playbook_suggestions?: Array<{
+      section_key: string;
+      change_type: string;
+      suggested_text: string;
+      reasoning?: string;
     }>;
   };
 
@@ -157,33 +147,33 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     }
   }
 
-  const validCategories = ["question_quality", "record_validation", "domain_knowledge", "interview_flow", "prompt_behavior"];
-  const learnings = (result.learnings || []).filter(
-    (l) => l.lesson && validCategories.includes(l.category),
+  const validSectionKeys = ["allowed_context", "instructions", "decision_logic", "output_definition", "post_processing", "tone_calibration"];
+  const suggestions = (result.playbook_suggestions || []).filter(
+    (s) => s.section_key && s.suggested_text && validSectionKeys.includes(s.section_key) && ["append", "replace_section"].includes(s.change_type),
   );
-
-  if (learnings.length > 0) {
-    const rows = learnings.map((l) => ({
-      source_type: "dom_review" as const,
-      source_id: enrichment_id,
-      lesson: l.lesson,
-      category: l.category,
-      aircraft_type: l.aircraft_type || null,
-      active: true,
-    }));
-
-    const { error: insertErr } = await supabase.from("dw1ght_learnings").insert(rows);
-    if (insertErr) {
-      console.error("[DW1GHT DOM Learning] Insert failed:", insertErr.message);
-      return json(500, { error: "Failed to save learnings" });
+  if (suggestions.length > 0) {
+    const { error: suggErr } = await supabase.from("dw1ght_playbook_suggestions").insert(
+      suggestions.map((s) => ({
+        playbook_slug: "mechanic-interview",
+        section_key: s.section_key,
+        change_type: s.change_type,
+        suggested_text: s.suggested_text,
+        reasoning: s.reasoning || null,
+        source_type: "dom_review",
+        source_id: enrichment_id,
+        review_status: "pending",
+      })),
+    );
+    if (suggErr) {
+      console.error("[DW1GHT DOM Review] Suggestion insert failed:", suggErr.message);
+    } else {
+      console.log(`[DW1GHT DOM Review] Saved ${suggestions.length} playbook suggestion(s) from ${decision} review.`);
     }
   }
 
-  console.log(`[DW1GHT DOM Learning] Generated ${learnings.length} learnings from ${decision} review of enrichment: ${enrichment_id}`);
-
   return json(200, {
     ok: true,
-    learnings_count: learnings.length,
+    suggestions_count: suggestions.length,
     usage: {
       input_tokens: critiqueResponse.usage.input_tokens,
       output_tokens: critiqueResponse.usage.output_tokens,

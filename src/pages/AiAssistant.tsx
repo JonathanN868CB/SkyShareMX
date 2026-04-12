@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from "react"
+import { useNavigate } from "react-router-dom"
 import { Send, ShieldAlert, Award, Database, Wrench, FileText, BookOpen, GraduationCap } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import { useAuth } from "@/features/auth"
-import DwightSchoolOfThought from "./DwightSchoolOfThought"
 
 // ── Keyframe + markdown styles injected once ────────────────
 const COST_METER_STYLES = `
@@ -64,6 +64,24 @@ const COST_METER_STYLES = `
 }
 `
 
+const LOADING_QUOTES = [
+  "Determining if this is worth my time...",
+  "Converting your words into something a machine can respect.",
+  "Digging through 430 chunks of maintenance history. Manually. With my hands.",
+  "Every logbook entry is a witness. I am interrogating them all.",
+  "Assembling the facts. Unlike some people, I do not guess.",
+  "I have the answer. I am deciding how much of it you deserve.",
+  "A good question deserves a precise answer. You asked a good question. Barely.",
+  "The database does not lie. Neither do I. We are aligned.",
+  "Jonathan trusts me with this data. I will not let him down.",
+  "Bears do not ask questions. They act on instinct. I do both.",
+  "I have cross-referenced 542 discrepancies. You are welcome.",
+  "Searching. Processing. Judging. In that order.",
+  "The answer exists. I am simply retrieving it from a better part of my brain.",
+  "Jim would not have asked a question this good. That is a compliment.",
+  "Fact: DW1GHT has never returned an incorrect answer. Fact.",
+]
+
 const OPENING_LINES = [
   { quote: "I am ready. State your question. Make it count.", attr: "DW1GHT, upon activation" },
   { quote: "I have been waiting. Not patiently. But I have been waiting.", attr: "DW1GHT, on standby" },
@@ -87,9 +105,10 @@ type Message = {
 
 export default function AiAssistant() {
   const { profile } = useAuth()
+  const navigate = useNavigate()
   const isSuperAdmin = profile?.role === "Super Admin"
-  const isManager = isSuperAdmin || profile?.role === "Admin" || profile?.role === "Manager"
-  const [showSchool, setShowSchool] = useState(false)
+  const isAdmin = isSuperAdmin || profile?.role === "Admin"
+  const [showWorkbenchGate, setShowWorkbenchGate] = useState(false)
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
@@ -106,17 +125,20 @@ export default function AiAssistant() {
   }, [messages, loading, loadingStage])
 
   const LOADING_STAGES = [
-    { label: "Classifying intent", quote: "Determining if this is worth my time..." },
-    { label: "Embedding query", quote: "Converting your words into something a machine can respect." },
-    { label: "Searching the beet field", quote: "Digging through 430 chunks of maintenance history. Manually. With my hands." },
-    { label: "Cross-referencing records", quote: "Every logbook entry is a witness. I am interrogating them all." },
-    { label: "Reasoning", quote: "Assembling the facts. Unlike some people, I do not guess." },
-    { label: "Formulating response", quote: "I have the answer. I am deciding how much of it you deserve." },
+    { label: "Classifying intent" },
+    { label: "Embedding query" },
+    { label: "Searching the beet field" },
+    { label: "Cross-referencing records" },
+    { label: "Reasoning" },
+    { label: "Formulating response" },
   ]
+
+  const [loadingQuote, setLoadingQuote] = useState("")
 
   useEffect(() => {
     if (!loading) { setLoadingStage(0); return }
     setLoadingStage(0)
+    setLoadingQuote(LOADING_QUOTES[Math.floor(Math.random() * LOADING_QUOTES.length)])
     const timers = [
       setTimeout(() => setLoadingStage(1), 1200),
       setTimeout(() => setLoadingStage(2), 3000),
@@ -126,10 +148,6 @@ export default function AiAssistant() {
     ]
     return () => timers.forEach(clearTimeout)
   }, [loading])
-
-  if (showSchool && isManager) {
-    return <DwightSchoolOfThought onBack={() => setShowSchool(false)} isSuperAdmin={isSuperAdmin} />
-  }
 
   function toggleSource(source: ContextSource) {
     setContextSources(prev => {
@@ -283,26 +301,55 @@ export default function AiAssistant() {
             </span>
           </div>
 
-          {/* School of Thought — Manager+ only */}
-          {isManager && (
-            <button
-              onClick={() => setShowSchool(true)}
-              className="flex flex-col items-center justify-center px-5 py-5 gap-2 flex-shrink-0 text-center border-l border-border hover:bg-white/[0.02] transition-colors"
-              title="Dwight School of Thought"
+          {/* Playbook Workbench — visible to all, gated on click */}
+          <button
+            onClick={() => isAdmin ? navigate("/app/ai-assistant/playbook") : setShowWorkbenchGate(true)}
+            className="flex flex-col items-center justify-center px-5 py-5 gap-2 flex-shrink-0 text-center border-l border-border hover:bg-white/[0.02] transition-colors"
+            title={isAdmin ? "DW1GHT Playbook Workbench" : "Admin access required"}
+          >
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center"
+              style={{ background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.25)" }}
+            >
+              <GraduationCap className="w-5 h-5" style={{ color: "var(--skyshare-gold)", opacity: isAdmin ? 0.7 : 0.35 }} />
+            </div>
+            <span
+              className="text-[10.5px] leading-tight text-center text-muted-foreground"
+              style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.12em", textTransform: "uppercase", maxWidth: "70px" }}
+            >
+              Playbook Workbench
+            </span>
+          </button>
+
+          {/* Access gate modal */}
+          {showWorkbenchGate && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: "rgba(0,0,0,0.6)" }}
+              onClick={() => setShowWorkbenchGate(false)}
             >
               <div
-                className="w-10 h-10 rounded-full flex items-center justify-center"
-                style={{ background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.25)" }}
+                className="card-elevated rounded-xl p-6 max-w-sm w-full mx-4 border border-white/[0.08]"
+                onClick={e => e.stopPropagation()}
               >
-                <GraduationCap className="w-5 h-5" style={{ color: "var(--skyshare-gold)", opacity: 0.7 }} />
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgba(193,2,48,0.12)", border: "1px solid rgba(193,2,48,0.25)" }}>
+                    <ShieldAlert className="w-4 h-4" style={{ color: "var(--skyshare-red)" }} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-foreground" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Admin Access Required</h3>
+                </div>
+                <p className="text-sm text-foreground/60 mb-4 leading-relaxed">
+                  The Playbook Workbench is restricted to Admin and Super Admin accounts. Contact your administrator to request access.
+                </p>
+                <button
+                  onClick={() => setShowWorkbenchGate(false)}
+                  className="w-full py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors"
+                  style={{ fontFamily: "var(--font-heading)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)" }}
+                >
+                  Got it
+                </button>
               </div>
-              <span
-                className="text-[10.5px] leading-tight text-center text-muted-foreground"
-                style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.12em", textTransform: "uppercase", maxWidth: "70px" }}
-              >
-                School of Thought
-              </span>
-            </button>
+            </div>
           )}
 
         </div>
@@ -752,10 +799,10 @@ export default function AiAssistant() {
                     </span>
                     {/* Dwight quote */}
                     <span
-                      className="text-[12px] text-muted-foreground italic"
-                      style={{ fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: "1.4" }}
+                      className="text-muted-foreground italic"
+                      style={{ fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: "1.4", fontSize: "14.4px" }}
                     >
-                      "{LOADING_STAGES[loadingStage]?.quote}"
+                      "{loadingQuote}"
                     </span>
                   </div>
                 </div>

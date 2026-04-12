@@ -6,7 +6,8 @@ async function fetchRecordSources(aircraftId: string | null): Promise<RecordSour
   let query = supabase
     .from("rv_record_sources")
     .select("*")
-    .order("created_at", { ascending: false })
+    .order("sort_order", { ascending: true, nullsFirst: false })
+    .order("created_at",  { ascending: false })
 
   if (aircraftId) {
     query = query.eq("aircraft_id", aircraftId)

@@ -122,13 +122,50 @@ export async function createPurchaseOrder(payload: {
     if (lineErr) throw lineErr
   }
 
+  // Auto-advance linked parts requests to "ordered"
+  const requestLineIds = payload.lines
+    .filter(l => l.partsRequestLineId)
+    .map(l => l.partsRequestLineId as string)
+
+  if (requestLineIds.length > 0) {
+    const { data: reqLines } = await supabase
+      .from("parts_request_lines")
+      .select("request_id")
+      .in("id", requestLineIds)
+
+    const requestIds = [...new Set((reqLines ?? []).map((l: any) => l.request_id))]
+
+    for (const rid of requestIds) {
+      const { data: req } = await supabase
+        .from("parts_requests")
+        .select("status")
+        .eq("id", rid)
+        .single()
+
+      if (req && !["ordered", "shipped", "received", "closed", "cancelled", "denied"].includes(req.status)) {
+        await supabase.from("parts_requests").update({ status: "ordered" }).eq("id", rid)
+        try {
+          await supabase.from("parts_status_history").insert({
+            request_id: rid,
+            old_status: req.status,
+            new_status: "ordered",
+            changed_by: payload.createdBy,
+            note: `PO ${poNumber} created`,
+          })
+        } catch { /* non-critical */ }
+      }
+    }
+  }
+
   const result = (await getPurchaseOrderById(po.id))!
 
   // Log creation activity
-  addPOActivity(result.id, {
-    type: "system",
-    message: `Purchase order ${poNumber} created`,
-  }).catch(() => {})
+  try {
+    await addPOActivity(result.id, {
+      type: "system",
+      message: `Purchase order ${poNumber} created`,
+    })
+  } catch { /* non-critical */ }
 
   return result
 }
@@ -147,10 +184,12 @@ export async function updatePOStatus(
   if (!opts?.skipActivity) {
     const from = opts?.fromStatus ? `${opts.fromStatus} → ` : ""
     // Fire-and-forget — don't block on activity write failure
-    addPOActivity(id, {
-      type: "status_change",
-      message: `Status changed: ${from}${status}`,
-    }).catch(() => {})
+    try {
+      await addPOActivity(id, {
+        type: "status_change",
+        message: `Status changed: ${from}${status}`,
+      })
+    } catch { /* non-critical */ }
   }
 }
 
@@ -297,10 +336,12 @@ export async function receiveItems(
 
   // 5. Write receive activity entry
   const partList = items.filter(i => i.qty > 0).map(i => `${i.qty}× ${i.partNumber}`).join(", ")
-  addPOActivity(poId, {
-    type: "receive",
-    message: `Received by ${receivedBy.name}: ${partList}`,
-  }).catch(() => {})
+  try {
+    await addPOActivity(poId, {
+      type: "receive",
+      message: `Received by ${receivedBy.name}: ${partList}`,
+    })
+  } catch { /* non-critical */ }
 
   // 5. Check if any parts requests are now fully received via this PO
   // Collect distinct request IDs linked through PO lines
