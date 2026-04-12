@@ -28,7 +28,10 @@ export type PipelineSource = RecordSource & {
   log: IngestionLogEntry[]
 }
 
-async function fetchPipelineSources(aircraftId: string | null): Promise<PipelineSource[]> {
+async function fetchPipelineSources(aircraftId: string | null): Promise<{
+  sources: PipelineSource[]
+  registrationByAircraftId: Map<string, string>
+}> {
   let sourcesQuery = supabase
     .from("rv_record_sources")
     .select("*")
@@ -41,7 +44,9 @@ async function fetchPipelineSources(aircraftId: string | null): Promise<Pipeline
   const { data: sources, error: sourcesErr } = await sourcesQuery
   if (sourcesErr) throw sourcesErr
 
-  if (!sources || sources.length === 0) return []
+  if (!sources || sources.length === 0) {
+    return { sources: [], registrationByAircraftId: new Map() }
+  }
 
   const sourceIds = sources.map((s: RecordSource) => s.id)
 
@@ -61,21 +66,45 @@ async function fetchPipelineSources(aircraftId: string | null): Promise<Pipeline
     logsBySource.get(log.record_source_id)!.push(log as IngestionLogEntry)
   }
 
-  return (sources as PipelineSource[]).map((s) => ({
-    ...s,
-    log: logsBySource.get(s.id) ?? [],
-  }))
+  // Pull the current registration for each aircraft referenced by the sources,
+  // so the Pipeline view can group by tail number without a per-row join.
+  const aircraftIds = Array.from(new Set(sources.map((s: RecordSource) => s.aircraft_id).filter(Boolean))) as string[]
+  const registrationByAircraftId = new Map<string, string>()
+  if (aircraftIds.length > 0) {
+    const { data: regs, error: regsErr } = await supabase
+      .from("aircraft_registrations")
+      .select("aircraft_id, registration, is_current")
+      .in("aircraft_id", aircraftIds)
+    if (regsErr) throw regsErr
+    for (const r of regs ?? []) {
+      const prev = registrationByAircraftId.get(r.aircraft_id as string)
+      // Prefer the row marked is_current; otherwise first one wins.
+      if (!prev || r.is_current) {
+        registrationByAircraftId.set(r.aircraft_id as string, r.registration as string)
+      }
+    }
+  }
+
+  return {
+    sources: (sources as PipelineSource[]).map((s) => ({
+      ...s,
+      log: logsBySource.get(s.id) ?? [],
+    })),
+    registrationByAircraftId,
+  }
 }
 
 export function useRecordsPipeline(aircraftId: string | null) {
   const [sources, setSources] = useState<PipelineSource[]>([])
+  const [registrationByAircraftId, setRegistrationByAircraftId] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
 
   const load = useCallback(async () => {
     try {
       const data = await fetchPipelineSources(aircraftId)
-      setSources(data)
+      setSources(data.sources)
+      setRegistrationByAircraftId(data.registrationByAircraftId)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)))
@@ -133,5 +162,5 @@ export function useRecordsPipeline(aircraftId: string | null) {
     return () => { supabase.removeChannel(channel) }
   }, [load])
 
-  return { sources, loading, error, reload: load }
+  return { sources, registrationByAircraftId, loading, error, reload: load }
 }

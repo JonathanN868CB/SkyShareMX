@@ -85,7 +85,7 @@ function lastLogFor(stage: StageKey, log: IngestionLogEntry[]): string | null {
   return null
 }
 
-/** Build a 6-stage status line for a source, newest → label. */
+/** Build a 5-stage status line for a source, newest → label. */
 function computeStages(source: PipelineSource): StageInfo[] {
   const log = source.log ?? []
 
@@ -116,19 +116,7 @@ function computeStages(source: PipelineSource): StageInfo[] {
     if (source.pages_inserted != null) textractDetail = `${source.pages_inserted}p`
   } else if (source.ingestion_status === "failed") textractState = "failed"
 
-  // 4. Events — prefer new events_status, fall back to extraction_status.
-  const eventsRaw = source.events_status ?? "pending"
-  const extractionRaw = source.extraction_status ?? "pending"
-  let eventsState: StageState = "pending"
-  let eventsDetail: string | undefined
-  if (extractionRaw === "extracting") eventsState = "running"
-  else if (eventsRaw === "extracted") eventsState = "done"
-  else if (eventsRaw === "partial") eventsState = "partial"
-  else if (eventsRaw === "failed" || extractionRaw === "failed") eventsState = "failed"
-  else if (extractionRaw === "complete") eventsState = "done"
-  if (source.events_extracted != null) eventsDetail = `${source.events_extracted}ev`
-
-  // 5. Embeddings — uses chunk_status.
+  // 4. Embeddings — uses chunk_status.
   let embeddingsState: StageState = "pending"
   let embeddingsDetail: string | undefined
   if (source.chunk_status === "chunking") embeddingsState = "running"
@@ -136,7 +124,7 @@ function computeStages(source: PipelineSource): StageInfo[] {
   else if (source.chunk_status === "failed") embeddingsState = "failed"
   if (source.chunks_generated != null) embeddingsDetail = `${source.chunks_generated}ch`
 
-  // 6. Label — new label_status column; if missing but display_label is set,
+  // 5. Label — new label_status column; if missing but display_label is set,
   //    assume legacy "generated".
   const labelRaw = source.label_status ?? "pending"
   let labelState: StageState = "pending"
@@ -148,7 +136,6 @@ function computeStages(source: PipelineSource): StageInfo[] {
     { key: "upload",     label: "Upload",     icon: Upload,    state: uploadState,     detail: undefined,       why: uploadState === "failed" ? lastLogFor("upload", log) : null },
     { key: "rasterize",  label: "Rasterize",  icon: Printer,   state: rasterizeState,  detail: rasterizeDetail, why: rasterizeState === "failed" || rasterizeState === "partial" ? lastLogFor("rasterize", log) : null },
     { key: "textract",   label: "Textract",   icon: ScanLine,  state: textractState,   detail: textractDetail,  why: textractState === "failed" || textractState === "partial" ? lastLogFor("textract", log) : null },
-    { key: "events",     label: "Events",     icon: Brain,     state: eventsState,     detail: eventsDetail,    why: eventsState === "failed" || eventsState === "partial" ? lastLogFor("events", log) : null },
     { key: "embeddings", label: "Vectors",    icon: Layers,    state: embeddingsState, detail: embeddingsDetail,why: embeddingsState === "failed" ? lastLogFor("embeddings", log) : null },
     { key: "label",      label: "Label",      icon: Tag,       state: labelState,      detail: undefined,       why: labelState === "failed" ? lastLogFor("label", log) : null },
   ]
@@ -473,7 +460,8 @@ interface Props {
 }
 
 export function RecordsPipelineView({ aircraftId }: Props) {
-  const { sources, loading, reload } = useRecordsPipeline(aircraftId)
+  const { sources, registrationByAircraftId, loading, reload } = useRecordsPipeline(aircraftId)
+  const [collapsedTails, setCollapsedTails] = useState<Set<string>>(new Set())
   const { toast } = useToast()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -636,11 +624,36 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     return true
   })
 
-  const groups = new Map<string, PipelineSource[]>()
+  // Batch groups (individual uploads / named import batches) — same as before.
+  function buildBatchGroups(subset: PipelineSource[]) {
+    const groups = new Map<string, PipelineSource[]>()
+    for (const s of subset) {
+      const key = s.import_batch ?? "__individual__"
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(s)
+    }
+    return groups
+  }
+
+  // Tail groups — group the filtered sources by current registration, so the
+  // operator can collapse per aircraft. "Unassigned" buckets anything without
+  // a known registration. Sorted alphabetically for stable ordering.
+  const tailGroups = new Map<string, PipelineSource[]>()
   for (const s of filtered) {
-    const key = s.import_batch ?? "__individual__"
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)!.push(s)
+    const tail = (s.aircraft_id && registrationByAircraftId.get(s.aircraft_id)) || "Unassigned"
+    if (!tailGroups.has(tail)) tailGroups.set(tail, [])
+    tailGroups.get(tail)!.push(s)
+  }
+  const sortedTails = Array.from(tailGroups.keys()).sort((a, b) => a.localeCompare(b))
+  const showTailGrouping = sortedTails.length > 1
+
+  function toggleTail(tail: string) {
+    setCollapsedTails((prev) => {
+      const next = new Set(prev)
+      if (next.has(tail)) next.delete(tail)
+      else next.add(tail)
+      return next
+    })
   }
 
   const greenCount    = sources.filter(isGreen).length
@@ -769,9 +782,71 @@ export function RecordsPipelineView({ aircraftId }: Props) {
         <p className="text-sm text-muted-foreground text-center py-10">
           No records match this filter.
         </p>
+      ) : showTailGrouping ? (
+        <div className="space-y-4">
+          {sortedTails.map((tail) => {
+            const tailSources = tailGroups.get(tail) ?? []
+            const collapsed = collapsedTails.has(tail)
+            const greenN = tailSources.filter(isGreen).length
+            const needsN = tailSources.filter(needsAttention).length
+            const chunksN = tailSources.reduce((n, s) => n + (s.chunks_generated ?? 0), 0)
+            const batches = buildBatchGroups(tailSources)
+            return (
+              <div key={tail} className="rounded-md border border-border bg-card/30">
+                <button
+                  onClick={() => toggleTail(tail)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+                >
+                  {collapsed ? (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                  )}
+                  <span
+                    className="text-xs font-semibold tracking-wider uppercase text-foreground"
+                    style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.15em" }}
+                  >
+                    {tail}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {tailSources.length} source{tailSources.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground">
+                    {greenN > 0 && (
+                      <span className="text-green-600 dark:text-green-400">✓ {greenN}</span>
+                    )}
+                    {needsN > 0 && (
+                      <span className="text-destructive">! {needsN}</span>
+                    )}
+                    <span>{chunksN.toLocaleString()} ch</span>
+                  </span>
+                </button>
+                {!collapsed && (
+                  <div className="px-3 pb-3 pt-1 space-y-4">
+                    {Array.from(batches.entries()).map(([batchKey, batchSources]) => (
+                      <BatchGroup
+                        key={batchKey}
+                        label={batchKey === "__individual__" ? "Individual uploads" : batchKey}
+                        sources={batchSources}
+                        stagesById={stagesById}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onRerun={handleRerun}
+                        onDelete={handleDelete}
+                        onInspectChunks={handleInspectChunks}
+                        busyId={busyId}
+                        deletingId={deletingId}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       ) : (
         <div className="space-y-6">
-          {Array.from(groups.entries()).map(([batchKey, batchSources]) => (
+          {Array.from(buildBatchGroups(filtered).entries()).map(([batchKey, batchSources]) => (
             <BatchGroup
               key={batchKey}
               label={batchKey === "__individual__" ? "Individual uploads" : batchKey}
