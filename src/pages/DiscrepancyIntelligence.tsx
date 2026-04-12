@@ -1745,6 +1745,8 @@ function DomReviewView({
   }>>([])
   const [refiring, setRefiring] = useState(false)
   const [refireMessage, setRefireMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [pushingToInbox, setPushingToInbox] = useState<string | null>(null)
+  const [dismissingId, setDismissingId] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -1784,9 +1786,29 @@ function DomReviewView({
       .from("dw1ght_playbook_suggestions")
       .select("id, section_key, change_type, suggested_text, reasoning, created_at")
       .eq("source_id", enrichmentId)
-      .eq("review_status", "pending")
+      .eq("review_status", "holding")
       .order("created_at", { ascending: false })
     if (data) setCritiqueSuggestions(data)
+  }
+
+  async function pushToInbox(id: string) {
+    setPushingToInbox(id)
+    await supabase
+      .from("dw1ght_playbook_suggestions")
+      .update({ review_status: "inbox" })
+      .eq("id", id)
+    setCritiqueSuggestions(prev => prev.filter(s => s.id !== id))
+    setPushingToInbox(null)
+  }
+
+  async function dismissHolding(id: string) {
+    setDismissingId(id)
+    await supabase
+      .from("dw1ght_playbook_suggestions")
+      .update({ review_status: "rejected" })
+      .eq("id", id)
+    setCritiqueSuggestions(prev => prev.filter(s => s.id !== id))
+    setDismissingId(null)
   }
 
   useEffect(() => {
@@ -2309,7 +2331,7 @@ function DomReviewView({
 
           {critiqueSuggestions.length === 0 && !refireMessage && (
             <p className="text-[12px] text-white/30">
-              No pending suggestions for this interview. Run a review to generate playbook improvement ideas.
+              No observations in holding. Run a review to generate playbook improvement ideas.
             </p>
           )}
 
@@ -2317,6 +2339,13 @@ function DomReviewView({
             <div className="flex flex-col gap-2">
               {critiqueSuggestions.map((s) => {
                 const sectionLabel = s.section_key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+                const ctMeta = s.change_type === "append"
+                  ? { label: "Append", bg: "rgba(100,220,100,0.08)", color: "rgba(100,220,100,0.8)" }
+                  : s.change_type === "replace_text"
+                    ? { label: "Rewrite", bg: "rgba(56,189,248,0.08)", color: "rgba(56,189,248,0.8)" }
+                    : { label: "Replace", bg: "rgba(255,165,0,0.08)", color: "rgba(255,165,0,0.8)" }
+                const isPushing = pushingToInbox === s.id
+                const isDismissing = dismissingId === s.id
                 return (
                   <div
                     key={s.id}
@@ -2332,12 +2361,9 @@ function DomReviewView({
                       </span>
                       <span
                         className="text-[10px] uppercase tracking-widest font-semibold px-1.5 py-0.5 rounded"
-                        style={{
-                          background: s.change_type === "append" ? "rgba(100,220,100,0.08)" : "rgba(255,165,0,0.08)",
-                          color: s.change_type === "append" ? "rgba(100,220,100,0.8)" : "rgba(255,165,0,0.8)",
-                        }}
+                        style={{ background: ctMeta.bg, color: ctMeta.color }}
                       >
-                        {s.change_type === "append" ? "Append" : "Replace"}
+                        {ctMeta.label}
                       </span>
                       <span className="text-[10px] text-white/25 ml-auto">
                         {new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
@@ -2352,6 +2378,25 @@ function DomReviewView({
                     >
                       {s.suggested_text}
                     </pre>
+                    {/* Push / Dismiss actions */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => pushToInbox(s.id)}
+                        disabled={isPushing || isDismissing}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-colors disabled:opacity-40"
+                        style={{ fontFamily: "var(--font-heading)", background: "rgba(139,92,246,0.12)", color: "rgba(196,160,255,0.9)", border: "1px solid rgba(139,92,246,0.25)" }}
+                      >
+                        {isPushing ? "Sending…" : "→ Push to Inbox"}
+                      </button>
+                      <button
+                        onClick={() => dismissHolding(s.id)}
+                        disabled={isPushing || isDismissing}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-colors disabled:opacity-40"
+                        style={{ fontFamily: "var(--font-heading)", background: "rgba(220,80,80,0.08)", color: "rgba(220,80,80,0.7)", border: "1px solid rgba(220,80,80,0.15)" }}
+                      >
+                        {isDismissing ? "Dismissing…" : "Dismiss"}
+                      </button>
+                    </div>
                   </div>
                 )
               })}

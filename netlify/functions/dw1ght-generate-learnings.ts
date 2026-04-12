@@ -167,7 +167,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         reasoning: s.reasoning || null,
         source_type: "dom_review",
         source_id: enrichment_id,
-        review_status: "pending",
+        review_status: "inbox",
       })),
     );
     if (suggErr) {

@@ -496,7 +496,7 @@ async function generateSelfCritique(
         reasoning: s.reasoning || null,
         source_type: "self_critique",
         source_id: enrichmentId,
-        review_status: "pending",
+        review_status: "holding",
       })),
     );
     if (suggErr) {
