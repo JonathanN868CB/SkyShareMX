@@ -10,7 +10,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { DW1GHT_CONFIG } from "./_dw1ght-config";
-import { resolvePlaybook } from "./_dw1ght-playbooks";
+import { resolvePlaybookSections, sectionsToContextBlock } from "./_dw1ght-playbooks";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -123,11 +123,12 @@ Location: ${disc.location_raw || ""}${disc.location_icao ? ` (${disc.location_ic
 Airframe: ${disc.airframe_hours || "N/A"} hrs / ${disc.airframe_cycles || "N/A"} cycles
 Status: ${disc.status}` : "";
 
-  // ── Resolve live playbook ─────────────────────────────────────────
+  // ── Resolve live playbook sections ───────────────────────────────
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return json(500, { error: "AI service not configured" });
 
-  const playbookPrompt = await resolvePlaybook("mechanic-interview", supabase);
+  const sections = await resolvePlaybookSections("mechanic-interview", supabase);
+  const sectionsBlock = sectionsToContextBlock(sections);
 
   // ── Run Sonnet critique ───────────────────────────────────────────
   const client = new Anthropic({ apiKey });
@@ -136,7 +137,7 @@ Status: ${disc.status}` : "";
     model: DW1GHT_CONFIG.reviewModel,
     max_tokens: 1500,
     system: DW1GHT_CONFIG.selfCritiquePrompt
-      + `\n\nDW1GHT'S CURRENT PLAYBOOK RULES (what it was running with):\n${playbookPrompt}`
+      + `\n\n=== DW1GHT'S CURRENT PLAYBOOK SECTIONS (exact text — quote verbatim for replace_text) ===\n\n${sectionsBlock}`
       + (discrepancyContext ? `\n\n${discrepancyContext}` : ""),
     messages: [{ role: "user", content: `Review this interview transcript:\n\n${transcriptText}` }],
   });
@@ -146,10 +147,11 @@ Status: ${disc.status}` : "";
 
   let critique: {
     overall_grade?: string;
-    exchange_efficiency?: string;
+    story_extraction_assessment?: string;
     playbook_suggestions?: Array<{
       section_key: string;
       change_type: string;
+      source_text?: string;
       suggested_text: string;
       reasoning?: string;
     }>;
@@ -167,10 +169,11 @@ Status: ${disc.status}` : "";
 
   // ── Save suggestions ──────────────────────────────────────────────
   const validSectionKeys = ["allowed_context", "instructions", "decision_logic", "output_definition", "post_processing", "tone_calibration"];
+  const validChangeTypes = ["append", "replace_text", "replace_section"];
   const suggestions = (critique.playbook_suggestions || []).filter(
     (s) => s.section_key && s.suggested_text
       && validSectionKeys.includes(s.section_key)
-      && ["append", "replace_section"].includes(s.change_type),
+      && validChangeTypes.includes(s.change_type),
   );
 
   if (suggestions.length > 0) {
@@ -179,11 +182,12 @@ Status: ${disc.status}` : "";
         playbook_slug: "mechanic-interview",
         section_key: s.section_key,
         change_type: s.change_type,
+        source_text: s.source_text || null,
         suggested_text: s.suggested_text,
         reasoning: s.reasoning || null,
         source_type: "self_critique",
         source_id: enrichment_id,
-        review_status: "pending",
+        review_status: "holding",
       })),
     );
     if (insErr) {
@@ -195,7 +199,7 @@ Status: ${disc.status}` : "";
   return json(200, {
     ok: true,
     grade: critique.overall_grade || null,
-    exchange_efficiency: critique.exchange_efficiency || null,
+    story_extraction_assessment: critique.story_extraction_assessment || null,
     suggestions_count: suggestions.length,
     usage: {
       input_tokens: critiqueResponse.usage.input_tokens,

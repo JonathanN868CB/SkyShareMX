@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { DW1GHT_CONFIG } from "./_dw1ght-config";
+import { resolvePlaybookSections, sectionsToContextBlock } from "./_dw1ght-playbooks";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -114,23 +115,26 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   const client = new Anthropic({ apiKey });
 
+  // Fetch current sections so Sonnet can quote exact text for replace_text suggestions
+  const sections = await resolvePlaybookSections("mechanic-interview", supabase);
+  const sectionsBlock = sectionsToContextBlock(sections);
+
   const critiqueResponse = await client.messages.create({
     model: DW1GHT_CONFIG.reviewModel,
     max_tokens: 1000,
-    system: DW1GHT_CONFIG.domReviewLearningPrompt,
+    system: DW1GHT_CONFIG.domReviewLearningPrompt
+      + `\n\n=== CURRENT PLAYBOOK SECTIONS (quote verbatim for replace_text) ===\n\n${sectionsBlock}`,
     messages: [{ role: "user", content: `DOM feedback on interview (enrichment ${enrichment_id}):\n\n${feedbackParts.join("\n")}` }],
   });
 
   let raw = critiqueResponse.content[0].type === "text" ? critiqueResponse.content[0].text : "{}";
-  raw = raw.trim();
-  if (raw.startsWith("```")) {
-    raw = raw.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-  }
+  raw = raw.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
 
   let result: {
     playbook_suggestions?: Array<{
       section_key: string;
       change_type: string;
+      source_text?: string;
       suggested_text: string;
       reasoning?: string;
     }>;
@@ -148,8 +152,9 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   const validSectionKeys = ["allowed_context", "instructions", "decision_logic", "output_definition", "post_processing", "tone_calibration"];
+  const validChangeTypes = ["append", "replace_text", "replace_section"];
   const suggestions = (result.playbook_suggestions || []).filter(
-    (s) => s.section_key && s.suggested_text && validSectionKeys.includes(s.section_key) && ["append", "replace_section"].includes(s.change_type),
+    (s) => s.section_key && s.suggested_text && validSectionKeys.includes(s.section_key) && validChangeTypes.includes(s.change_type),
   );
   if (suggestions.length > 0) {
     const { error: suggErr } = await supabase.from("dw1ght_playbook_suggestions").insert(
@@ -157,11 +162,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         playbook_slug: "mechanic-interview",
         section_key: s.section_key,
         change_type: s.change_type,
+        source_text: s.source_text || null,
         suggested_text: s.suggested_text,
         reasoning: s.reasoning || null,
         source_type: "dom_review",
         source_id: enrichment_id,
-        review_status: "pending",
+        review_status: "inbox",
       })),
     );
     if (suggErr) {

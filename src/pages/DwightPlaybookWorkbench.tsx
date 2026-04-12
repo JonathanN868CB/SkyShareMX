@@ -31,7 +31,8 @@ interface PlaybookOverride {
 interface Suggestion {
   id: string
   section_key: EditableSectionKey
-  change_type: "append" | "replace_section"
+  change_type: "append" | "replace_text" | "replace_section"
+  source_text: string | null
   suggested_text: string
   reasoning: string | null
   source_type: "self_critique" | "dom_review" | "ai_assist" | "import"
@@ -299,12 +300,12 @@ function PlaybookEditor({
   const [activeTab, setActiveTab] = useState("playbook")
   const copyToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // ── Load suggestions ─────────────────────────────────────────────
+  // ── Load suggestions (pending apply/reject cards) ────────────────
   async function loadSuggestions() {
     setLoadingSuggestions(true)
     const { data } = await (supabase as any)
       .from("dw1ght_playbook_suggestions")
-      .select("id, section_key, change_type, suggested_text, reasoning, source_type, review_status, created_at")
+      .select("id, section_key, change_type, source_text, suggested_text, reasoning, source_type, review_status, created_at")
       .eq("playbook_slug", playbook.slug)
       .eq("review_status", "pending")
       .order("created_at", { ascending: false })
@@ -312,7 +313,47 @@ function PlaybookEditor({
     setLoadingSuggestions(false)
   }
 
-  useEffect(() => { loadSuggestions() }, [playbook.slug]) // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Inbox — observations pushed from DomReviewView ───────────────
+  const [inboxItems, setInboxItems] = useState<Array<{
+    id: string
+    section_key: string
+    change_type: string
+    suggested_text: string
+    reasoning: string | null
+    source_type: string
+    created_at: string
+  }>>([])
+  const [loadingInbox, setLoadingInbox] = useState(false)
+
+  async function loadInbox() {
+    setLoadingInbox(true)
+    const { data } = await (supabase as any)
+      .from("dw1ght_playbook_suggestions")
+      .select("id, section_key, change_type, suggested_text, reasoning, source_type, created_at")
+      .eq("playbook_slug", playbook.slug)
+      .eq("review_status", "inbox")
+      .order("created_at", { ascending: false })
+    setInboxItems(data ?? [])
+    setLoadingInbox(false)
+  }
+
+  // inboxLearnings — formatted for the AI Assist function call
+  const inboxLearnings = inboxItems.map(item => ({
+    lesson: `[${item.section_key}] ${item.reasoning || item.suggested_text}`,
+    category: item.change_type,
+    source_type: item.source_type,
+  }))
+
+  async function consumeInboxItems(ids: string[]) {
+    if (ids.length === 0) return
+    await (supabase as any)
+      .from("dw1ght_playbook_suggestions")
+      .update({ review_status: "consumed" })
+      .in("id", ids)
+    setInboxItems(prev => prev.filter(i => !ids.includes(i.id)))
+  }
+
+  useEffect(() => { loadSuggestions(); loadInbox() }, [playbook.slug]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Token estimate ────────────────────────────────────────────────
   const { tokenEstimate, hasCodeDefaults } = useMemo(() => {
@@ -331,9 +372,21 @@ function PlaybookEditor({
     try {
       // Compute new value upfront (before any state updates so the value is reliable)
       const current = editValues[s.section_key] ?? ""
-      const newVal = s.change_type === "append"
-        ? (current.trim() ? current + "\n\n" + s.suggested_text : s.suggested_text)
-        : s.suggested_text
+      let newVal: string
+      if (s.change_type === "append") {
+        newVal = current.trim() ? current + "\n\n" + s.suggested_text : s.suggested_text
+      } else if (s.change_type === "replace_text" && s.source_text) {
+        const updated = current.replace(s.source_text, s.suggested_text)
+        if (updated === current) {
+          // source_text not found in section — fall back to append with a warning note
+          newVal = current.trim() ? current + "\n\n" + s.suggested_text : s.suggested_text
+          console.warn("[Workbench] replace_text: source_text not found in section, fell back to append", s.section_key)
+        } else {
+          newVal = updated
+        }
+      } else {
+        newVal = s.suggested_text
+      }
 
       // 1. Persist to dw1ght_playbook_overrides (auto-save — no separate Save step needed)
       const upsertData: Record<string, unknown> = {
@@ -473,6 +526,8 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
       if (!res.ok) throw new Error(body.error ?? "AI assist failed")
       if (body.analysis) setAiAssistAnalysis(body.analysis)
       setAiAssistStage(`Saving ${body.count} suggestion${body.count !== 1 ? "s" : ""}…`)
+      // Mark consumed inbox items before reloading
+      await consumeInboxItems(inboxItems.map(i => i.id))
       await loadSuggestions()
       if (body.count > 0) setActiveTab("suggestions")
     } catch (e: unknown) {
@@ -938,7 +993,7 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
                   <button
                     onClick={() => setAiAssistConfirm(true)}
                     disabled={aiAssistLoading}
-                    title="Ask Claude to analyze this playbook and suggest improvements based on current learnings"
+                    title={inboxItems.length > 0 ? `Run AI Assist with ${inboxItems.length} inbox item${inboxItems.length !== 1 ? "s" : ""}` : "Run AI Assist (no inbox items — sections only)"}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors disabled:opacity-50"
                     style={{
                       fontFamily: "var(--font-heading)",
@@ -949,6 +1004,14 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
                   >
                     <Sparkles className="w-3 h-3" />
                     {aiAssistLoading ? "Thinking…" : "AI Assist"}
+                    {inboxItems.length > 0 && (
+                      <span
+                        className="ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold"
+                        style={{ background: "rgba(193,2,48,0.2)", color: "rgba(255,100,100,0.9)" }}
+                      >
+                        {inboxItems.length}
+                      </span>
+                    )}
                   </button>
                 </>
               )}
@@ -965,7 +1028,11 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
                   <div>
                     <p className="text-sm text-foreground/85 font-medium mb-1">Send playbook to Claude for analysis?</p>
                     <p className="text-xs text-foreground/55 leading-relaxed">
-                      This will send all 6 current section values plus any <strong className="text-foreground/75">Inbox learnings</strong> to <strong className="text-foreground/75">claude-sonnet-4-6</strong>. Claude will return targeted edit suggestions that land here as pending cards.
+                      This will send all 6 current section values
+                      {inboxItems.length > 0
+                        ? <> plus <strong className="text-foreground/75">{inboxItems.length} inbox item{inboxItems.length !== 1 ? "s" : ""}</strong></>
+                        : <> (no inbox items — sections only)</>
+                      } to <strong className="text-foreground/75">claude-sonnet-4-6</strong>. Claude will return targeted surgical suggestions that land as pending cards. Inbox items will be marked consumed.
                     </p>
                   </div>
                 </div>
@@ -1068,6 +1135,72 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
               </div>
             )}
 
+            {/* ── Inbox — observations pushed from DomReviewView ────── */}
+            <div
+              className="rounded-xl overflow-hidden"
+              style={{ border: "1px solid rgba(139,92,246,0.18)", background: "rgba(139,92,246,0.04)" }}
+            >
+              {/* Inbox header */}
+              <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: inboxItems.length > 0 ? "1px solid rgba(139,92,246,0.12)" : "none" }}>
+                <span className="text-[11px] font-bold uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)", color: "rgba(196,160,255,0.8)" }}>
+                  Inbox
+                </span>
+                {loadingInbox ? (
+                  <div className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin opacity-50" style={{ color: "rgba(196,160,255,0.6)" }} />
+                ) : (
+                  <span
+                    className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                    style={{ background: inboxItems.length > 0 ? "rgba(193,2,48,0.2)" : "rgba(255,255,255,0.06)", color: inboxItems.length > 0 ? "rgba(255,100,100,0.9)" : "rgba(255,255,255,0.3)" }}
+                  >
+                    {inboxItems.length}
+                  </span>
+                )}
+                <span className="text-[10px] text-foreground/35 ml-1">
+                  {inboxItems.length === 0 ? "No items — push observations from Discrepancy Intelligence to fill the inbox" : `${inboxItems.length} observation${inboxItems.length !== 1 ? "s" : ""} queued for AI Assist`}
+                </span>
+              </div>
+
+              {/* Inbox items */}
+              {inboxItems.length > 0 && (
+                <div className="divide-y" style={{ borderColor: "rgba(139,92,246,0.08)" }}>
+                  {inboxItems.map(item => {
+                    const sectionLabel = SECTION_LABELS[item.section_key] ?? item.section_key
+                    const ctColor = item.change_type === "append" ? "rgba(100,220,100,0.7)" : item.change_type === "replace_text" ? "rgba(56,189,248,0.7)" : "rgba(255,165,0,0.7)"
+                    return (
+                      <div key={item.id} className="px-4 py-2.5 flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                            <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded" style={{ background: "rgba(212,160,23,0.10)", color: "var(--skyshare-gold)" }}>
+                              {sectionLabel}
+                            </span>
+                            <span className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: ctColor }}>
+                              {item.change_type === "replace_text" ? "Rewrite" : item.change_type}
+                            </span>
+                            <span className="text-[9px] text-foreground/30 ml-auto">
+                              {new Date(item.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            </span>
+                          </div>
+                          {item.reasoning && (
+                            <p className="text-[11px] text-foreground/55 leading-relaxed line-clamp-2">{item.reasoning}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={async () => {
+                            await (supabase as any).from("dw1ght_playbook_suggestions").update({ review_status: "rejected" }).eq("id", item.id)
+                            setInboxItems(prev => prev.filter(i => i.id !== item.id))
+                          }}
+                          className="flex-shrink-0 text-foreground/20 hover:text-foreground/50 transition-colors mt-0.5"
+                          title="Remove from inbox"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Header */}
             <div>
               <h3 className="text-foreground text-sm font-bold uppercase tracking-widest" style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.15em" }}>
@@ -1098,7 +1231,11 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
                 {suggestions.map(s => {
                   const sourceMeta = SUGGESTION_SOURCE_META[s.source_type] ?? { label: s.source_type, color: "text-white/40" }
                   const sectionLabel = SECTION_LABELS[s.section_key] ?? s.section_key
-                  const isAppending = s.change_type === "append"
+                  const changeTypeMeta = s.change_type === "append"
+                    ? { label: "Append", textColor: "text-emerald-400", bg: "rgba(16,185,129,0.10)", border: "rgba(16,185,129,0.2)" }
+                    : s.change_type === "replace_text"
+                      ? { label: "Rewrite", textColor: "text-sky-400", bg: "rgba(56,189,248,0.10)", border: "rgba(56,189,248,0.2)" }
+                      : { label: "Replace Section", textColor: "text-amber-400", bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.2)" }
                   return (
                     <div
                       key={s.id}
@@ -1115,14 +1252,10 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
                           → {sectionLabel}
                         </span>
                         <span
-                          className={cn("text-[8px] px-2 py-0.5 rounded font-bold uppercase tracking-widest", isAppending ? "text-emerald-400" : "text-amber-400")}
-                          style={{
-                            fontFamily: "var(--font-heading)",
-                            background: isAppending ? "rgba(16,185,129,0.10)" : "rgba(245,158,11,0.10)",
-                            border: `1px solid ${isAppending ? "rgba(16,185,129,0.2)" : "rgba(245,158,11,0.2)"}`,
-                          }}
+                          className={cn("text-[8px] px-2 py-0.5 rounded font-bold uppercase tracking-widest", changeTypeMeta.textColor)}
+                          style={{ fontFamily: "var(--font-heading)", background: changeTypeMeta.bg, border: `1px solid ${changeTypeMeta.border}` }}
                         >
-                          {isAppending ? "Append" : "Replace Section"}
+                          {changeTypeMeta.label}
                         </span>
                         <span className={cn("text-[9px] font-medium", sourceMeta.color)} style={{ fontFamily: "var(--font-heading)" }}>
                           via {sourceMeta.label}
@@ -1143,6 +1276,7 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
                           currentText={editValues[s.section_key] ?? ""}
                           suggestedText={s.suggested_text}
                           changeType={s.change_type}
+                          sourceText={s.source_text}
                         />
                       </div>
 
@@ -1350,10 +1484,12 @@ function SuggestionDiff({
   currentText,
   suggestedText,
   changeType,
+  sourceText,
 }: {
   currentText: string
   suggestedText: string
-  changeType: "append" | "replace_section"
+  changeType: "append" | "replace_text" | "replace_section"
+  sourceText?: string | null
 }) {
   const isEmpty = !currentText.trim()
 
@@ -1399,6 +1535,54 @@ function SuggestionDiff({
             <span className="text-emerald-300 py-0.5 pr-3 whitespace-pre-wrap break-all">{line || " "}</span>
           </div>
         ))}
+      </div>
+    )
+  }
+
+  // ── REPLACE TEXT ─────────────────────────────────────────────────────
+  if (changeType === "replace_text") {
+    // Show a surgical diff: source_text (red, being removed) vs suggested_text (green, replacement)
+    const from = sourceText?.trim() || ""
+    const parts = diffLines(from, suggestedText)
+    return (
+      <div
+        className="rounded-lg overflow-hidden text-[11.5px] leading-relaxed"
+        style={{ background: "rgba(0,0,0,0.30)", border: "1px solid rgba(56,189,248,0.18)", fontFamily: "'DM Mono', 'Fira Code', monospace", maxHeight: "360px", overflowY: "auto" }}
+      >
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-white/[0.06]" style={{ background: "rgba(56,189,248,0.05)" }}>
+          <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color: "rgba(125,211,252,0.7)", fontFamily: "var(--font-heading)" }}>surgical rewrite — passage replacement</span>
+        </div>
+        {!from && (
+          <div className="px-3 py-1.5 text-white/30 italic border-b border-white/[0.06]">
+            — source passage not found — will append if applied —
+          </div>
+        )}
+        {parts.map((part, i) => {
+          const lines = part.value.split("\n")
+          if (lines[lines.length - 1] === "") lines.pop()
+          if (part.added) {
+            return lines.map((line, j) => (
+              <div key={`${i}-${j}`} className="flex" style={{ background: "rgba(16,185,129,0.09)" }}>
+                <span className="w-5 flex-shrink-0 text-center font-bold select-none border-r border-emerald-800/30 mr-2 text-emerald-500">+</span>
+                <span className="text-emerald-300 py-0.5 pr-3 whitespace-pre-wrap break-all">{line || " "}</span>
+              </div>
+            ))
+          }
+          if (part.removed) {
+            return lines.map((line, j) => (
+              <div key={`${i}-${j}`} className="flex" style={{ background: "rgba(239,68,68,0.08)" }}>
+                <span className="w-5 flex-shrink-0 text-center font-bold select-none border-r border-red-800/30 mr-2 text-red-500">−</span>
+                <span className="text-red-400 py-0.5 pr-3 whitespace-pre-wrap break-all line-through opacity-70">{line || " "}</span>
+              </div>
+            ))
+          }
+          return lines.map((line, j) => (
+            <div key={`${i}-${j}`} className="flex" style={{ background: "transparent" }}>
+              <span className="w-5 flex-shrink-0 text-center text-white/20 select-none border-r border-white/[0.06] mr-2"> </span>
+              <span className="text-white/40 py-0.5 pr-3 whitespace-pre-wrap break-all">{line || " "}</span>
+            </div>
+          ))
+        })}
       </div>
     )
   }

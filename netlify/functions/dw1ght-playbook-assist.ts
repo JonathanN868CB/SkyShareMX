@@ -45,7 +45,7 @@ const VALID_SECTION_KEYS = [
   "allowed_context", "instructions", "decision_logic",
   "output_definition", "post_processing", "tone_calibration",
 ];
-const VALID_CHANGE_TYPES = ["append", "replace_section"];
+const VALID_CHANGE_TYPES = ["append", "replace_text", "replace_section"];
 
 const SECTION_LABELS: Record<string, string> = {
   allowed_context:   "Allowed Context",
@@ -99,6 +99,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     suggestions?: Array<{
       section_key: string;
       change_type: string;
+      source_text?: string;
       suggested_text: string;
       reasoning?: string;
     }>;
@@ -128,6 +129,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         playbook_slug,
         section_key: s.section_key,
         change_type: s.change_type,
+        source_text: s.source_text || null,
         suggested_text: s.suggested_text,
         reasoning: s.reasoning || null,
         source_type: "import",
@@ -160,11 +162,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     ? inbox_learnings.map((l, i) => `${i + 1}. ${l.lesson} | ${l.category} | via ${l.source_type}`).join("\n")
     : "(none)";
 
-  const systemPrompt = `You are helping improve the DW1GHT ${playbook.name} playbook for an aviation maintenance management system.
+  const systemPrompt = `THE MISSION:
+DW1GHT mechanic interviews exist to capture the MIDDLE of the troubleshooting story — the diagnostic sequence, dead ends, pivot moments, and tribal knowledge that never appears in the formal record. This knowledge feeds a searchable database so future mechanics can find what worked, what failed, and what the trap was.
 
-DW1GHT is an AI assistant (Claude Haiku with a Dwight Schrute persona) that ${playbook.description.toLowerCase()}
+You are helping improve the DW1GHT ${playbook.name} playbook for an aviation maintenance management system. Review the current section contents and inbox learnings, then suggest targeted improvements. Be surgical — only suggest changes where there is a clear gap or problem.
 
-Review the current section contents and the inbox learnings below, then suggest specific targeted improvements to the playbook sections. Be surgical — only suggest changes where there is a clear gap or problem. If the sections look solid and the learnings don't point to systemic issues, return an empty suggestions array.
+CHANGE TYPES — choose the most surgical option:
+- "replace_text" — replace a specific passage with better wording. Provide source_text as an exact verbatim quote from the section. PREFERRED for wording improvements.
+- "append" — add a new rule or clause that does not exist in the section.
+- "replace_section" — fundamental rewrite of an entire section. Use sparingly.
 
 Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
 {
@@ -172,17 +178,17 @@ Respond with ONLY valid JSON (no markdown fences, no prose outside the JSON):
   "suggestions": [
     {
       "section_key": "${VALID_SECTION_KEYS.join(" | ")}",
-      "change_type": "append | replace_section",
-      "suggested_text": "exact text to add (for append) or the full new section content (for replace_section)",
+      "change_type": "replace_text | append | replace_section",
+      "source_text": "EXACT verbatim text from the section being replaced — required for replace_text, omit for append and replace_section",
+      "suggested_text": "replacement passage (replace_text) / new rule (append) / full new section (replace_section)",
       "reasoning": "what specific problem this solves and which learnings motivated it"
     }
   ]
 }
 
 Rules:
-- 2-5 suggestions maximum. Quality over quantity.
-- "append" to add a new rule, clause, or handling note. "replace_section" only for fundamental rewrites.
-- Every suggestion must cite specific evidence from the learnings or section content — no generic advice.
+- 2–5 suggestions maximum. Quality over quantity.
+- Every suggestion must cite specific evidence from the learnings or section content.
 - section_key must be one of the exact values listed above.`;
 
   const userMessage = `=== CURRENT PLAYBOOK SECTIONS ===
@@ -223,6 +229,7 @@ ${inboxBlock}`;
         playbook_slug,
         section_key: s!.section_key,
         change_type: s!.change_type || "append",
+        source_text: s!.source_text || null,
         suggested_text: s!.suggested_text,
         reasoning: s!.reasoning || null,
         source_type: "ai_assist",
