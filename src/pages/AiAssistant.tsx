@@ -181,7 +181,7 @@ export default function AiAssistant() {
   }
 
   return (
-    <div className="flex flex-col gap-6 h-full max-w-3xl mx-auto">
+    <div className="flex flex-col gap-6 h-full max-w-5xl mx-auto">
 
       {/* ── ID Badge Header ─────────────────────────────────── */}
       <div className="rounded-xl overflow-hidden border border-border bg-card">
@@ -572,7 +572,7 @@ export default function AiAssistant() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 min-h-[320px] max-h-[420px]">
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 min-h-[420px] max-h-[680px]">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full gap-3 py-12 text-center">
               <span className="text-3xl select-none">🌱</span>
