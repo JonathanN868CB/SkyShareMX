@@ -63,6 +63,18 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
   if (!event.body) return json(400, { error: "Missing request body" });
 
+  try {
+    return await assistHandler(event);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[DW1GHT Playbook Assist] Unhandled exception:", msg);
+    return json(500, { error: "Internal server error", detail: msg });
+  }
+};
+
+async function assistHandler(event: HandlerEvent): Promise<HandlerResponse> {
+  if (!event.body) return json(400, { error: "Missing request body" });
+
   // ── Auth ──────────────────────────────────────────────────────────
   const authHeader = event.headers?.["authorization"] || event.headers?.["Authorization"] || "";
   const jwt = authHeader.replace(/^Bearer\s+/i, "");
