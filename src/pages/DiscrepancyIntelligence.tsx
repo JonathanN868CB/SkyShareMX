@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Sparkles } from "lucide-react"
+import { ChevronRight, ChevronDown, AlertCircle, ArrowLeft, MapPin, Clock, Wrench, Search, List, LayoutGrid, X, Send, Award, Database, MessageSquare, CheckCircle, Trash2, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Sparkles, Users, Check } from "lucide-react"
 import { useFleet } from "./aircraft/useFleet"
 import { useDiscrepancyCounts } from "./aircraft/useDiscrepancyCounts"
 import { useFleetStats } from "./aircraft/useFleetStats"
@@ -54,19 +54,40 @@ function InterviewBadge({ status }: { status: InterviewStatus }) {
   )
 }
 
-function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "", interviewStatus = "none" }: { d: DiscrepancyRow; hoursSinceLast: number | null; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatus?: InterviewStatus }) {
+function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "", interviewStatus = "none", selected = false, onToggleSelect }: { d: DiscrepancyRow; hoursSinceLast: number | null; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatus?: InterviewStatus; selected?: boolean; onToggleSelect?: (id: string) => void }) {
   const date = d.found_at ? new Date(d.found_at) : null
   const signoff = d.signoff_date ? new Date(d.signoff_date) : null
   const daysOpen = date && signoff ? Math.round((signoff.getTime() - date.getTime()) / 86_400_000) : null
 
   return (
-    <button
-      onClick={() => onSelect(d)}
-      className="w-full text-left rounded-lg px-4 py-3 transition-colors hover:brightness-110"
+    <div
+      className="flex items-stretch rounded-lg overflow-hidden transition-colors"
       style={{
-        background: "rgba(255,255,255,0.03)",
-        border: "1px solid rgba(255,255,255,0.06)",
+        background: selected ? "rgba(212,160,23,0.06)" : "rgba(255,255,255,0.03)",
+        border: selected ? "1px solid rgba(212,160,23,0.3)" : "1px solid rgba(255,255,255,0.06)",
       }}
+    >
+      {onToggleSelect && (
+        <button
+          onClick={() => onToggleSelect(d.id)}
+          className="flex items-center justify-center px-3 flex-shrink-0 transition-colors hover:brightness-125"
+          style={{ background: selected ? "rgba(212,160,23,0.12)" : "rgba(255,255,255,0.02)", borderRight: "1px solid rgba(255,255,255,0.06)" }}
+          title={selected ? "Deselect" : "Select for bulk assign"}
+        >
+          <div
+            className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+            style={{
+              background: selected ? "var(--skyshare-gold)" : "transparent",
+              border: selected ? "1px solid var(--skyshare-gold)" : "1px solid rgba(255,255,255,0.25)",
+            }}
+          >
+            {selected && <Check className="w-2.5 h-2.5" style={{ color: "#000" }} />}
+          </div>
+        </button>
+      )}
+      <button
+        onClick={() => onSelect(d)}
+        className="flex-1 text-left px-4 py-3 transition-colors hover:brightness-110 min-w-0"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
@@ -159,22 +180,44 @@ function DiscrepancyCard({ d, hoursSinceLast, onSelect, searchQuery = "", interv
           )}
         </div>
       </div>
-    </button>
+      </button>
+    </div>
   )
 }
 
 // ─── Compact Row ─────────────────────────────────────────────────────────────
-function CompactRow({ d, onSelect, searchQuery = "", interviewStatus = "none" }: { d: DiscrepancyRow; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatus?: InterviewStatus }) {
+function CompactRow({ d, onSelect, searchQuery = "", interviewStatus = "none", selected = false, onToggleSelect }: { d: DiscrepancyRow; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatus?: InterviewStatus; selected?: boolean; onToggleSelect?: (id: string) => void }) {
   const date = d.found_at ? new Date(d.found_at) : null
   return (
-    <button
-      onClick={() => onSelect(d)}
-      className="w-full flex items-center gap-3 px-3 py-1.5 text-left transition-colors hover:brightness-110"
+    <div
+      className="flex items-center transition-colors"
       style={{
-        background: "rgba(255,255,255,0.02)",
+        background: selected ? "rgba(212,160,23,0.06)" : "rgba(255,255,255,0.02)",
         borderBottom: "1px solid rgba(255,255,255,0.04)",
       }}
     >
+      {onToggleSelect && (
+        <button
+          onClick={() => onToggleSelect(d.id)}
+          className="flex items-center justify-center px-3 py-2 flex-shrink-0 self-stretch transition-colors hover:brightness-125"
+          style={{ borderRight: "1px solid rgba(255,255,255,0.06)" }}
+          title={selected ? "Deselect" : "Select for bulk assign"}
+        >
+          <div
+            className="w-3.5 h-3.5 rounded flex items-center justify-center"
+            style={{
+              background: selected ? "var(--skyshare-gold)" : "transparent",
+              border: selected ? "1px solid var(--skyshare-gold)" : "1px solid rgba(255,255,255,0.25)",
+            }}
+          >
+            {selected && <Check className="w-2 h-2" style={{ color: "#000" }} />}
+          </div>
+        </button>
+      )}
+      <button
+        onClick={() => onSelect(d)}
+        className="flex-1 flex items-center gap-3 px-3 py-1.5 text-left transition-colors hover:brightness-110 min-w-0"
+      >
       <span
         className="text-[11px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
         style={{
@@ -209,7 +252,8 @@ function CompactRow({ d, onSelect, searchQuery = "", interviewStatus = "none" }:
       >
         {d.status}
       </span>
-    </button>
+      </button>
+    </div>
   )
 }
 
@@ -665,10 +709,11 @@ function DetailField({ label, value }: { label: string; value: string | null | u
 
 // ─── Year Section ─────────────────────────────────────────────────────────────
 function YearSection({
-  year, records, expanded, onToggle, compact, hoursSinceLastMap, onSelect, searchQuery = "", interviewStatusMap,
+  year, records, expanded, onToggle, compact, hoursSinceLastMap, onSelect, searchQuery = "", interviewStatusMap, selectedIds, onToggleSelect,
 }: {
   year: string; records: DiscrepancyRow[]; expanded: boolean; onToggle: () => void
   compact: boolean; hoursSinceLastMap: Map<string, number | null>; onSelect: (d: DiscrepancyRow) => void; searchQuery?: string; interviewStatusMap: Map<string, InterviewStatus>
+  selectedIds?: Set<string>; onToggleSelect?: (id: string) => void
 }) {
   return (
     <div className="flex flex-col">
@@ -722,8 +767,8 @@ function YearSection({
         >
           {records.map(d =>
             compact
-              ? <CompactRow key={d.id} d={d} onSelect={onSelect} searchQuery={searchQuery} interviewStatus={interviewStatusMap.get(d.id) || "none"} />
-              : <DiscrepancyCard key={d.id} d={d} hoursSinceLast={hoursSinceLastMap.get(d.id) ?? null} onSelect={onSelect} searchQuery={searchQuery} interviewStatus={interviewStatusMap.get(d.id) || "none"} />
+              ? <CompactRow key={d.id} d={d} onSelect={onSelect} searchQuery={searchQuery} interviewStatus={interviewStatusMap.get(d.id) || "none"} selected={selectedIds?.has(d.id)} onToggleSelect={onToggleSelect} />
+              : <DiscrepancyCard key={d.id} d={d} hoursSinceLast={hoursSinceLastMap.get(d.id) ?? null} onSelect={onSelect} searchQuery={searchQuery} interviewStatus={interviewStatusMap.get(d.id) || "none"} selected={selectedIds?.has(d.id)} onToggleSelect={onToggleSelect} />
           )}
         </div>
       )}
@@ -734,6 +779,7 @@ function YearSection({
 // ─── Discrepancy List View ────────────────────────────────────────────────────
 function DiscrepancyListView({ aircraft, onBack, onStartInterview, onReviewInterview }: { aircraft: AircraftBase; onBack: () => void; onStartInterview?: (assignmentId: string, discrepancyId: string) => void; onReviewInterview?: (assignmentId: string, discrepancyId: string) => void }) {
   const { data: discrepancies, isLoading } = useAircraftDiscrepancies(aircraft.tailNumber)
+  const { profile } = useAuth()
   const [selectedRecord, setSelectedRecord] = useState<DiscrepancyRow | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "closed" | "review">("all")
@@ -741,6 +787,101 @@ function DiscrepancyListView({ aircraft, onBack, onStartInterview, onReviewInter
   const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
   const [initialized, setInitialized] = useState(false)
   const [interviewStatusMap, setInterviewStatusMap] = useState<Map<string, InterviewStatus>>(new Map())
+
+  // ── Bulk selection ────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkTechId, setBulkTechId] = useState("")
+  const [bulkAssigning, setBulkAssigning] = useState(false)
+  const [bulkTechnicians, setBulkTechnicians] = useState<Array<{ id: string; full_name: string; email: string }>>([])
+
+  // Load technicians once when bulk selection first opens
+  useEffect(() => {
+    if (selectedIds.size === 0 || bulkTechnicians.length > 0) return
+    supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .eq("status", "Active")
+      .in("role", ["Technician", "Manager", "Admin", "Super Admin"])
+      .order("full_name")
+      .then(({ data }) => {
+        if (data) setBulkTechnicians(data.filter(t => t.full_name) as typeof bulkTechnicians)
+      })
+  }, [selectedIds.size, bulkTechnicians.length])
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectAllVisible() {
+    setSelectedIds(new Set(filtered.map(d => d.id)))
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+    setBulkTechId("")
+  }
+
+  async function handleBulkAssign() {
+    if (!bulkTechId || selectedIds.size === 0 || !profile?.id || bulkAssigning) return
+    setBulkAssigning(true)
+    const tech = bulkTechnicians.find(t => t.id === bulkTechId)
+    const rows = [...selectedIds].map(discrepancyId => ({
+      discrepancy_id: discrepancyId,
+      assigned_to: bulkTechId,
+      assigned_by: profile.id,
+      dom_note: null,
+    }))
+    await supabase.from("interview_assignments").insert(rows)
+    // Fire notification emails (best-effort)
+    if (tech?.email) {
+      for (const discrepancyId of selectedIds) {
+        const d = discrepancies?.find(r => r.id === discrepancyId)
+        if (!d) continue
+        fetch("/.netlify/functions/send-interview-invite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            technicianEmail: tech.email,
+            technicianName: tech.full_name,
+            assignerName: profile.full_name || "SkyShare MX",
+            discrepancyTitle: d.title,
+            tailNumber: aircraft.tailNumber,
+            domNote: null,
+          }),
+        }).catch(() => {})
+      }
+    }
+    clearSelection()
+    // Refresh badge statuses
+    if (discrepancies && discrepancies.length > 0) {
+      const ids = discrepancies.map(d => d.id)
+      Promise.all([
+        supabase.from("interview_assignments").select("discrepancy_id, status").in("discrepancy_id", ids),
+        supabase.from("discrepancy_enrichments").select("discrepancy_id, status").in("discrepancy_id", ids),
+      ]).then(([assignRes, enrichRes]) => {
+        const priority: Record<string, number> = { assigned: 1, in_progress: 2, completed: 3, reviewed: 4, approved: 5, rejected: 5 }
+        const map = new Map<string, InterviewStatus>()
+        for (const row of (assignRes.data || [])) {
+          const current = map.get(row.discrepancy_id)
+          const currentPri = current ? (priority[current] || 0) : 0
+          const newPri = priority[row.status] || 0
+          if (newPri > currentPri) map.set(row.discrepancy_id, row.status as InterviewStatus)
+        }
+        for (const row of (enrichRes.data || [])) {
+          if (row.status === "approved" || row.status === "rejected") {
+            map.set(row.discrepancy_id, row.status as InterviewStatus)
+          }
+        }
+        setInterviewStatusMap(map)
+      })
+    }
+    setBulkAssigning(false)
+  }
 
   // ── Fetch interview statuses for all discrepancies ──
   useEffect(() => {
@@ -1151,6 +1292,67 @@ function DiscrepancyListView({ aircraft, onBack, onStartInterview, onReviewInter
         </div>
       )}
 
+      {/* Bulk assign bar */}
+      {selectedIds.size > 0 && (
+        <div
+          className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg flex-wrap"
+          style={{ background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.28)" }}
+        >
+          <div className="flex items-center gap-3">
+            <Users className="w-4 h-4 flex-shrink-0" style={{ color: "var(--skyshare-gold)" }} />
+            <span className="text-sm font-semibold" style={{ color: "var(--skyshare-gold)", fontFamily: "var(--font-heading)", letterSpacing: "0.05em" }}>
+              {selectedIds.size} selected
+            </span>
+            {selectedIds.size < filtered.length && (
+              <button
+                onClick={selectAllVisible}
+                className="text-[11px] px-2 py-0.5 rounded transition-colors hover:brightness-125"
+                style={{ color: "rgba(212,160,23,0.7)", background: "rgba(212,160,23,0.1)", fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+              >
+                Select all {filtered.length}
+              </button>
+            )}
+            <button
+              onClick={clearSelection}
+              className="text-[11px] px-2 py-0.5 rounded transition-colors hover:brightness-125"
+              style={{ color: "rgba(255,255,255,0.45)", background: "rgba(255,255,255,0.06)", fontFamily: "var(--font-heading)", letterSpacing: "0.04em" }}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={bulkTechId}
+              onChange={e => setBulkTechId(e.target.value)}
+              className="text-[12px] px-2 py-1.5 rounded outline-none"
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: bulkTechId ? "hsl(var(--foreground))" : "rgba(255,255,255,0.35)",
+                fontFamily: "var(--font-heading)",
+                minWidth: "10rem",
+              }}
+            >
+              <option value="">Assign to…</option>
+              {bulkTechnicians.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.full_name}{t.id === profile?.id ? " (me)" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleBulkAssign}
+              disabled={!bulkTechId || bulkAssigning}
+              className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest px-3 py-2 rounded-md transition-all hover:brightness-125 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: "rgba(212,160,23,0.18)", color: "var(--skyshare-gold)", border: "1px solid rgba(212,160,23,0.35)", fontFamily: "var(--font-heading)" }}
+            >
+              <MessageSquare size={12} />
+              {bulkAssigning ? "Assigning…" : `Assign ${selectedIds.size}`}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Year-grouped list */}
       {yearGroups.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -1171,6 +1373,8 @@ function DiscrepancyListView({ aircraft, onBack, onStartInterview, onReviewInter
               onSelect={setSelectedRecord}
               searchQuery={searchQuery}
               interviewStatusMap={interviewStatusMap}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
             />
           ))}
         </div>
