@@ -1,10 +1,44 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { Send, ShieldAlert, Award, Database, Wrench, FileText, BookOpen, GraduationCap } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 import { useAuth } from "@/features/auth"
 import DwightSchoolOfThought from "./DwightSchoolOfThought"
 
-// ── Keyframe styles injected once ────────────────────────────
+// ── Keyframe + markdown styles injected once ────────────────
 const COST_METER_STYLES = `
+.dw1ght-markdown p { margin: 0.4em 0; }
+.dw1ght-markdown p:first-child { margin-top: 0; }
+.dw1ght-markdown p:last-child { margin-bottom: 0; }
+.dw1ght-markdown strong { font-weight: 600; color: var(--skyshare-gold); }
+.dw1ght-markdown em { font-style: italic; opacity: 0.85; }
+.dw1ght-markdown ul, .dw1ght-markdown ol { margin: 0.4em 0; padding-left: 1.4em; }
+.dw1ght-markdown li { margin: 0.2em 0; }
+.dw1ght-markdown li::marker { color: var(--skyshare-gold); }
+.dw1ght-markdown h1, .dw1ght-markdown h2, .dw1ght-markdown h3 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0.6em 0 0.3em;
+  color: var(--skyshare-gold);
+}
+.dw1ght-markdown h1 { font-size: 1.1em; }
+.dw1ght-markdown h2 { font-size: 1em; }
+.dw1ght-markdown h3 { font-size: 0.95em; }
+.dw1ght-markdown code {
+  font-size: 0.88em;
+  background: rgba(212,160,23,0.1);
+  border: 1px solid rgba(212,160,23,0.2);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.dw1ght-markdown pre { margin: 0.5em 0; overflow-x: auto; }
+.dw1ght-markdown pre code { display: block; padding: 0.6em 0.8em; border: none; background: rgba(0,0,0,0.2); border-radius: 6px; }
+.dw1ght-markdown hr { border: none; border-top: 1px solid rgba(212,160,23,0.3); margin: 0.6em 0; }
+.dw1ght-markdown table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.92em; }
+.dw1ght-markdown th, .dw1ght-markdown td { border: 1px solid hsl(var(--border)); padding: 0.3em 0.6em; text-align: left; }
+.dw1ght-markdown th { background: rgba(212,160,23,0.1); font-weight: 600; }
+
 @keyframes dw1ght-jitter {
   0%, 100% { transform: translate(0, 0) rotate(0deg); }
   10% { transform: translate(-1px, -1px) rotate(-2deg); }
@@ -63,7 +97,7 @@ export default function AiAssistant() {
   const [mode, setMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
   const [contextSources, setContextSources] = useState<Set<ContextSource>>(new Set(["discrepancies"]))
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const opening = useMemo(() => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)], [])
 
   useEffect(() => {
@@ -139,7 +173,7 @@ export default function AiAssistant() {
     }
   }
 
-  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+  function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       send()
@@ -638,7 +672,13 @@ export default function AiAssistant() {
                         }),
                   }}
                 >
-                  {m.content}
+                  {m.role === "assistant" ? (
+                    <div className="dw1ght-markdown">
+                      <ReactMarkdown>{m.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    m.content
+                  )}
                 </div>
               </div>
             </div>
@@ -677,15 +717,15 @@ export default function AiAssistant() {
         </div>
 
         {/* Input bar */}
-        <div className="px-4 py-3 flex gap-3 items-center bg-background border-t border-border">
-          <input
+        <div className="px-4 py-3 flex gap-3 items-end bg-background border-t border-border">
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKey}
+            rows={2}
             placeholder="Ask DW1GHT. Make it a good question."
-            className="flex-1 bg-card border border-border rounded-lg px-4 py-2.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[rgba(212,160,23,0.5)] transition-colors"
+            className="flex-1 bg-card border border-border rounded-lg px-4 py-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[rgba(212,160,23,0.5)] transition-colors resize-none"
             style={{ fontFamily: "'DM Sans', system-ui, sans-serif", fontSize: "15px" }}
           />
           <button
