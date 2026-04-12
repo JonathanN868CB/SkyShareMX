@@ -1,10 +1,44 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { Send, ShieldAlert, Award, Database, Wrench, FileText, BookOpen, GraduationCap } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 import { useAuth } from "@/features/auth"
 import DwightSchoolOfThought from "./DwightSchoolOfThought"
 
-// ── Keyframe styles injected once ────────────────────────────
+// ── Keyframe + markdown styles injected once ────────────────
 const COST_METER_STYLES = `
+.dw1ght-markdown p { margin: 0.4em 0; }
+.dw1ght-markdown p:first-child { margin-top: 0; }
+.dw1ght-markdown p:last-child { margin-bottom: 0; }
+.dw1ght-markdown strong { font-weight: 600; color: var(--skyshare-gold); }
+.dw1ght-markdown em { font-style: italic; opacity: 0.85; }
+.dw1ght-markdown ul, .dw1ght-markdown ol { margin: 0.4em 0; padding-left: 1.4em; }
+.dw1ght-markdown li { margin: 0.2em 0; }
+.dw1ght-markdown li::marker { color: var(--skyshare-gold); }
+.dw1ght-markdown h1, .dw1ght-markdown h2, .dw1ght-markdown h3 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0.6em 0 0.3em;
+  color: var(--skyshare-gold);
+}
+.dw1ght-markdown h1 { font-size: 1.1em; }
+.dw1ght-markdown h2 { font-size: 1em; }
+.dw1ght-markdown h3 { font-size: 0.95em; }
+.dw1ght-markdown code {
+  font-size: 0.88em;
+  background: rgba(212,160,23,0.1);
+  border: 1px solid rgba(212,160,23,0.2);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.dw1ght-markdown pre { margin: 0.5em 0; overflow-x: auto; }
+.dw1ght-markdown pre code { display: block; padding: 0.6em 0.8em; border: none; background: rgba(0,0,0,0.2); border-radius: 6px; }
+.dw1ght-markdown hr { border: none; border-top: 1px solid rgba(212,160,23,0.3); margin: 0.6em 0; }
+.dw1ght-markdown table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.92em; }
+.dw1ght-markdown th, .dw1ght-markdown td { border: 1px solid hsl(var(--border)); padding: 0.3em 0.6em; text-align: left; }
+.dw1ght-markdown th { background: rgba(212,160,23,0.1); font-weight: 600; }
+
 @keyframes dw1ght-jitter {
   0%, 100% { transform: translate(0, 0) rotate(0deg); }
   10% { transform: translate(-1px, -1px) rotate(-2deg); }
@@ -59,16 +93,39 @@ export default function AiAssistant() {
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingStage, setLoadingStage] = useState(0)
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
   const [mode, setMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
   const [contextSources, setContextSources] = useState<Set<ContextSource>>(new Set(["discrepancies"]))
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const opening = useMemo(() => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)], [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, loading])
+  }, [messages, loading, loadingStage])
+
+  const LOADING_STAGES = [
+    { label: "Classifying intent", quote: "Determining if this is worth my time..." },
+    { label: "Embedding query", quote: "Converting your words into something a machine can respect." },
+    { label: "Searching the beet field", quote: "Digging through 430 chunks of maintenance history. Manually. With my hands." },
+    { label: "Cross-referencing records", quote: "Every logbook entry is a witness. I am interrogating them all." },
+    { label: "Reasoning", quote: "Assembling the facts. Unlike some people, I do not guess." },
+    { label: "Formulating response", quote: "I have the answer. I am deciding how much of it you deserve." },
+  ]
+
+  useEffect(() => {
+    if (!loading) { setLoadingStage(0); return }
+    setLoadingStage(0)
+    const timers = [
+      setTimeout(() => setLoadingStage(1), 1200),
+      setTimeout(() => setLoadingStage(2), 3000),
+      setTimeout(() => setLoadingStage(3), 6000),
+      setTimeout(() => setLoadingStage(4), 10000),
+      setTimeout(() => setLoadingStage(5), 15000),
+    ]
+    return () => timers.forEach(clearTimeout)
+  }, [loading])
 
   if (showSchool && isManager) {
     return <DwightSchoolOfThought onBack={() => setShowSchool(false)} isSuperAdmin={isSuperAdmin} />
@@ -139,7 +196,7 @@ export default function AiAssistant() {
     }
   }
 
-  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+  function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       send()
@@ -147,7 +204,7 @@ export default function AiAssistant() {
   }
 
   return (
-    <div className="flex flex-col gap-6 h-full max-w-3xl mx-auto">
+    <div className="flex flex-col gap-6 h-full max-w-5xl mx-auto">
 
       {/* ── ID Badge Header ─────────────────────────────────── */}
       <div className="rounded-xl overflow-hidden border border-border bg-card">
@@ -538,7 +595,7 @@ export default function AiAssistant() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 min-h-[320px] max-h-[420px]">
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4 min-h-[420px] max-h-[680px]">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full gap-3 py-12 text-center">
               <span className="text-3xl select-none">🌱</span>
@@ -638,7 +695,13 @@ export default function AiAssistant() {
                         }),
                   }}
                 >
-                  {m.content}
+                  {m.role === "assistant" ? (
+                    <div className="dw1ght-markdown">
+                      <ReactMarkdown>{m.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    m.content
+                  )}
                 </div>
               </div>
             </div>
@@ -660,13 +723,40 @@ export default function AiAssistant() {
                   DW1GHT
                 </span>
                 <div
-                  className="rounded-xl px-4 py-2.5 bg-muted border border-border"
-                  style={{ borderBottomLeftRadius: "4px" }}
+                  className="rounded-xl px-4 py-3 bg-muted border border-border"
+                  style={{ borderBottomLeftRadius: "4px", minWidth: "280px" }}
                 >
-                  <div className="flex gap-1.5 items-center h-5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  <div className="flex flex-col gap-2">
+                    {/* Stage indicators */}
+                    <div className="flex gap-1 items-center">
+                      {LOADING_STAGES.map((_, i) => (
+                        <div
+                          key={i}
+                          className="h-1 rounded-full transition-all duration-500"
+                          style={{
+                            width: i <= loadingStage ? "20px" : "8px",
+                            background: i <= loadingStage
+                              ? "var(--skyshare-gold)"
+                              : "rgba(255,255,255,0.1)",
+                            opacity: i === loadingStage ? 1 : i < loadingStage ? 0.5 : 0.2,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    {/* Current stage label */}
+                    <span
+                      className="text-[10px] font-bold tracking-widest uppercase"
+                      style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)" }}
+                    >
+                      {LOADING_STAGES[loadingStage]?.label}
+                    </span>
+                    {/* Dwight quote */}
+                    <span
+                      className="text-[12px] text-muted-foreground italic"
+                      style={{ fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: "1.4" }}
+                    >
+                      "{LOADING_STAGES[loadingStage]?.quote}"
+                    </span>
                   </div>
                 </div>
               </div>
@@ -677,15 +767,15 @@ export default function AiAssistant() {
         </div>
 
         {/* Input bar */}
-        <div className="px-4 py-3 flex gap-3 items-center bg-background border-t border-border">
-          <input
+        <div className="px-4 py-3 flex gap-3 items-end bg-background border-t border-border">
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKey}
+            rows={2}
             placeholder="Ask DW1GHT. Make it a good question."
-            className="flex-1 bg-card border border-border rounded-lg px-4 py-2.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[rgba(212,160,23,0.5)] transition-colors"
+            className="flex-1 bg-card border border-border rounded-lg px-4 py-3.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-[rgba(212,160,23,0.5)] transition-colors resize-none"
             style={{ fontFamily: "'DM Sans', system-ui, sans-serif", fontSize: "15px" }}
           />
           <button

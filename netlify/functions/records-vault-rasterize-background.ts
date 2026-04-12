@@ -384,7 +384,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     succeeded === 0 ? "failed" : failed > 0 ? "partial" : "rasterized";
   await supabase
     .from("rv_record_sources")
-    .update({ rasterize_status: rasterizeStatus })
+    .update({ rasterize_status: rasterizeStatus, page_images_stored: succeeded })
     .eq("id", recordSourceId);
 
   return {

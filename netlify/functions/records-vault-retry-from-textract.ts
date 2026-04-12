@@ -41,8 +41,6 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   const anonKey     = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
-  const edgeFnUrl   = process.env.SUPABASE_EXTRACT_FN_URL
-    ?? `${supabaseUrl}/functions/v1/extract-record-events`;
   const embedFnUrl  = `${supabaseUrl}/functions/v1/generate-page-embeddings`;
 
   if (!supabaseUrl || !serviceRole || !anonKey) return json(500, { error: "Server config error" });
@@ -106,16 +104,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   await adminClient.from("rv_ingestion_log").insert({
     record_source_id: recordSourceId,
     step:             "retry_from_textract",
-    message:          "Downstream stages (events/embed/label) re-queued from Pipeline panel",
+    message:          "Downstream stages (embed/label) re-queued from Pipeline panel",
   });
 
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${serviceRole}` };
   const edgeBody = JSON.stringify({ record_source_id: recordSourceId });
 
-  // Fire all three downstream stages in parallel. extract-record-events
-  // and generate-page-embeddings both read from rv_pages and run
-  // independently. The label function runs on its own schedule.
-  fetch(edgeFnUrl,  { method: "POST", headers, body: edgeBody }).catch(() => {});
   fetch(embedFnUrl, { method: "POST", headers, body: edgeBody }).catch(() => {});
 
   const siteUrl = process.env.URL ?? process.env.DEPLOY_URL;
@@ -130,5 +124,5 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     }).catch(() => {});
   }
 
-  return json(200, { ok: true, message: "Downstream stages re-queued from existing Textract output" });
+  return json(200, { ok: true, message: "Downstream stages (embed/label) re-queued from existing Textract output" });
 };
