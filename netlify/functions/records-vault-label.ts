@@ -3,8 +3,8 @@
 // Two actions, both operating on one record_source_id:
 //
 //   { recordSourceId, action: "generate" }
-//     Reads the first ~3 pages of OCR text + forms from rv_pages, asks Claude
-//     Haiku to produce a structured display label, writes it to
+//     Reads the first ~3 and last ~3 pages of OCR text + forms from rv_pages,
+//     asks Claude Haiku to produce a structured display label, writes it to
 //     rv_record_sources.display_label.
 //
 //   { recordSourceId, action: "save", label: DisplayLabel }
@@ -81,7 +81,11 @@ function coerceLabel(raw: unknown): DisplayLabel {
 // All Haiku traffic routes through _haiku-task.runHaikuTask so we get task
 // tagging, bounded tokens, a timeout, and a log row per call.
 
-const LABEL_SYSTEM_PROMPT = `You label aviation maintenance logbook PDFs for a records vault. You will receive OCR text from the first few pages of a scanned document plus any form fields the OCR engine pulled out. Return ONE JSON object with exactly these keys:
+const LABEL_SYSTEM_PROMPT = `You label aviation maintenance logbook PDFs for a records vault. You will receive OCR text from the FIRST few pages AND the LAST few pages of a scanned document, plus any form fields the OCR engine pulled out.
+
+IMPORTANT: Aviation logbooks stack newest entries on top. Page 1 is the MOST RECENT entry (date_end). The last pages contain the OLDEST entries (date_start). You are seeing both ends of the document specifically so you can determine the full date range.
+
+Return ONE JSON object with exactly these keys:
 
 {
   "registration":   string or null,   // aircraft tail/registration number (e.g. "N123AB"). null if not present.
@@ -118,8 +122,8 @@ async function generateLabel(args: {
       ? `DATE RANGE HINT: ${args.dateRangeHintStart ?? "?"} → ${args.dateRangeHintEnd ?? "?"}`
       : "",
     "",
-    "OCR TEXT (first pages):",
-    args.ocrText.slice(0, 8000),
+    "OCR TEXT (first + last pages):",
+    args.ocrText.slice(0, 12000),
     "",
     "FORM FIELDS:",
     args.forms.slice(0, 2000),
@@ -220,19 +224,39 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   if (srcErr || !source) return json(404, { error: "Record source not found" });
 
-  // 2. Pull the first 3 pages of OCR text + form fields
-  const { data: pages } = await adminClient
+  // 2. Pull the first 3 + last 3 pages of OCR text + form fields.
+  // Logbooks stack newest on top, so page 1 has the end date and the last
+  // page has the start date. We need both ends for accurate date_start/end.
+  const { data: firstPages } = await adminClient
     .from("rv_pages")
     .select("page_number, raw_ocr_text, forms_extracted")
     .eq("record_source_id", recordSourceId)
     .order("page_number", { ascending: true })
     .limit(3);
 
-  const ocrText = (pages ?? [])
+  const { data: lastPages } = await adminClient
+    .from("rv_pages")
+    .select("page_number, raw_ocr_text, forms_extracted")
+    .eq("record_source_id", recordSourceId)
+    .order("page_number", { ascending: false })
+    .limit(3);
+
+  // Merge and deduplicate (small docs where first/last overlap)
+  const seenPages = new Set<number>();
+  const pages: typeof firstPages = [];
+  for (const p of [...(firstPages ?? []), ...(lastPages ?? [])]) {
+    if (!seenPages.has(p.page_number)) {
+      seenPages.add(p.page_number);
+      pages.push(p);
+    }
+  }
+  pages.sort((a, b) => a.page_number - b.page_number);
+
+  const ocrText = pages
     .map((p) => `--- Page ${p.page_number} ---\n${p.raw_ocr_text ?? ""}`)
     .join("\n\n");
 
-  const forms = (pages ?? [])
+  const forms = pages
     .flatMap((p) => {
       const arr = Array.isArray(p.forms_extracted) ? p.forms_extracted : [];
       return arr.map((f: { key?: string; value?: string }) => `${f.key ?? ""}: ${f.value ?? ""}`);
