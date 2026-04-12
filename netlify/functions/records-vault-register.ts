@@ -1,10 +1,21 @@
-// records-vault-register — AUTH REQUIRED
-// Registers an uploaded document as an rv_record_sources row (ingestion_status: "pending").
-// OCR is handled by the AWS Textract pipeline — documents uploaded to S3 trigger
-// records-vault-s3-ingest automatically via SNS. This function only handles the
-// Supabase Storage path (legacy upload flow) for metadata registration.
+// records-vault-register — AUTH REQUIRED (Manager+)
+//
+// Registers a locally-uploaded document as an rv_record_sources row, copies the
+// PDF from Supabase Storage to S3, and starts an AWS Textract async job. This
+// routes local uploads through the same pipeline as S3-ingested files:
+//
+//   register → S3 copy → Textract → SNS → textract-complete → events/embeddings/label/rasterize
+//
+// This file is one of THREE places in the codebase that may import @aws-sdk
+// (the others are records-vault-s3-ingest and records-vault-rasterize-background).
 
 import { createClient } from "@supabase/supabase-js";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  TextractClient,
+  StartDocumentAnalysisCommand,
+  FeatureType,
+} from "@aws-sdk/client-textract";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -116,7 +127,6 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const dateRangeEnd        = typeof payload.dateRangeEnd        === "string" ? payload.dateRangeEnd               : null;
   const notes               = typeof payload.notes               === "string" ? payload.notes.trim()               : null;
   const importBatch         = typeof payload.importBatch         === "string" ? payload.importBatch.trim()         : null;
-  // Number of page images pre-rendered by the client (PDFium WASM, for JBIG2 docs)
   const pageImagesPreRendered = typeof payload.pageImagesPreRendered === "number" ? payload.pageImagesPreRendered : 0;
 
   if (!storagePath || !originalFilename || !aircraftId) {
@@ -126,7 +136,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const validCategories = ["logbook", "work_package", "inspection", "ad_compliance", "major_repair", "other"];
   const category = validCategories.includes(sourceCategory) ? sourceCategory : "other";
 
-  // Insert the record source row
+  // ── 1. Insert the record source row ─────────────────────────────────────
   const { data: newSource, error: insertErr } = await adminClient
     .from("rv_record_sources")
     .insert({
@@ -153,8 +163,113 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(500, { error: "Failed to register record source" });
   }
 
-  // OCR ingestion is handled by the Textract pipeline (S3 → SNS → records-vault-s3-ingest).
-  // For documents uploaded via Supabase Storage (this path), the document sits at
-  // ingestion_status: "pending" until it is re-submitted through the Textract path.
-  return jsonResponse(200, { recordSourceId: newSource.id });
+  const recordSourceId = newSource.id;
+
+  // ── 2. Copy PDF from Supabase Storage → S3 and start Textract ──────────
+  // Textract can only analyze files in S3. For local uploads (which land in
+  // Supabase Storage), we copy the PDF to the Textract S3 bucket and start
+  // the same async job that s3-ingest starts. From here, the existing
+  // SNS → textract-complete pipeline handles everything downstream.
+
+  const textractRegion  = process.env.TEXTRACT_REGION;
+  const textractKeyId   = process.env.TEXTRACT_KEY_ID;
+  const textractSecret  = process.env.TEXTRACT_SECRET_KEY;
+  const s3Bucket        = process.env.TEXTRACT_S3_BUCKET;
+  const snsTopicArn     = process.env.TEXTRACT_SNS_TOPIC_ARN;
+  const roleArn         = process.env.TEXTRACT_ROLE_ARN;
+
+  if (!textractRegion || !textractKeyId || !textractSecret || !s3Bucket || !snsTopicArn || !roleArn) {
+    console.error("[records-vault-register] Missing Textract env vars — pipeline will not start");
+    await adminClient.from("rv_ingestion_log").insert({
+      record_source_id: recordSourceId,
+      step: "textract_failed",
+      message: "Textract environment variables not configured — pipeline cannot start",
+    });
+    return jsonResponse(200, { recordSourceId, warning: "Textract not configured" });
+  }
+
+  const awsCreds = { accessKeyId: textractKeyId, secretAccessKey: textractSecret };
+
+  try {
+    // 2a. Download PDF from Supabase Storage
+    const { data: fileData, error: dlErr } = await adminClient.storage
+      .from("records-vault")
+      .download(storagePath);
+
+    if (dlErr || !fileData) {
+      throw new Error(`Supabase Storage download failed: ${dlErr?.message ?? "no data"}`);
+    }
+
+    const pdfBytes = Buffer.from(await fileData.arrayBuffer());
+
+    // 2b. Upload to S3
+    const s3Key = `local-uploads/${recordSourceId}/${originalFilename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const s3 = new S3Client({ region: textractRegion, credentials: awsCreds });
+
+    await s3.send(new PutObjectCommand({
+      Bucket: s3Bucket,
+      Key: s3Key,
+      Body: pdfBytes,
+      ContentType: "application/pdf",
+    }));
+
+    // 2c. Start Textract async job
+    const textract = new TextractClient({ region: textractRegion, credentials: awsCreds });
+
+    const startResp = await textract.send(new StartDocumentAnalysisCommand({
+      DocumentLocation: {
+        S3Object: { Bucket: s3Bucket, Name: s3Key },
+      },
+      FeatureTypes: [FeatureType.TABLES, FeatureType.FORMS],
+      NotificationChannel: {
+        SNSTopicArn: snsTopicArn,
+        RoleArn: roleArn,
+      },
+      JobTag: recordSourceId,
+    }));
+
+    const jobId = startResp.JobId;
+    if (!jobId) throw new Error("Textract StartDocumentAnalysis returned no JobId");
+
+    // 2d. Update the source row with S3 key + job ID
+    await adminClient
+      .from("rv_record_sources")
+      .update({
+        s3_key: s3Key,
+        textract_job_id: jobId,
+        ingestion_status: "extracting",
+      })
+      .eq("id", recordSourceId);
+
+    await adminClient.from("rv_ingestion_log").insert({
+      record_source_id: recordSourceId,
+      step: "textract_started",
+      message: `Textract async job started — JobId: ${jobId} | S3 key: ${s3Key}`,
+    });
+
+    console.log(`[register] Textract job started: ${jobId} for source ${recordSourceId}`);
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[register] Pipeline start failed for ${recordSourceId}:`, msg);
+
+    await adminClient
+      .from("rv_record_sources")
+      .update({
+        ingestion_status: "failed",
+        ingestion_error: `Pipeline start failed: ${msg}`,
+      })
+      .eq("id", recordSourceId);
+
+    await adminClient.from("rv_ingestion_log").insert({
+      record_source_id: recordSourceId,
+      step: "textract_failed",
+      message: `Pipeline start failed: ${msg}`,
+    });
+
+    // Still return the source ID — the row exists, user can retry from Pipeline
+    return jsonResponse(200, { recordSourceId, warning: `Pipeline start failed: ${msg}` });
+  }
+
+  return jsonResponse(200, { recordSourceId });
 };
