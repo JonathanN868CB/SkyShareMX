@@ -528,22 +528,6 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   };
   const postBody = JSON.stringify({ record_source_id: recordSourceId });
 
-  // Events extraction
-  try {
-    const evtResp = await fetch(`${edgeBase}/extract-record-events`, {
-      method: "POST", headers: postHeaders, body: postBody,
-    });
-    if (!evtResp.ok) {
-      console.error(`[textract-process-bg] extract-record-events HTTP ${evtResp.status}`);
-      await log("extraction_error", `extract-record-events returned HTTP ${evtResp.status}`);
-    } else {
-      await log("extraction_triggered", "extract-record-events triggered");
-    }
-  } catch (err) {
-    console.error("[textract-process-bg] extract-record-events trigger failed:", err);
-    await log("extraction_error", `extract-record-events trigger failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
   // Embedding generation
   try {
     const embResp = await fetch(`${edgeBase}/generate-page-embeddings`, {
