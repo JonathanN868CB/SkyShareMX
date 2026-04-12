@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { DW1GHT_CONFIG } from "./_dw1ght-config";
-import { resolvePlaybook } from "./_dw1ght-playbooks";
+import { resolvePlaybook, resolvePlaybookSections, sectionsToContextBlock } from "./_dw1ght-playbooks";
 
 // ── Types ────────────────────────────────────────────────────────
 type HandlerEvent = {
@@ -404,13 +404,14 @@ async function handleComplete(
   }
 
   // ── Self-critique via Sonnet (async, non-blocking) ────────────
-  // Resolve the live playbook so Sonnet critiques against actual rules, not code defaults
-  resolvePlaybook("mechanic-interview", supabase).then((playbookPrompt) => {
-    generateSelfCritique(client, supabase, enrichment_id, transcriptText, context || "", playbookPrompt).catch((err) => {
+  // Resolve the live playbook sections so Sonnet can quote exact passages
+  // for replace_text suggestions — sections passed individually, not merged.
+  resolvePlaybookSections("mechanic-interview", supabase).then((sections) => {
+    generateSelfCritique(client, supabase, enrichment_id, transcriptText, context || "", sections).catch((err) => {
       console.error("[DW1GHT Self-Critique] Failed:", err);
     });
   }).catch((err) => {
-    console.error("[DW1GHT Self-Critique] resolvePlaybook failed:", err);
+    console.error("[DW1GHT Self-Critique] resolvePlaybookSections failed:", err);
   });
 
   return json(200, {
@@ -433,31 +434,31 @@ async function generateSelfCritique(
   enrichmentId: string,
   transcriptText: string,
   discrepancyContext: string,
-  playbookPrompt: string,
+  sections: Record<string, string>,
 ) {
   console.log("[DW1GHT Self-Critique] Starting Sonnet review for enrichment:", enrichmentId);
+
+  const sectionsBlock = sectionsToContextBlock(sections);
 
   const critiqueResponse = await client.messages.create({
     model: DW1GHT_CONFIG.reviewModel,
     max_tokens: 1500,
     system: DW1GHT_CONFIG.selfCritiquePrompt
-      + `\n\nDW1GHT'S CURRENT PLAYBOOK RULES (what it was running with):\n${playbookPrompt}`
-      + `\n\n${discrepancyContext}`,
+      + `\n\n=== DW1GHT'S CURRENT PLAYBOOK SECTIONS (exact text — quote verbatim for replace_text) ===\n\n${sectionsBlock}`
+      + (discrepancyContext ? `\n\n${discrepancyContext}` : ""),
     messages: [{ role: "user", content: `Review this interview transcript:\n\n${transcriptText}` }],
   });
 
   let critiqueRaw = critiqueResponse.content[0].type === "text" ? critiqueResponse.content[0].text : "{}";
-  critiqueRaw = critiqueRaw.trim();
-  if (critiqueRaw.startsWith("```")) {
-    critiqueRaw = critiqueRaw.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
-  }
+  critiqueRaw = critiqueRaw.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
 
   let critique: {
     overall_grade?: string;
-    exchange_efficiency?: string;
+    story_extraction_assessment?: string;
     playbook_suggestions?: Array<{
       section_key: string;
       change_type: string;
+      source_text?: string;
       suggested_text: string;
       reasoning?: string;
     }>;
@@ -474,12 +475,15 @@ async function generateSelfCritique(
     }
   }
 
-  console.log("[DW1GHT Self-Critique] Grade:", critique.overall_grade || "N/A", "| Efficiency:", critique.exchange_efficiency || "N/A");
+  console.log("[DW1GHT Self-Critique] Grade:", critique.overall_grade || "N/A", "|", critique.story_extraction_assessment || "");
 
   // Save any playbook suggestions to the suggestions table
   const validSectionKeys = ["allowed_context", "instructions", "decision_logic", "output_definition", "post_processing", "tone_calibration"];
+  const validChangeTypes = ["append", "replace_text", "replace_section"];
   const suggestions = (critique.playbook_suggestions || []).filter(
-    (s) => s.section_key && s.suggested_text && validSectionKeys.includes(s.section_key) && ["append", "replace_section"].includes(s.change_type),
+    (s) => s.section_key && s.suggested_text
+      && validSectionKeys.includes(s.section_key)
+      && validChangeTypes.includes(s.change_type),
   );
   if (suggestions.length > 0) {
     const { error: suggErr } = await supabase.from("dw1ght_playbook_suggestions").insert(
@@ -487,6 +491,7 @@ async function generateSelfCritique(
         playbook_slug: "mechanic-interview",
         section_key: s.section_key,
         change_type: s.change_type,
+        source_text: s.source_text || null,
         suggested_text: s.suggested_text,
         reasoning: s.reasoning || null,
         source_type: "self_critique",

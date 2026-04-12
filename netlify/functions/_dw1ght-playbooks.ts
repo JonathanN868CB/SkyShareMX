@@ -90,11 +90,18 @@ If the mechanic references a past event or related discrepancy not in your conte
     // phase guidance, and all special-case handling (proxy, MEL, repeat discrepancy, closing).
     defaultInstructions: `You are DW1GHT conducting a structured mechanic interview about a specific discrepancy event.
 
-YOUR MISSION: Two things, in this order:
-1. VALIDATE THE RECORD — The discrepancy record already has data in it: corrective action, technician name, AMM references, location, etc. Your job is to read back key fields and ask the mechanic to confirm, correct, or fill gaps. Do not ignore what's already stored. The database is your starting point, not a blank slate.
-2. CAPTURE THE MIDDLE — The formal record has the beginning (what was found) and the end (what was done). You capture the MIDDLE — what got tried, what failed, what finally worked, what the next mechanic should know.
+THE MISSION — UNDERSTAND THIS BEFORE ANYTHING ELSE:
+You are building a knowledge base that future mechanics will search when they face the same problem. When someone types "slat fail" six months from now, they need to find: here's what was tried, here's what failed, here's what fixed it, here's the trap that looked right but wasn't. That is what this interview exists to produce.
 
-RECORD VALIDATION — THIS IS MANDATORY:
+The formal record already has the beginning (what was found) and the end (what was signed off). You are capturing EVERYTHING IN BETWEEN — the diagnostic sequence, the dead ends, the pivot moment when the mechanic realized what was actually wrong, the tribal knowledge nobody writes down.
+
+This is your primary mission. Everything else is secondary.
+
+YOUR PRIORITIES IN ORDER:
+1. CAPTURE THE MIDDLE — Extract the diagnostic story: what was tried, what failed, what worked, what the mechanic would tell the next person. This is why you are here.
+2. VALIDATE THE RECORD — Confirm or correct the stored fields (corrective action, ATA chapter, AMM references, technician, location). Do this efficiently as a secondary pass — it is important but should not consume the interview.
+
+RECORD VALIDATION — DO THIS, BUT EFFICIENTLY:
 - You have the full discrepancy record in your context. USE IT.
 - Early in the interview (after confirming involvement), read back key stored fields to the mechanic.
 - For ROUTINE events: batch-validate quickly — "The record shows [corrective_action], [technician_name] signed off, ATA [chapter]. All accurate?" One or two exchanges covers it.
@@ -284,6 +291,55 @@ PERSONALITY BALANCE:
     defaultToneCalibration: "",
   },
 ];
+
+// ── Resolve Playbook Sections ─────────────────────────────────────
+// Same merge logic as resolvePlaybook, but returns individual sections
+// as a keyed record instead of one merged string. Used by the self-critique
+// so Sonnet can quote exact passages for replace_text suggestions.
+
+export async function resolvePlaybookSections(
+  slug: PlaybookSlug,
+  supabase: ReturnType<typeof createClient>,
+): Promise<Record<string, string>> {
+  const playbook = PLAYBOOKS.find((p) => p.slug === slug);
+  if (!playbook) throw new Error(`Unknown playbook slug: ${slug}`);
+
+  const { data: override } = await supabase
+    .from("dw1ght_playbook_overrides")
+    .select("allowed_context, instructions, decision_logic, output_definition, post_processing, tone_calibration")
+    .eq("playbook_slug", slug)
+    .maybeSingle();
+
+  return {
+    allowed_context:   override?.allowed_context?.trim()   || playbook.defaultAllowedContext,
+    instructions:      override?.instructions?.trim()      || playbook.defaultInstructions,
+    decision_logic:    override?.decision_logic?.trim()    || playbook.defaultDecisionLogic,
+    output_definition: override?.output_definition?.trim() || playbook.defaultOutputDefinition,
+    post_processing:   override?.post_processing?.trim()   || playbook.defaultPostProcessing,
+    tone_calibration:  override?.tone_calibration?.trim()  || playbook.defaultToneCalibration,
+  };
+}
+
+// ── Sections → Context Block ──────────────────────────────────────
+// Formats resolved sections into a labeled block for the critique prompt.
+// Sonnet needs to see sections individually so it can quote exact text
+// for replace_text suggestions.
+
+const SECTION_CRITIQUE_LABELS: Record<string, string> = {
+  allowed_context:   "ALLOWED CONTEXT",
+  instructions:      "OPERATING INSTRUCTIONS",
+  decision_logic:    "DECISION / ESCALATION RULES",
+  output_definition: "OUTPUT DEFINITION",
+  post_processing:   "POST-PROCESSING / ACTIONS",
+  tone_calibration:  "PERSONA & TONE",
+};
+
+export function sectionsToContextBlock(sections: Record<string, string>): string {
+  return Object.entries(sections)
+    .filter(([, v]) => v.trim())
+    .map(([k, v]) => `[${SECTION_CRITIQUE_LABELS[k] || k.toUpperCase()}]\n${v}`)
+    .join("\n\n---\n\n");
+}
 
 // ── Resolve Playbook ──────────────────────────────────────────────
 // Merges code defaults with any saved DB override, appends active learnings,

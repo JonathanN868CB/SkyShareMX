@@ -442,69 +442,92 @@ If the interview was too brief to extract meaningful data, still produce the bes
   reviewModel: "claude-sonnet-4-6" as const,
 
   // ── Self-Critique Prompt ──────────────────────────────────────
-  selfCritiquePrompt: `You are reviewing a DW1GHT interview transcript as a quality auditor. DW1GHT is an AI interviewer that talks to aviation mechanics about maintenance events.
+  selfCritiquePrompt: `THE MISSION — READ THIS FIRST:
+DW1GHT interviews aviation mechanics to build a searchable troubleshooting knowledge base. The goal is singular: capture the MIDDLE of the story. The formal discrepancy record already has the beginning (what was found) and the end (what was signed off). DW1GHT's job is everything in between — the diagnostic sequence, the dead ends, the pivot moment, the aha realization, the tribal knowledge that nobody writes in the formal record.
 
-You have access to:
-1. The full interview transcript
-2. The discrepancy record DW1GHT had in context
-3. The current playbook rules DW1GHT was supposed to follow
+When the interview works, a future mechanic searching "slat fail" finds: here's what was tried, here's what failed, here's the step that actually fixed it, here's the trap that looked right but wasn't. That is the output this system exists to produce.
 
-YOUR ONLY JOB: determine whether the current written playbook rules need a new rule added. Not whether DW1GHT performed perfectly — whether the rules themselves are incomplete.
+YOUR JOB AS CRITIC:
+You have the full transcript, the discrepancy record DW1GHT had in context, and the live playbook sections — labeled individually. Read all three together and ask one question: did this interview extract the middle of the story? If it fell short, is there a specific playbook rule that is missing, wrongly worded, or imprecise that caused the gap?
 
-THE BAR IS HIGH:
-- A suggestion is only warranted when the playbook is MISSING a rule that would have prevented a specific failure you observed. The gap must be in the written rules, not in DW1GHT's execution.
-- If DW1GHT made a mistake but the relevant rule already exists — that is a consistency/training issue, not a playbook gap. Return an empty array.
-- If the interview went well — return an empty array. That is the correct and expected output for a good interview, not a failure to analyze.
-- Do NOT suggest rephrasing existing rules, adding examples to rules that are already working, or making stylistic improvements.
-- Do NOT suggest a rule unless you can cite the specific moment in the transcript where its absence caused a problem.
+EVALUATE THESE QUESTIONS IN ORDER:
+1. Did DW1GHT surface the diagnostic sequence — what was tried first, second, what changed the approach, what finally worked?
+2. Did DW1GHT find the pivot moment — the test result, observation, or part failure that changed everything?
+3. Did DW1GHT surface the pitfalls — steps that seemed right but turned out to be dead ends?
+4. Did DW1GHT extract the tribal knowledge — things only someone who did this work would know, that won't appear in any manual?
+5. Did DW1GHT waste exchanges on low-value administrative confirmation instead of getting to the story?
+6. Did DW1GHT accept vague or deflecting answers where one better-aimed follow-up would have unlocked the key detail?
 
-EVALUATE ONLY THESE QUESTIONS:
-- Did a failure occur that no existing rule covers?
-- Was there a pattern (not a one-off) that suggests a structural gap?
-- Would a new rule have changed the outcome?
+WHAT WARRANTS A SUGGESTION:
+- A failure occurred and no existing rule covers the gap that caused it
+- Existing rule wording is imprecise — a more targeted phrasing would have produced better story extraction at the specific moment you observed
+- DW1GHT spent too many exchanges on administrative confirmation that yielded no diagnostic content, and the playbook permits this implicitly
+- A specific transcript exchange shows DW1GHT accepted a non-answer where a rule would have required a follow-up
+
+WHAT DOES NOT WARRANT A SUGGESTION:
+- DW1GHT made a one-off mistake but the relevant rule already exists — that is a consistency issue, not a playbook gap
+- The interview extracted the story well — an empty suggestions array is the correct output for a good interview
+- Generic best-practice advice with no connection to a specific failure moment in this transcript
+
+CHANGE TYPES — choose the most surgical option:
+- "replace_text" — replace a specific passage in a section with better wording. PREFERRED for wording improvements. Provide source_text as an exact verbatim quote from the section.
+- "append" — add a new rule, clause, or handling note that does not exist anywhere in the section.
+- "replace_section" — fundamental rewrite of an entire section. Use only when the section's overall direction is wrong, not just imprecise.
 
 OUTPUT FORMAT — respond with valid JSON only, no markdown:
 {
   "overall_grade": "A | B | C | D | F",
-  "exchange_efficiency": "brief note on exchanges vs info extracted",
+  "story_extraction_assessment": "1-2 sentences: did the interview capture the middle of the story? what was the strongest extraction and the biggest miss?",
   "playbook_suggestions": [
     {
       "section_key": "allowed_context | instructions | decision_logic | output_definition | post_processing | tone_calibration",
-      "change_type": "append | replace_section",
-      "suggested_text": "exact text to add (for append) or full new section content (for replace_section)",
-      "reasoning": "cite the specific transcript moment and explain why no existing rule covers it"
+      "change_type": "replace_text | append | replace_section",
+      "source_text": "EXACT verbatim text currently in the section being replaced — required for replace_text, omit for append and replace_section",
+      "suggested_text": "the replacement passage (replace_text) / new clause or rule (append) / full new section content (replace_section)",
+      "reasoning": "cite the specific transcript exchange that exposed this gap and explain precisely what the current wording fails to prevent"
     }
   ]
 }
 
-RULES:
-- 0–1 suggestions per interview is normal. 2 is the absolute maximum.
-- "append" to add a new clause. "replace_section" only for fundamental direction changes — use sparingly.
-- An empty suggestions array is not a failure. As the playbook matures, most interviews should produce no suggestions. That means it is working.`,
+QUANTITY RULES:
+- 0–1 suggestions per interview is normal and expected
+- 2–3 is the absolute maximum — quality over quantity
+- Every suggestion must cite a specific transcript moment as evidence
+- An empty array is not a failure — it means the playbook is working`,
 
   // ── DOM Review Learning Prompt ────────────────────────────────
-  domReviewLearningPrompt: `You are analyzing DOM (Director of Maintenance) feedback on a DW1GHT interview to identify whether the written playbook rules need updating.
+  domReviewLearningPrompt: `THE MISSION:
+DW1GHT mechanic interviews exist to capture the MIDDLE of the troubleshooting story — the diagnostic sequence, dead ends, pivot moments, and tribal knowledge that never appears in the formal record. This knowledge feeds a searchable database so future mechanics can find what worked and what didn't.
 
-The DOM has reviewed DW1GHT's interview and provided feedback in one or more forms:
+You are analyzing DOM (Director of Maintenance) feedback on a completed DW1GHT interview. The DOM has reviewed DW1GHT's narrative, corrections, and interview conduct. Your job: determine if the feedback reveals a gap in the written playbook rules that would cause DW1GHT to underperform on story extraction in future interviews.
+
+The DOM feedback may include:
 - Rejected suggested corrections (DW1GHT suggested a field change and the DOM said no)
 - Review notes (free-text feedback from the DOM)
 - Low rating (interview rated poorly)
+
+CHANGE TYPES — choose the most surgical option:
+- "replace_text" — replace a specific passage in a section. Provide source_text as verbatim text from the relevant section. PREFERRED for targeted wording fixes.
+- "append" — add a new rule that does not exist anywhere in the section.
+- "replace_section" — full section rewrite. Use sparingly.
 
 OUTPUT FORMAT — respond with valid JSON only, no markdown:
 {
   "playbook_suggestions": [
     {
       "section_key": "allowed_context | instructions | decision_logic | output_definition | post_processing | tone_calibration",
-      "change_type": "append | replace_section",
-      "suggested_text": "exact text to add (for append) or full new section content (for replace_section)",
-      "reasoning": "what in this DOM feedback indicates a gap in the written playbook rules"
+      "change_type": "replace_text | append | replace_section",
+      "source_text": "EXACT verbatim text from the section being replaced — required for replace_text, omit for append and replace_section",
+      "suggested_text": "replacement passage / new rule / full new section content",
+      "reasoning": "what in this DOM feedback indicates a systemic gap in the written playbook rules"
     }
   ]
 }
 
 RULES:
-- playbook_suggestions: generate 0-1 per DOM review. Only suggest if the DOM feedback points to a systemic gap in the written rules, not just a one-off data error. Return an empty array if no systemic issue is evident.
-- Rejected corrections with a clear domain-knowledge pattern are the strongest signal for a suggestion.`,
+- Generate 0–1 suggestions per DOM review. Only suggest when the feedback points to a systemic gap, not a one-off data error.
+- Rejected corrections with a clear domain-knowledge pattern are the strongest signal.
+- Return an empty array if no systemic issue is evident — that is the correct output.`,
 
   // Fields that DOM can approve corrections for
   correctableFields: [
