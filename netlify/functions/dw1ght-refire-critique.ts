@@ -42,6 +42,17 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
   if (!event.body) return json(400, { error: "Missing request body" });
 
+  try {
+    return await refireHandler(event);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[DW1GHT Refire] Unhandled exception:", msg);
+    return json(500, { error: "Internal server error", detail: msg });
+  }
+};
+
+async function refireHandler(event: HandlerEvent): Promise<HandlerResponse> {
+
   // ── Auth ──────────────────────────────────────────────────────────
   const authHeader = event.headers?.["authorization"] || event.headers?.["Authorization"] || "";
   const jwt = authHeader.replace(/^Bearer\s+/i, "");
@@ -70,7 +81,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   // ── Parse body ────────────────────────────────────────────────────
   let payload: { enrichment_id: string };
   try {
-    payload = JSON.parse(event.body);
+    payload = JSON.parse(event.body!);
   } catch {
     return json(400, { error: "Invalid JSON" });
   }
