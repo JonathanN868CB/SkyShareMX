@@ -27,6 +27,7 @@ import {
 import { supabase } from "@/lib/supabase"
 import { useRecordPageUrl } from "../hooks/useRecordPageUrl"
 import { useRecordPageImageUrl } from "../hooks/useRecordPageImageUrl"
+import { useRecordPageImageUrlBatch } from "../hooks/useRecordPageImageUrlBatch"
 import { usePageGeometry } from "../hooks/usePageGeometry"
 import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { SOURCE_CATEGORY_LABELS } from "../constants"
@@ -85,7 +86,7 @@ const CAT_COLOUR: Record<SourceCategory | string, string> = {
 // ─── Thumbnail strip item ─────────────────────────────────────────────────────
 
 function ThumbnailItem({
-  pageNumber, recordSourceId, isActive, isMatch, matchIndex, isS3Ingested, onClick,
+  pageNumber, recordSourceId, isActive, isMatch, matchIndex, isS3Ingested, prefetchedUrl, onClick,
 }: {
   pageNumber:     number
   recordSourceId: string
@@ -93,6 +94,7 @@ function ThumbnailItem({
   isMatch:        boolean
   matchIndex:     number | null
   isS3Ingested:   boolean
+  prefetchedUrl:  string | null | undefined  // from batch query; undefined = outside window
   onClick:        () => void
 }) {
   const ref     = useRef<HTMLButtonElement>(null)
@@ -115,14 +117,17 @@ function ThumbnailItem({
     return () => observer.disconnect()
   }, [])
 
-  // Prefer the per-page rasterized JPEG — one image per page means each
-  // thumbnail shows its actual content. Only fall back to the full-PDF
-  // iframe for legacy Supabase-uploaded docs that never get rasterized.
-  const { data: imageUrl } = useRecordPageImageUrl(
-    inView ? recordSourceId : null,
+  // Prefer the batch-prefetched URL when available. Only fall back to the
+  // per-page hook if this thumbnail was rendered outside the prefetch window
+  // AND has actually been scrolled into view — prevents a thumbnail storm.
+  const needsFallback = prefetchedUrl === undefined && inView
+  const { data: fallbackImageUrl } = useRecordPageImageUrl(
+    needsFallback ? recordSourceId : null,
     pageNumber,
     { pollWhileMissing: isS3Ingested },
   )
+  const imageUrl = prefetchedUrl ?? fallbackImageUrl ?? null
+
   const { data: pdfUrl } = useRecordPageUrl(
     inView && !imageUrl && !isS3Ingested ? recordSourceId : null,
     pageNumber,
@@ -494,6 +499,9 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
   const [propsPanelOpen, setPropsPanelOpen] = useState(false)
   const [pageJumpValue,  setPageJumpValue]  = useState("")
   const [showJumpInput,  setShowJumpInput]  = useState(false)
+  // Banner state: set when we had to redirect off the requested page because
+  // rasterization hasn't reached it yet.
+  const [redirectBanner, setRedirectBanner] = useState<{ requested: number; shown: number } | null>(null)
   const jumpInputRef  = useRef<HTMLInputElement>(null)
   const centerRef     = useRef<HTMLDivElement>(null)
 
@@ -512,8 +520,60 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
       setCurrentHitIdx(hitIndex)
       setExcerptOpen(true)
       setShowJumpInput(false)
+      setRedirectBanner(null)
     }
   }, [open, hitIndex, hits])
+
+  // First-ready-page fallback. When the viewer opens on a page that isn't
+  // rasterized yet (search hit near the end of a 300-page doc, rasterizer
+  // still running), land on the first ready page at or after the requested
+  // page instead of hanging on "Preparing page…". The banner lets the user
+  // retry once rasterization advances.
+  useEffect(() => {
+    if (!open || !recordSourceId) return
+    const requestedPage = hits[hitIndex]?.page_number ?? 1
+    let cancelled = false
+
+    ;(async () => {
+      const { data: firstReady } = await supabase
+        .from("rv_pages")
+        .select("page_number")
+        .eq("record_source_id", recordSourceId)
+        .gte("page_number", requestedPage)
+        .not("page_image_uploaded_at", "is", null)
+        .order("page_number", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+      if (cancelled) return
+
+      if (!firstReady) {
+        // Nothing at/after is ready — try the most recent ready page before.
+        const { data: lastReadyBefore } = await supabase
+          .from("rv_pages")
+          .select("page_number")
+          .eq("record_source_id", recordSourceId)
+          .lt("page_number", requestedPage)
+          .not("page_image_uploaded_at", "is", null)
+          .order("page_number", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (cancelled) return
+        if (lastReadyBefore && lastReadyBefore.page_number !== requestedPage) {
+          setCurrentPage(lastReadyBefore.page_number)
+          setRedirectBanner({ requested: requestedPage, shown: lastReadyBefore.page_number })
+        }
+        return
+      }
+
+      if (firstReady.page_number !== requestedPage) {
+        setCurrentPage(firstReady.page_number)
+        setRedirectBanner({ requested: requestedPage, shown: firstReady.page_number })
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [open, recordSourceId, hitIndex, hits])
 
   useEffect(() => {
     const idx = pageToHitIndex.get(currentPage)
@@ -557,11 +617,13 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
     staleTime: 5 * 60 * 1000,
   })
 
-  // S3-ingested docs skip the PDF.js fallback entirely — PDF.js cannot render
-  // the compression codecs that the server-side rasterizer exists to work
-  // around (JBIG2, CCITTFax). Detected by presence of s3_key with no
-  // storage_path, which is the canonical shape for Textract pipeline docs.
-  const isS3Ingested = !!source?.s3_key && !source?.storage_path
+  // Any document that came through the S3 ingest pipeline always requires the
+  // per-page JPEG path — PDF.js cannot render the compression codecs these
+  // PDFs tend to carry (JBIG2, CCITTFax). The rasterizer now mirrors the
+  // original PDF to Supabase for other surfaces, but the viewer still reads
+  // JPEGs for any s3_key-flagged source, whether rasterization is complete,
+  // in progress, or still pending.
+  const isS3Ingested = !!source?.s3_key
 
   const hasPrevHit = currentHitIdx > 0
   const hasNextHit = currentHitIdx < hits.length - 1
@@ -576,15 +638,34 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
 
   const effectiveTotalPages = totalPages || source?.page_count || hits.length
 
-  // Strip page list: all match pages + sliding window around current page
-  const seenPages = new Set<number>()
-  for (const h of hits) seenPages.add(h.page_number)
-  for (let p = Math.max(1, currentPage - 5); p <= Math.min(effectiveTotalPages, currentPage + 5); p++) {
-    seenPages.add(p)
-  }
-  const stripPages: number[] = effectiveTotalPages <= 200
-    ? Array.from({ length: effectiveTotalPages }, (_, i) => i + 1)
-    : Array.from(seenPages).sort((a, b) => a - b)
+  // Strip page list — always sparse. The previous "<=200 → render all" path
+  // fired a page-image-url request per thumbnail on open, which was the root
+  // cause of the 316-page viewer hang. Now we render a fixed window:
+  //   - first 10 pages (logbook covers / indexes)
+  //   - current page ±10
+  //   - every page with a search match
+  // The set stays bounded (~30-40 items) regardless of document length, and
+  // React Query caches results as the user scrolls into new windows.
+  const stripPages: number[] = (() => {
+    const seen = new Set<number>()
+    for (let p = 1; p <= Math.min(10, effectiveTotalPages); p++) seen.add(p)
+    for (let p = Math.max(1, currentPage - 10); p <= Math.min(effectiveTotalPages, currentPage + 10); p++) {
+      seen.add(p)
+    }
+    for (const h of hits) {
+      if (h.page_number >= 1 && h.page_number <= effectiveTotalPages) seen.add(h.page_number)
+    }
+    return Array.from(seen).sort((a, b) => a - b)
+  })()
+
+  // Batch-prefetch signed URLs for every thumbnail in the current window.
+  // One function invocation + one DB round trip instead of N per-thumbnail
+  // requests. The batch hook polls with backoff while any entry is null so
+  // thumbnails light up as rasterization progresses.
+  const { data: prefetched } = useRecordPageImageUrlBatch(
+    recordSourceId ?? null,
+    stripPages,
+  )
 
   if (!open) return null
 
@@ -714,6 +795,7 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
                 isMatch={matchPages.has(pageNum)}
                 matchIndex={matchPages.has(pageNum) ? (pageToHitIndex.get(pageNum) ?? null) : null}
                 isS3Ingested={isS3Ingested}
+                prefetchedUrl={prefetched ? (prefetched[pageNum] ?? null) : undefined}
                 onClick={() => setCurrentPage(pageNum)}
               />
             ))}
@@ -722,6 +804,25 @@ export function RecordsVaultViewer({ open, onClose, hits, hitIndex, query, total
 
         {/* CENTER — page image with text overlay (or PDF.js fallback) */}
         <div ref={centerRef} className="flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
+          {redirectBanner && (
+            <div className="flex-none flex items-center justify-between gap-3 px-4 py-2 border-b border-amber-500/40 bg-amber-500/10">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                <span className="text-[11px] text-amber-200/90">
+                  Page {redirectBanner.requested} not ready yet — showing page {redirectBanner.shown}.
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setCurrentPage(redirectBanner.requested)
+                  setRedirectBanner(null)
+                }}
+                className="text-[10px] font-semibold uppercase tracking-wider text-amber-200 hover:text-amber-50 px-2 py-0.5 rounded hover:bg-amber-500/20 transition-colors shrink-0"
+              >
+                Retry
+              </button>
+            </div>
+          )}
           <div className="flex-1 min-h-0 bg-muted/20">
             {recordSourceId && (
               <CenterPanel

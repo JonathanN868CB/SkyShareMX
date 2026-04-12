@@ -5,6 +5,11 @@
 // viewer reads these images via records-vault-page-image-url, bypassing any
 // browser codec limitations (JBIG2, CCITTFax, etc.) entirely.
 //
+// This file is one of only TWO places in the codebase that may import
+// @aws-sdk/client-s3. S3 is an ingest-staging area only — after this function
+// uploads the original PDF to Supabase Storage, every other retrieval path
+// reads exclusively from Supabase. Do not import S3 anywhere else.
+//
 // Invocation:
 //   POST with body { recordSourceId }
 //   Returns 202 immediately. Rasterization runs for up to 15 minutes.
@@ -230,6 +235,12 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   console.log(`[rasterize] Starting for ${recordSourceId} (${source.original_filename})`);
   await log("rasterize_started", `Downloading PDF from s3://${s3Bucket}/${source.s3_key}`);
 
+  // Flip the stage flag so the Pipeline panel shows "rasterizing" instead of pending.
+  await supabase
+    .from("rv_record_sources")
+    .update({ rasterize_status: "pending" })
+    .eq("id", recordSourceId);
+
   // ── 2. Download the PDF from S3 ───────────────────────────────────────────
   let pdfBytes: Buffer;
   try {
@@ -242,6 +253,41 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   }
 
   await log("rasterize_started", `PDF downloaded (${(pdfBytes.length / 1024 / 1024).toFixed(1)} MB) — loading PDFium`);
+
+  // ── 2b. Mirror the PDF to Supabase Storage ────────────────────────────────
+  // S3 is ingest-only. After this upload, storage_path is the canonical origin
+  // for the original PDF, and every retrieval path reads from Supabase. The
+  // bytes are already in memory, so this costs one extra upload round-trip.
+  {
+    const originalPath = `${recordSourceId}/original.pdf`;
+    const { error: pdfUploadErr } = await supabase.storage
+      .from("records-vault")
+      .upload(originalPath, pdfBytes, {
+        contentType: "application/pdf",
+        upsert: true,
+      });
+
+    if (pdfUploadErr) {
+      // Don't hard-fail rasterization over this — log it and continue so the
+      // page images still make it through. The S3 presigned URL branch will be
+      // removed in Phase 2.7, at which point this becomes load-bearing.
+      await log(
+        "rasterize_error",
+        `Supabase PDF mirror failed: ${pdfUploadErr.message}`,
+      );
+      console.error(`[rasterize] PDF mirror to Supabase failed:`, pdfUploadErr.message);
+    } else {
+      const { error: pathErr } = await supabase
+        .from("rv_record_sources")
+        .update({ storage_path: originalPath })
+        .eq("id", recordSourceId);
+      if (pathErr) {
+        await log("rasterize_error", `storage_path update failed: ${pathErr.message}`);
+      } else {
+        await log("rasterize_started", `Mirrored original PDF to Supabase (${originalPath})`);
+      }
+    }
+  }
 
   // ── 3. Load PDFium and open the document ──────────────────────────────────
   let pdfium: WrappedPdfiumModule;
@@ -295,6 +341,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
         throw new Error(`Supabase upload failed: ${uploadErr.message}`);
       }
 
+      // Mark the page as ready so the viewer can cheaply check readiness
+      // without hitting Storage. Fire-and-forget — a missed flag just means a
+      // page briefly looks un-ready, not a data loss.
+      await supabase
+        .from("rv_pages")
+        .update({ page_image_uploaded_at: new Date().toISOString() })
+        .eq("record_source_id", recordSourceId)
+        .eq("page_number", pageNumber);
+
       succeeded++;
 
       // Progress log every 10 pages (and on the first page)
@@ -323,6 +378,15 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   await log("rasterize_complete", summary, succeeded);
   console.log(`[rasterize] ${recordSourceId}: ${summary}`);
 
+  // Partial if any page failed; otherwise fully rasterized. Zero-page success
+  // shouldn't happen, but guard against it becoming a silent "rasterized" green.
+  const rasterizeStatus =
+    succeeded === 0 ? "failed" : failed > 0 ? "partial" : "rasterized";
+  await supabase
+    .from("rv_record_sources")
+    .update({ rasterize_status: rasterizeStatus })
+    .eq("id", recordSourceId);
+
   return {
     statusCode: 200,
     body: JSON.stringify({ recordSourceId, pageCount, succeeded, failed }),
@@ -332,6 +396,10 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     const stack = err instanceof Error ? err.stack ?? "" : "";
     console.error(`[rasterize] Fatal for ${recordSourceId}:`, msg, stack);
     await log("rasterize_error", `Fatal: ${msg}`);
+    await supabase
+      .from("rv_record_sources")
+      .update({ rasterize_status: "failed" })
+      .eq("id", recordSourceId);
     return { statusCode: 500, body: JSON.stringify({ error: msg }) };
   }
 };

@@ -29,6 +29,14 @@ async function fetchPageImageUrl(
   return (signedUrl as string) ?? null
 }
 
+// Exponential backoff schedule for rasterization polling. Capped so a single
+// viewer session fires at most a few dozen polls instead of hundreds on a
+// stuck document. Early ticks are fast for the common case (rasterization
+// finishes in seconds), later ticks stretch out so a stalled document doesn't
+// burn a poll every 5 seconds forever.
+const POLL_SCHEDULE_MS = [2_000, 2_000, 5_000, 5_000, 10_000, 10_000, 15_000, 20_000]
+const POLL_TIMEOUT_MS  = 2 * 60_000 // stop polling after 2 minutes of nothing
+
 export function useRecordPageImageUrl(
   recordSourceId: string | null,
   pageNumber: number,
@@ -41,10 +49,18 @@ export function useRecordPageImageUrl(
     staleTime: 55 * 60 * 1000, // 55 min (images don't change)
     retry: false, // Don't retry 404s
     // For S3-ingested docs the image may not exist yet because the
-    // rasterize-background function is still running. Poll every 5s until
-    // it appears so the viewer flips from "Processing" to the real page
-    // automatically as soon as rasterization finishes.
-    refetchInterval: (query) =>
-      options?.pollWhileMissing && !query.state.data ? 5_000 : false,
+    // rasterize-background function is still running. Back off on each tick
+    // and stop entirely after POLL_TIMEOUT_MS so a stuck job doesn't trigger
+    // an endless polling storm against the functions endpoint.
+    refetchInterval: (query) => {
+      if (!options?.pollWhileMissing) return false
+      if (query.state.data) return false
+      const firstFetchAt = query.state.dataUpdatedAt || query.state.errorUpdatedAt || Date.now()
+      const elapsed = Date.now() - firstFetchAt
+      if (elapsed > POLL_TIMEOUT_MS) return false
+      const fetchCount = query.state.fetchFailureCount + (query.state.data === null ? 1 : 0)
+      const idx = Math.min(fetchCount, POLL_SCHEDULE_MS.length - 1)
+      return POLL_SCHEDULE_MS[idx]
+    },
   })
 }

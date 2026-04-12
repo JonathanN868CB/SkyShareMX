@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { NavLink, useNavigate } from "react-router-dom"
-import { FileText, Activity, Archive, Upload, Clock } from "lucide-react"
+import { FileText, Activity, Archive, Upload } from "lucide-react"
 import { cn } from "@/shared/lib/utils"
 import { useAuth } from "@/features/auth"
 import { useRecordsVaultCtx } from "./RecordsVaultApp"
@@ -9,7 +9,6 @@ import { SuggestionWidget } from "@/features/site-suggestions"
 
 const NAV_ITEMS = [
   { label: "Records",  path: "/app/records-vault/search",   icon: FileText   },
-  { label: "Timeline", path: "/app/records-vault/timeline", icon: Clock      },
   { label: "Pipeline", path: "/app/records-vault/pipeline", icon: Activity   },
 ]
 

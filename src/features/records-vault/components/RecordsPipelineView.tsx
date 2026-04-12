@@ -1,8 +1,5 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
   Loader2,
   Clock,
   RefreshCw,
@@ -13,17 +10,35 @@ import {
   Brain,
   Layers,
   Image,
+  Upload,
+  Printer,
+  ScanLine,
+  Tag,
+  Search,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/lib/supabase"
-import { useRecordsPipeline, type PipelineSource } from "../hooks/useRecordsPipeline"
+import { useRecordsPipeline, type PipelineSource, type IngestionLogEntry } from "../hooks/useRecordsPipeline"
 import { SOURCE_CATEGORY_LABELS } from "../constants"
-import type { ExtractionStatus, ChunkStatus } from "../types"
+import { ChunkInspectorDrawer } from "./ChunkInspectorDrawer"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type FilterMode = "all" | "processing" | "verified" | "needs_attention"
+
+type StageKey = "upload" | "rasterize" | "textract" | "events" | "embeddings" | "label"
+type StageState = "pending" | "running" | "done" | "partial" | "failed"
+
+type StageInfo = {
+  key:    StageKey
+  label:  string
+  icon:   React.ElementType
+  state:  StageState
+  detail: string | undefined
+  /** Latest rv_ingestion_log message that explains why this stage is not green */
+  why:    string | null
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,173 +60,190 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(secs / 86400)}d ago`
 }
 
-// ─── Three-stage pipeline indicator ──────────────────────────────────────────
-
-type StageState = "pending" | "running" | "done" | "failed"
-
-function StageChip({
-  icon: Icon,
-  label,
-  detail,
-  state,
-}: {
-  icon: React.ElementType
-  label: string
-  detail?: string
-  state: StageState
-}) {
-  const colours: Record<StageState, string> = {
-    pending: "text-muted-foreground/60",
-    running: "text-blue-600 dark:text-blue-400",
-    done:    "text-green-600 dark:text-green-400",
-    failed:  "text-destructive",
-  }
-  const colour = colours[state]
-
-  return (
-    <span className={`flex items-center gap-1 text-[11px] font-medium ${colour}`}>
-      {state === "running"
-        ? <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-        : state === "done"
-        ? <CheckCircle2 className="h-3 w-3 shrink-0" />
-        : state === "failed"
-        ? <XCircle className="h-3 w-3 shrink-0" />
-        : <Clock className="h-3 w-3 shrink-0" />
-      }
-      <Icon className="h-3 w-3 shrink-0" />
-      {label}
-      {detail && <span className="font-normal opacity-70">{detail}</span>}
-    </span>
-  )
+/** Map log steps to the stage they belong to so we can surface the last "why" text. */
+const LOG_STEP_TO_STAGE: Record<string, StageKey> = {
+  upload_failed:        "upload",
+  rasterize_failed:     "rasterize",
+  rasterize_partial:    "rasterize",
+  textract_failed:      "textract",
+  textract_throttled:   "textract",
+  events_failed:        "events",
+  extraction_failed:    "events",
+  embedding_failed:     "embeddings",
+  chunk_failed:         "embeddings",
+  label_failed:         "label",
 }
 
-function PipelineSeparator({ active }: { active: boolean }) {
+function lastLogFor(stage: StageKey, log: IngestionLogEntry[]): string | null {
+  // Scan newest-first for an entry tagged to this stage with a message.
+  for (let i = log.length - 1; i >= 0; i--) {
+    const entry = log[i]
+    if (LOG_STEP_TO_STAGE[entry.step] === stage && entry.message) {
+      return entry.message
+    }
+  }
+  return null
+}
+
+/** Build a 5-stage status line for a source, newest → label. */
+function computeStages(source: PipelineSource): StageInfo[] {
+  const log = source.log ?? []
+
+  // 1. Upload — if the row exists at all, the register happened; the file may
+  //    still be mid-PUT though, so use the presence of s3_key / storage_path.
+  const uploaded = !!source.s3_key || !!source.storage_path
+  const uploadState: StageState = uploaded ? "done" : "pending"
+
+  // 2. Rasterize — prefer the new column, fall back to page_images_stored.
+  const rasterizeRaw = source.rasterize_status ?? "pending"
+  let rasterizeState: StageState = "pending"
+  let rasterizeDetail: string | undefined
+  const total = source.page_count ?? source.pages_inserted ?? 0
+  const images = source.page_images_stored ?? 0
+  if (rasterizeRaw === "rasterized") rasterizeState = "done"
+  else if (rasterizeRaw === "partial") rasterizeState = "partial"
+  else if (rasterizeRaw === "failed") rasterizeState = "failed"
+  else if (total > 0 && images > 0 && images >= total) rasterizeState = "done"
+  else if (total > 0 && images > 0) rasterizeState = "running"
+  if (total > 0) rasterizeDetail = `${images}/${total}p`
+
+  // 3. Textract OCR — uses legacy ingestion_status.
+  let textractState: StageState = "pending"
+  let textractDetail: string | undefined
+  if (source.ingestion_status === "extracting") textractState = "running"
+  else if (source.ingestion_status === "indexed") {
+    textractState = source.verification_status === "partial" ? "partial" : "done"
+    if (source.pages_inserted != null) textractDetail = `${source.pages_inserted}p`
+  } else if (source.ingestion_status === "failed") textractState = "failed"
+
+  // 4. Embeddings — uses chunk_status.
+  let embeddingsState: StageState = "pending"
+  let embeddingsDetail: string | undefined
+  if (source.chunk_status === "chunking") embeddingsState = "running"
+  else if (source.chunk_status === "chunked") embeddingsState = "done"
+  else if (source.chunk_status === "failed") embeddingsState = "failed"
+  if (source.chunks_generated != null) embeddingsDetail = `${source.chunks_generated}ch`
+
+  // 5. Label — new label_status column; if missing but display_label is set,
+  //    assume legacy "generated".
+  const labelRaw = source.label_status ?? "pending"
+  let labelState: StageState = "pending"
+  if (labelRaw === "generated") labelState = "done"
+  else if (labelRaw === "failed") labelState = "failed"
+  else if (source.display_label && labelRaw === "pending") labelState = "done"
+
+  return [
+    { key: "upload",     label: "Upload",     icon: Upload,    state: uploadState,     detail: undefined,       why: uploadState === "failed" ? lastLogFor("upload", log) : null },
+    { key: "rasterize",  label: "Rasterize",  icon: Printer,   state: rasterizeState,  detail: rasterizeDetail, why: rasterizeState === "failed" || rasterizeState === "partial" ? lastLogFor("rasterize", log) : null },
+    { key: "textract",   label: "Textract",   icon: ScanLine,  state: textractState,   detail: textractDetail,  why: textractState === "failed" || textractState === "partial" ? lastLogFor("textract", log) : null },
+    { key: "embeddings", label: "Vectors",    icon: Layers,    state: embeddingsState, detail: embeddingsDetail,why: embeddingsState === "failed" ? lastLogFor("embeddings", log) : null },
+    { key: "label",      label: "Label",      icon: Tag,       state: labelState,      detail: undefined,       why: labelState === "failed" ? lastLogFor("label", log) : null },
+  ]
+}
+
+const STATE_STYLES: Record<StageState, { bg: string; fg: string; dot: string }> = {
+  pending: { bg: "bg-muted/40",      fg: "text-muted-foreground/70",       dot: "bg-muted-foreground/30" },
+  running: { bg: "bg-blue-500/10",   fg: "text-blue-600 dark:text-blue-400", dot: "bg-blue-500 animate-pulse" },
+  done:    { bg: "bg-green-500/10",  fg: "text-green-600 dark:text-green-400", dot: "bg-green-500" },
+  partial: { bg: "bg-amber-500/10",  fg: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500" },
+  failed:  { bg: "bg-destructive/10", fg: "text-destructive",              dot: "bg-destructive" },
+}
+
+// ─── Stage chip ──────────────────────────────────────────────────────────────
+
+function StageChip({ stage }: { stage: StageInfo }) {
+  const { bg, fg, dot } = STATE_STYLES[stage.state]
+  const Icon = stage.icon
   return (
-    <span className={`text-[10px] ${active ? "text-muted-foreground/50" : "text-muted-foreground/20"}`}>
-      →
+    <span
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${bg} ${fg}`}
+      title={
+        stage.why
+          ? `${stage.label} — ${stage.state}: ${stage.why}`
+          : `${stage.label} — ${stage.state}${stage.detail ? ` (${stage.detail})` : ""}`
+      }
+    >
+      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+      <Icon className="h-3 w-3 shrink-0" />
+      {stage.label}
+      {stage.detail && <span className="font-normal opacity-70">·{stage.detail}</span>}
     </span>
   )
 }
 
 function RenderModeBadge({ source }: { source: PipelineSource }) {
-  // Only show once OCR is done
   if (source.ingestion_status !== "indexed") return null
-
   const total = source.page_count ?? source.pages_inserted ?? 0
   const images = source.page_images_stored
   if (images == null || images === 0 || total === 0) return null
-
-  if (images === total) {
-    return (
-      <span className="flex items-center gap-1 text-[10px] font-medium text-amber-500 dark:text-amber-400" title="All pages use pre-rendered images (scanned document)">
-        <Image className="h-3 w-3 shrink-0" />
-        IMG {images}/{total}
-      </span>
-    )
-  }
-
   return (
-    <span className="flex items-center gap-1 text-[10px] font-medium text-sky-500 dark:text-sky-400" title={`${images} pages use images, ${total - images} use PDF.js`}>
+    <span
+      className="flex items-center gap-1 text-[10px] font-medium text-amber-500 dark:text-amber-400"
+      title={
+        images >= total
+          ? "All pages use pre-rendered images (scanned document)"
+          : `${images} pages use images, ${total - images} use PDF.js`
+      }
+    >
       <Image className="h-3 w-3 shrink-0" />
       IMG {images}/{total}
     </span>
   )
 }
 
-function StatusIndicator({ source }: { source: PipelineSource }) {
-  const {
-    ingestion_status, verification_status, pages_extracted, pages_inserted,
-    extraction_status, events_extracted,
-    chunk_status, chunks_generated,
-  } = source
+// ─── Source row ──────────────────────────────────────────────────────────────
 
-  // ── Stage 1: OCR ────────────────────────────────────────────────────────────
-  let ocrState: StageState = "pending"
-  let ocrDetail: string | undefined
-  if (ingestion_status === "extracting") { ocrState = "running" }
-  else if (ingestion_status === "indexed") {
-    ocrState = verification_status === "partial" ? "failed" : "done"
-    ocrDetail = pages_inserted != null ? ` ${pages_inserted}p` : undefined
-  } else if (ingestion_status === "failed") {
-    ocrState = "failed"
-  }
-
-  // ── Stage 2: Event extraction ────────────────────────────────────────────────
-  const exStatus = (extraction_status ?? "pending") as ExtractionStatus
-  let evState: StageState = "pending"
-  let evDetail: string | undefined
-  if (exStatus === "extracting") { evState = "running" }
-  else if (exStatus === "complete") {
-    evState = "done"
-    evDetail = events_extracted != null ? ` ${events_extracted}ev` : undefined
-  } else if (exStatus === "failed") { evState = "failed" }
-
-  // ── Stage 3: Vector embeddings ────────────────────────────────────────────────
-  const ckStatus = (chunk_status ?? "pending") as ChunkStatus
-  let vecState: StageState = "pending"
-  let vecDetail: string | undefined
-  if (ckStatus === "chunking") { vecState = "running" }
-  else if (ckStatus === "chunked") {
-    vecState = "done"
-    vecDetail = chunks_generated != null ? ` ${chunks_generated}ch` : undefined
-  } else if (ckStatus === "failed") { vecState = "failed" }
-
-  const ocrDoneOrBetter = ocrState === "done"
-
-  return (
-    <span className="flex items-center gap-1.5 flex-wrap">
-      <StageChip icon={FileText} label="OCR" detail={ocrDetail} state={ocrState} />
-      <PipelineSeparator active={ocrDoneOrBetter} />
-      <StageChip icon={Brain}    label="Events" detail={evDetail} state={evState} />
-      <PipelineSeparator active={evState === "done"} />
-      <StageChip icon={Layers}   label="Vectors" detail={vecDetail} state={vecState} />
-      <RenderModeBadge source={source} />
-      {verification_status === "partial" && (
-        <span className="flex items-center gap-1 text-[11px] text-yellow-600 dark:text-yellow-400 font-medium">
-          <AlertTriangle className="h-3 w-3" />
-          {pages_inserted ?? "?"}/{pages_extracted ?? "?"} pages inserted
-        </span>
-      )}
-    </span>
-  )
-}
-
-// ─── Single source row ────────────────────────────────────────────────────────
+type RerunStage = "events" | "embeddings" | "label" | "all"
 
 function SourceRow({
   source,
-  onRetry,
+  stages,
+  selected,
+  onToggleSelect,
+  onRerun,
   onDelete,
-  retrying,
+  onInspectChunks,
+  busy,
   deleting,
 }: {
   source: PipelineSource
-  onRetry: (id: string, ocrDone: boolean) => void
+  stages: StageInfo[]
+  selected: boolean
+  onToggleSelect: (id: string) => void
+  onRerun: (id: string, stage: RerunStage, ocrDone: boolean) => void
   onDelete: (id: string, filename: string) => void
-  retrying: boolean
+  onInspectChunks: (id: string, filename: string) => void
+  busy: boolean
   deleting: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
 
-  // Can always retry if OCR failed/partial; can re-run extract+embed if indexed
-  const canRetry =
-    source.ingestion_status === "failed" ||
-    source.ingestion_status === "pending" ||
-    source.verification_status === "partial" ||
-    source.ingestion_status === "indexed"  // covers re-running extract/embed
-
-  // Whether OCR is done — if so, retry only needs to re-run extract+embed
   const ocrAlreadyDone = source.ingestion_status === "indexed"
+  const failedStages = stages.filter((s) => s.state === "failed")
+  const partialStages = stages.filter((s) => s.state === "partial")
+  const primaryWhy = failedStages[0]?.why ?? partialStages[0]?.why ?? null
 
-  const duration = formatDuration(
-    source.ingestion_started_at,
-    source.ingestion_completed_at
-  )
+  // Pick the best default "Retry" target based on what's broken.
+  const defaultRerun: RerunStage =
+    failedStages.some((s) => s.key === "events") ? "events"
+    : failedStages.some((s) => s.key === "embeddings") ? "embeddings"
+    : failedStages.some((s) => s.key === "label") ? "label"
+    : "all"
+
+  const duration = formatDuration(source.ingestion_started_at, source.ingestion_completed_at)
   const ago = timeAgo(source.ingestion_completed_at ?? source.created_at)
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
       <div className="flex items-start gap-3 px-4 py-3">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(source.id)}
+          className="mt-1 h-3.5 w-3.5 rounded border-border accent-[var(--skyshare-gold)] shrink-0 cursor-pointer"
+          title="Select for bulk actions"
+        />
+
         <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
 
         <div className="flex-1 min-w-0">
@@ -224,49 +256,68 @@ function SourceRow({
             </span>
           </div>
 
-          <div className="mt-1 flex items-center gap-3 flex-wrap">
-            <StatusIndicator source={source} />
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            {stages.map((s) => <StageChip key={s.key} stage={s} />)}
+            <RenderModeBadge source={source} />
             {duration && (
-              <span className="text-xs text-muted-foreground">{duration}</span>
+              <span className="text-[10px] text-muted-foreground ml-1">{duration}</span>
             )}
             {ago && (
-              <span className="text-xs text-muted-foreground">{ago}</span>
+              <span className="text-[10px] text-muted-foreground">{ago}</span>
             )}
           </div>
 
-          {source.ingestion_error && (
-            <p className="mt-1.5 text-xs text-destructive font-mono bg-destructive/5 rounded px-2 py-1">
+          {primaryWhy && (
+            <p className="mt-1.5 text-[11px] text-destructive/90 font-mono bg-destructive/5 rounded px-2 py-1 truncate" title={primaryWhy}>
+              {primaryWhy}
+            </p>
+          )}
+
+          {source.ingestion_error && !primaryWhy && (
+            <p className="mt-1.5 text-xs text-destructive font-mono bg-destructive/5 rounded px-2 py-1 truncate" title={source.ingestion_error}>
               {source.ingestion_error}
             </p>
           )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {canRetry && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs gap-1.5"
-              onClick={() => onRetry(source.id, ocrAlreadyDone)}
-              disabled={
-                retrying || deleting ||
-                source.ingestion_status === "extracting" ||
-                source.extraction_status === "extracting" ||
-                source.chunk_status === "chunking"
-              }
-              title={ocrAlreadyDone ? "Re-run event extraction + vector embedding" : "Retry OCR ingestion"}
-            >
-              <RefreshCw className={`h-3 w-3 ${retrying ? "animate-spin" : ""}`} />
-              {ocrAlreadyDone ? "Re-extract" : source.verification_status === "partial" ? "Re-process" : "Retry"}
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => onRerun(source.id, defaultRerun, ocrAlreadyDone)}
+            disabled={busy || deleting || source.ingestion_status === "extracting"}
+            title={
+              defaultRerun === "events" ? "Re-run event extraction"
+              : defaultRerun === "embeddings" ? "Re-run vector embeddings"
+              : defaultRerun === "label" ? "Re-run display label generation"
+              : ocrAlreadyDone ? "Re-run extraction + embeddings + label" : "Retry OCR"
+            }
+          >
+            <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />
+            {defaultRerun === "events" ? "Re-events"
+              : defaultRerun === "embeddings" ? "Re-embed"
+              : defaultRerun === "label" ? "Re-label"
+              : ocrAlreadyDone ? "Re-run" : "Retry"}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => onInspectChunks(source.id, source.original_filename)}
+            disabled={busy || deleting || source.chunk_status !== "chunked"}
+            title="Inspect chunks"
+          >
+            <Search className="h-3.5 w-3.5" />
+          </Button>
 
           <Button
             size="sm"
             variant="ghost"
             className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
             onClick={() => onDelete(source.id, source.original_filename)}
-            disabled={retrying || deleting || source.ingestion_status === "extracting"}
+            disabled={busy || deleting || source.ingestion_status === "extracting"}
             title="Delete record"
           >
             {deleting
@@ -278,6 +329,7 @@ function SourceRow({
             <button
               className="text-muted-foreground hover:text-foreground p-1"
               onClick={() => setExpanded((v) => !v)}
+              title={expanded ? "Hide log" : "Show log"}
             >
               {expanded
                 ? <ChevronDown className="h-4 w-4" />
@@ -287,7 +339,6 @@ function SourceRow({
         </div>
       </div>
 
-      {/* Expandable step log */}
       {expanded && source.log.length > 0 && (
         <div className="border-t border-border bg-muted/20 px-4 py-3 space-y-1.5">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
@@ -306,14 +357,14 @@ function SourceRow({
                 className={
                   entry.step === "verified"
                     ? "text-green-600 dark:text-green-400"
-                    : entry.step === "failed" || entry.step === "partial"
+                    : entry.step.endsWith("_failed") || entry.step === "partial" || entry.step === "failed"
                     ? "text-destructive"
-                    : entry.step === "render_decision"
+                    : entry.step === "render_decision" || entry.step.endsWith("_throttled") || entry.step.endsWith("_partial")
                     ? "text-amber-500 dark:text-amber-400"
                     : "text-foreground"
                 }
               >
-                {entry.message}
+                {entry.step}: {entry.message}
               </span>
             </div>
           ))}
@@ -323,38 +374,52 @@ function SourceRow({
   )
 }
 
-// ─── Batch group ──────────────────────────────────────────────────────────────
+// ─── Batch group ─────────────────────────────────────────────────────────────
 
 function BatchGroup({
   label,
   sources,
-  onRetry,
+  stagesById,
+  selectedIds,
+  onToggleSelect,
+  onRerun,
   onDelete,
-  retryingId,
+  onInspectChunks,
+  busyId,
   deletingId,
 }: {
   label: string
   sources: PipelineSource[]
-  onRetry: (id: string, ocrDone: boolean) => void
+  stagesById: Map<string, StageInfo[]>
+  selectedIds: Set<string>
+  onToggleSelect: (id: string) => void
+  onRerun: (id: string, stage: RerunStage, ocrDone: boolean) => void
   onDelete: (id: string, filename: string) => void
-  retryingId: string | null
+  onInspectChunks: (id: string, filename: string) => void
+  busyId: string | null
   deletingId: string | null
 }) {
-  const allDone = (s: PipelineSource) =>
-    s.ingestion_status === "indexed" &&
-    s.extraction_status === "complete" &&
-    s.chunk_status === "chunked"
+  const fullyGreen = (s: PipelineSource) => {
+    const stages = stagesById.get(s.id) ?? []
+    return stages.length > 0 && stages.every((st) => st.state === "done")
+  }
+  const anyFailed = (s: PipelineSource) => {
+    const stages = stagesById.get(s.id) ?? []
+    return stages.some((st) => st.state === "failed")
+  }
+  const anyPartial = (s: PipelineSource) => {
+    const stages = stagesById.get(s.id) ?? []
+    return stages.some((st) => st.state === "partial")
+  }
+  const anyRunning = (s: PipelineSource) => {
+    const stages = stagesById.get(s.id) ?? []
+    return stages.some((st) => st.state === "running")
+  }
 
-  const verified  = sources.filter((s) => allDone(s) && s.verification_status === "verified").length
-  const failed    = sources.filter(
-    (s) => s.ingestion_status === "failed" || s.extraction_status === "failed" || s.chunk_status === "failed"
-  ).length
-  const partial   = sources.filter((s) => s.verification_status === "partial").length
-  const running   = sources.filter(
-    (s) =>
-      s.ingestion_status === "pending" || s.ingestion_status === "extracting" ||
-      s.extraction_status === "extracting" || s.chunk_status === "chunking"
-  ).length
+  const green   = sources.filter(fullyGreen).length
+  const failed  = sources.filter(anyFailed).length
+  const partial = sources.filter((s) => !anyFailed(s) && anyPartial(s)).length
+  const running = sources.filter(anyRunning).length
 
   return (
     <div className="space-y-2">
@@ -362,24 +427,10 @@ function BatchGroup({
         <h3 className="text-sm font-semibold text-foreground">{label}</h3>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>{sources.length} files</span>
-          {verified > 0 && (
-            <span className="text-green-600 dark:text-green-400">
-              · {verified} verified
-            </span>
-          )}
-          {running > 0 && (
-            <span className="text-blue-600 dark:text-blue-400">
-              · {running} processing
-            </span>
-          )}
-          {partial > 0 && (
-            <span className="text-yellow-600 dark:text-yellow-400">
-              · {partial} partial
-            </span>
-          )}
-          {failed > 0 && (
-            <span className="text-destructive">· {failed} failed</span>
-          )}
+          {green > 0   && <span className="text-green-600 dark:text-green-400">· {green} green</span>}
+          {running > 0 && <span className="text-blue-600 dark:text-blue-400">· {running} processing</span>}
+          {partial > 0 && <span className="text-amber-600 dark:text-amber-400">· {partial} partial</span>}
+          {failed > 0  && <span className="text-destructive">· {failed} failed</span>}
         </div>
       </div>
       <div className="space-y-2">
@@ -387,9 +438,13 @@ function BatchGroup({
           <SourceRow
             key={s.id}
             source={s}
-            onRetry={onRetry}
+            stages={stagesById.get(s.id) ?? []}
+            selected={selectedIds.has(s.id)}
+            onToggleSelect={onToggleSelect}
+            onRerun={onRerun}
             onDelete={onDelete}
-            retrying={retryingId === s.id}
+            onInspectChunks={onInspectChunks}
+            busy={busyId === s.id}
             deleting={deletingId === s.id}
           />
         ))}
@@ -398,54 +453,126 @@ function BatchGroup({
   )
 }
 
-// ─── Main view ────────────────────────────────────────────────────────────────
+// ─── Main view ───────────────────────────────────────────────────────────────
 
 interface Props {
   aircraftId: string | null
 }
 
 export function RecordsPipelineView({ aircraftId }: Props) {
-  const { sources, loading, reload } = useRecordsPipeline(aircraftId)
+  const { sources, registrationByAircraftId, loading, reload } = useRecordsPipeline(aircraftId)
+  const [collapsedTails, setCollapsedTails] = useState<Set<string>>(new Set())
   const { toast } = useToast()
-  const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterMode>("all")
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [inspectingId, setInspectingId] = useState<string | null>(null)
+  const [inspectingName, setInspectingName] = useState<string | null>(null)
 
-  async function handleRetry(recordSourceId: string, ocrAlreadyDone: boolean) {
-    setRetryingId(recordSourceId)
+  // Compute stages once per source; memoized so StageChips don't thrash.
+  const stagesById = useMemo(() => {
+    const map = new Map<string, StageInfo[]>()
+    for (const s of sources) map.set(s.id, computeStages(s))
+    return map
+  }, [sources])
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+  }
+
+  async function callFn(endpoint: string, body: Record<string, unknown>): Promise<{ ok: boolean; msg?: string }> {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return { ok: false, msg: "Not authenticated" }
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error("Not authenticated")
-
-      // If OCR is already done, skip re-OCR and just re-run extract + embed
-      const endpoint = ocrAlreadyDone
-        ? "/.netlify/functions/records-vault-reextract"
-        : "/.netlify/functions/records-vault-retry"
-
-      const resp = await fetch(endpoint, {
+      const resp = await fetch(`/.netlify/functions/${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ recordSourceId }),
+        body: JSON.stringify(body),
       })
-      const json = await resp.json()
-      if (!resp.ok) throw new Error(json.error ?? "Retry failed")
+      const json = await resp.json().catch(() => ({}))
+      if (!resp.ok) return { ok: false, msg: json.error ?? `HTTP ${resp.status}` }
+      return { ok: true, msg: json.message }
+    } catch (err) {
+      return { ok: false, msg: err instanceof Error ? err.message : "Unknown error" }
+    }
+  }
 
+  async function handleRerun(recordSourceId: string, stage: RerunStage, ocrAlreadyDone: boolean) {
+    setBusyId(recordSourceId)
+    try {
+      let endpoint: string
+      switch (stage) {
+        case "events":     endpoint = "records-vault-reextract-events"; break
+        case "embeddings": endpoint = "records-vault-reembed";          break
+        case "label":      endpoint = "records-vault-relabel";          break
+        case "all":
+          endpoint = ocrAlreadyDone
+            ? "records-vault-retry-from-textract"
+            : "records-vault-retry"
+          break
+      }
+      const res = await callFn(endpoint, { recordSourceId })
+      if (!res.ok) throw new Error(res.msg)
       toast({
-        title: ocrAlreadyDone ? "Re-extraction triggered" : "Retry triggered",
-        description: json.message ?? `Processing ${json.queued ?? 1} document(s)`,
+        title: `Re-run triggered (${stage})`,
+        description: res.msg ?? "Pipeline stage re-queued.",
       })
     } catch (err) {
       toast({
-        title: "Retry failed",
+        title: "Re-run failed",
         description: err instanceof Error ? err.message : "Unknown error",
         variant: "destructive",
       })
     } finally {
-      setRetryingId(null)
+      setBusyId(null)
     }
+  }
+
+  async function handleBulkRerun(stage: RerunStage) {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    setBulkBusy(true)
+    try {
+      let endpoint: string
+      switch (stage) {
+        case "events":     endpoint = "records-vault-reextract-events"; break
+        case "embeddings": endpoint = "records-vault-reembed";          break
+        case "label":      endpoint = "records-vault-relabel";          break
+        case "all":        endpoint = "records-vault-retry-from-textract"; break
+      }
+      const results = await Promise.all(ids.map((id) => callFn(endpoint, { recordSourceId: id })))
+      const okCount = results.filter((r) => r.ok).length
+      const failCount = results.length - okCount
+      toast({
+        title: `Bulk ${stage} re-run`,
+        description: failCount === 0
+          ? `Triggered for ${okCount} source(s).`
+          : `${okCount} succeeded, ${failCount} failed.`,
+        variant: failCount > 0 ? "destructive" : undefined,
+      })
+      if (okCount > 0) clearSelection()
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  function handleInspectChunks(recordSourceId: string, filename: string) {
+    setInspectingId(recordSourceId)
+    setInspectingName(filename)
   }
 
   async function handleDelete(recordSourceId: string, filename: string) {
@@ -458,6 +585,11 @@ export function RecordsPipelineView({ aircraftId }: Props) {
         .eq("id", recordSourceId)
       if (error) throw error
       toast({ title: "Deleted", description: `${filename} removed.` })
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(recordSourceId)
+        return next
+      })
       reload()
     } catch (err) {
       toast({
@@ -470,51 +602,71 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     }
   }
 
+  // ── Filters / grouping / summary ────────────────────────────────────────────
+
   function isProcessing(s: PipelineSource) {
-    return (
-      s.ingestion_status === "pending" || s.ingestion_status === "extracting" ||
-      s.extraction_status === "extracting" || s.chunk_status === "chunking"
-    )
+    const stages = stagesById.get(s.id) ?? []
+    return stages.some((st) => st.state === "running")
   }
-
   function needsAttention(s: PipelineSource) {
-    return (
-      s.ingestion_status === "failed" || s.verification_status === "partial" ||
-      s.extraction_status === "failed" || s.chunk_status === "failed"
-    )
+    const stages = stagesById.get(s.id) ?? []
+    return stages.some((st) => st.state === "failed" || st.state === "partial")
+  }
+  function isGreen(s: PipelineSource) {
+    const stages = stagesById.get(s.id) ?? []
+    return stages.length > 0 && stages.every((st) => st.state === "done")
   }
 
-  function isFullyComplete(s: PipelineSource) {
-    return (
-      s.ingestion_status === "indexed" &&
-      s.extraction_status === "complete" &&
-      s.chunk_status === "chunked"
-    )
-  }
-
-  // Filter
   const filtered = sources.filter((s) => {
-    if (filter === "verified")        return isFullyComplete(s) && s.verification_status === "verified"
+    if (filter === "verified")        return isGreen(s)
     if (filter === "processing")      return isProcessing(s)
     if (filter === "needs_attention") return needsAttention(s)
     return true
   })
 
-  // Group by import_batch (nulls go into "Individual uploads")
-  const groups = new Map<string, PipelineSource[]>()
-  for (const s of filtered) {
-    const key = s.import_batch ?? "__individual__"
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)!.push(s)
+  // Batch groups (individual uploads / named import batches) — same as before.
+  function buildBatchGroups(subset: PipelineSource[]) {
+    const groups = new Map<string, PipelineSource[]>()
+    for (const s of subset) {
+      const key = s.import_batch ?? "__individual__"
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(s)
+    }
+    return groups
   }
 
-  const needsAttentionCount = sources.filter(needsAttention).length
+  // Tail groups — group the filtered sources by current registration, so the
+  // operator can collapse per aircraft. "Unassigned" buckets anything without
+  // a known registration. Sorted alphabetically for stable ordering.
+  const tailGroups = new Map<string, PipelineSource[]>()
+  for (const s of filtered) {
+    const tail = (s.aircraft_id && registrationByAircraftId.get(s.aircraft_id)) || "Unassigned"
+    if (!tailGroups.has(tail)) tailGroups.set(tail, [])
+    tailGroups.get(tail)!.push(s)
+  }
+  const sortedTails = Array.from(tailGroups.keys()).sort((a, b) => a.localeCompare(b))
+  const showTailGrouping = sortedTails.length > 1
+
+  function toggleTail(tail: string) {
+    setCollapsedTails((prev) => {
+      const next = new Set(prev)
+      if (next.has(tail)) next.delete(tail)
+      else next.add(tail)
+      return next
+    })
+  }
+
+  const greenCount    = sources.filter(isGreen).length
   const processingCount = sources.filter(isProcessing).length
+  const needsAttentionCount = sources.filter(needsAttention).length
+  const totalChunks = sources.reduce((n, s) => n + (s.chunks_generated ?? 0), 0)
+  const totalPages  = sources.reduce((n, s) => n + (s.page_count ?? 0), 0)
+  const avgChunksPerPage = totalPages > 0 ? (totalChunks / totalPages).toFixed(1) : "–"
 
   const FILTERS: Array<{ key: FilterMode; label: string; count?: number }> = [
     { key: "all",              label: "All",             count: sources.length },
     { key: "processing",       label: "Processing",      count: processingCount || undefined },
-    { key: "verified",         label: "Verified" },
+    { key: "verified",         label: "Green",           count: greenCount || undefined },
     { key: "needs_attention",  label: "Needs Attention", count: needsAttentionCount || undefined },
   ]
 
@@ -538,9 +690,20 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     )
   }
 
+  const selectedCount = selectedIds.size
+
   return (
     <div className="space-y-5">
-      {/* Filter bar */}
+      {/* Coverage summary */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <SummaryTile label="Sources" value={sources.length} />
+        <SummaryTile label="Green" value={greenCount} accent="green" />
+        <SummaryTile label="Processing" value={processingCount} accent="blue" />
+        <SummaryTile label="Needs Attention" value={needsAttentionCount} accent={needsAttentionCount > 0 ? "red" : undefined} />
+        <SummaryTile label="Chunks" value={totalChunks} sub={`${avgChunksPerPage}/pg`} />
+      </div>
+
+      {/* Filter bar + bulk actions */}
       <div className="flex items-center gap-2 flex-wrap">
         {FILTERS.map(({ key, label, count }) => (
           <button
@@ -578,26 +741,173 @@ export function RecordsPipelineView({ aircraftId }: Props) {
         </button>
       </div>
 
+      {/* Sticky bulk bar — only when selection is non-empty */}
+      {selectedCount > 0 && (
+        <div className="sticky top-0 z-10 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 shadow-sm flex-wrap">
+          <span className="text-xs font-medium text-foreground">
+            {selectedCount} selected
+          </span>
+          <div className="h-4 w-px bg-border" />
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                  disabled={bulkBusy}
+                  onClick={() => handleBulkRerun("events")}>
+            <Brain className="h-3 w-3" /> Re-extract events
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                  disabled={bulkBusy}
+                  onClick={() => handleBulkRerun("embeddings")}>
+            <Layers className="h-3 w-3" /> Re-embed
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                  disabled={bulkBusy}
+                  onClick={() => handleBulkRerun("label")}>
+            <Tag className="h-3 w-3" /> Re-label
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                  disabled={bulkBusy}
+                  onClick={() => handleBulkRerun("all")}>
+            <RefreshCw className={`h-3 w-3 ${bulkBusy ? "animate-spin" : ""}`} /> Retry from Textract
+          </Button>
+          <button
+            onClick={clearSelection}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {/* Groups */}
       {filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-10">
           No records match this filter.
         </p>
+      ) : showTailGrouping ? (
+        <div className="space-y-4">
+          {sortedTails.map((tail) => {
+            const tailSources = tailGroups.get(tail) ?? []
+            const collapsed = collapsedTails.has(tail)
+            const greenN = tailSources.filter(isGreen).length
+            const needsN = tailSources.filter(needsAttention).length
+            const chunksN = tailSources.reduce((n, s) => n + (s.chunks_generated ?? 0), 0)
+            const batches = buildBatchGroups(tailSources)
+            return (
+              <div key={tail} className="rounded-md border border-border bg-card/30">
+                <button
+                  onClick={() => toggleTail(tail)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+                >
+                  {collapsed ? (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                  )}
+                  <span
+                    className="text-xs font-semibold tracking-wider uppercase text-foreground"
+                    style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.15em" }}
+                  >
+                    {tail}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {tailSources.length} source{tailSources.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground">
+                    {greenN > 0 && (
+                      <span className="text-green-600 dark:text-green-400">✓ {greenN}</span>
+                    )}
+                    {needsN > 0 && (
+                      <span className="text-destructive">! {needsN}</span>
+                    )}
+                    <span>{chunksN.toLocaleString()} ch</span>
+                  </span>
+                </button>
+                {!collapsed && (
+                  <div className="px-3 pb-3 pt-1 space-y-4">
+                    {Array.from(batches.entries()).map(([batchKey, batchSources]) => (
+                      <BatchGroup
+                        key={batchKey}
+                        label={batchKey === "__individual__" ? "Individual uploads" : batchKey}
+                        sources={batchSources}
+                        stagesById={stagesById}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onRerun={handleRerun}
+                        onDelete={handleDelete}
+                        onInspectChunks={handleInspectChunks}
+                        busyId={busyId}
+                        deletingId={deletingId}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       ) : (
         <div className="space-y-6">
-          {Array.from(groups.entries()).map(([batchKey, batchSources]) => (
+          {Array.from(buildBatchGroups(filtered).entries()).map(([batchKey, batchSources]) => (
             <BatchGroup
               key={batchKey}
               label={batchKey === "__individual__" ? "Individual uploads" : batchKey}
               sources={batchSources}
-              onRetry={handleRetry}
+              stagesById={stagesById}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onRerun={handleRerun}
               onDelete={handleDelete}
-              retryingId={retryingId}
+              onInspectChunks={handleInspectChunks}
+              busyId={busyId}
               deletingId={deletingId}
             />
           ))}
         </div>
       )}
+
+      <ChunkInspectorDrawer
+        open={inspectingId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setInspectingId(null)
+            setInspectingName(null)
+          }
+        }}
+        recordSourceId={inspectingId}
+        filename={inspectingName}
+      />
+    </div>
+  )
+}
+
+function SummaryTile({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string
+  value: number
+  sub?: string
+  accent?: "green" | "blue" | "red"
+}) {
+  const accentColor =
+    accent === "green" ? "text-green-600 dark:text-green-400"
+    : accent === "blue" ? "text-blue-600 dark:text-blue-400"
+    : accent === "red"  ? "text-destructive"
+    : "text-foreground"
+
+  return (
+    <div className="rounded-md border border-border bg-card px-3 py-2">
+      <p
+        className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground"
+        style={{ fontFamily: "var(--font-heading)" }}
+      >
+        {label}
+      </p>
+      <p className={`mt-1 text-lg font-semibold ${accentColor}`}>
+        {value.toLocaleString()}
+        {sub && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{sub}</span>}
+      </p>
     </div>
   )
 }

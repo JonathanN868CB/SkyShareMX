@@ -2,6 +2,11 @@
 //
 // Returns a short-lived signed URL for viewing a PDF page.
 //
+// Supabase Storage is the only retrieval origin. S3 is used exclusively for
+// ingest (records-vault-s3-ingest + records-vault-rasterize-background); once
+// the rasterizer has mirrored the PDF to Supabase, every retrieval path reads
+// from storage_path. Do not add S3 fallbacks here.
+//
 // If `pageNumber` is provided:
 //   - Checks for a cached single-page PDF at page-cache/{id}/{page}.pdf
 //   - On cache miss: downloads full PDF, extracts the page with pdf-lib,
@@ -15,8 +20,6 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl as getS3SignedUrl } from "@aws-sdk/s3-request-presigner";
 
 type HandlerEvent = {
   httpMethod: string;
@@ -118,7 +121,7 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
 
   const { data: source, error: sourceErr } = await userClient
     .from("rv_record_sources")
-    .select("id, storage_path, s3_key")
+    .select("id, storage_path")
     .eq("id", recordSourceId)
     .single();
 
@@ -126,34 +129,9 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     return jsonResponse(404, { error: "Record source not found or access denied" });
   }
 
-  // ── S3-ingested document: generate presigned URL from S3 ─────────────────────
-  // Documents ingested via the Textract pipeline have no Supabase storage_path —
-  // they live in S3 only. Return a presigned GET URL for the full PDF and let
-  // PDF.js use HTTP range requests to fetch only the pages it needs.
-  if (!source.storage_path && source.s3_key) {
-    const awsRegion = process.env.TEXTRACT_REGION ?? "us-east-2";
-    const awsKeyId  = process.env.TEXTRACT_KEY_ID;
-    const awsSecret = process.env.TEXTRACT_SECRET_KEY;
-    const s3Bucket  = process.env.TEXTRACT_S3_BUCKET;
-
-    if (!awsKeyId || !awsSecret || !s3Bucket) {
-      return jsonResponse(500, { error: "S3 credentials not configured" });
-    }
-
-    const s3 = new S3Client({
-      region: awsRegion,
-      credentials: { accessKeyId: awsKeyId, secretAccessKey: awsSecret },
-    });
-
-    const command = new GetObjectCommand({ Bucket: s3Bucket, Key: source.s3_key });
-    const signedUrl = await getS3SignedUrl(s3, command, { expiresIn: SIGNED_URL_EXPIRY_SECONDS });
-
-    // S3 docs: return full PDF URL. The page number, if provided, is used by the
-    // caller (PDF.js) to navigate within the document — no server-side extraction needed.
-    return jsonResponse(200, { signedUrl, source: "s3", isFullPdf: true });
-  }
-
-  // ── No Supabase storage_path and no s3_key — unrecoverable ───────────────────
+  // Supabase is the only retrieval origin. S3-ingested documents must have
+  // their storage_path set by the rasterizer (records-vault-rasterize-background).
+  // If it's missing, rasterization hasn't finished mirroring the PDF yet.
   if (!source.storage_path) {
     return jsonResponse(404, { error: "Document file not available" });
   }

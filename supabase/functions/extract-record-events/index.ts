@@ -30,6 +30,17 @@
  *   - records-vault-textract-complete Netlify function (after Textract pipeline)
  *   - records-vault-register Netlify function (after Mistral OCR pipeline)
  *   - records-vault-reextract Netlify function (manual reprocessing)
+ *
+ * Haiku guardrails note:
+ *   The shared netlify/functions/_haiku-task.ts helper enforces task tagging,
+ *   timeouts, and per-call logging for every Node-side Haiku call. This file
+ *   runs on Deno and imports Supabase via esm.sh, so it can't share that
+ *   module. The same guardrails are honored inline here instead:
+ *     - Named task: PATH C calls always log "extract-events" as the step tag
+ *     - Bounded tokens: max_tokens is hard-set per call (see callClaude)
+ *     - Structured JSON: responses are parsed with a fence-strip + regex match
+ *     - Timeout: requests use AbortController with a fixed ceiling
+ *   When touching Haiku usage here, keep these four invariants intact.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -42,6 +53,25 @@ const ANTHROPIC_URL   = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL    = "claude-haiku-4-5-20251001";
 const PAGE_BATCH_SIZE = 8;    // pages per Claude call
 const MAX_CHARS_PAGE  = 3000; // truncate per page for token control
+const HAIKU_TIMEOUT_MS = 90_000; // hard ceiling per Haiku call — matches _haiku-task.ts invariant
+
+// Deno-side equivalent of the withTimeout wrapper in netlify/functions/_haiku-task.ts.
+// Keeps this edge function's Haiku guardrails aligned with the Node helper even
+// though the two runtimes can't share code.
+function haikuFetch(body: unknown): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HAIKU_TIMEOUT_MS);
+  return fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "x-api-key":         ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type":      "application/json",
+    },
+    body:   JSON.stringify(body),
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
+}
 
 // ─── Data types from rv_pages ─────────────────────────────────────────────────
 
@@ -239,18 +269,10 @@ async function generateFallbackDescriptions(formsArray: FormField[][]): Promise<
 ${summarized.map((fields, i) => `Set ${i + 1}:\n${JSON.stringify(fields)}`).join("\n\n")}`;
 
   try {
-    const resp = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 512,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const resp = await haikuFetch({
+      model:      CLAUDE_MODEL,
+      max_tokens: 512,
+      messages:   [{ role: "user", content: prompt }],
     });
 
     if (!resp.ok) throw new Error(`Anthropic error ${resp.status}`);
@@ -344,7 +366,14 @@ function extractFromForms(
   const eventDate       = sanitizeDate(eventDateRaw);
   const aircraftTotalTime = sanitizeHours(totalTimeRaw);
   const aircraftCycles  = sanitizeCycles(cyclesRaw);
-  const eventType       = inferEventTypeFromForm(raw as Record<string, string>, adSbNumber, woNumber);
+
+  // Flatten raw (Record<string, string[]>) to Record<string, string> for
+  // inferEventTypeFromForm. Previously cast via `as`, which lied about the
+  // shape and crashed with `.toLowerCase is not a function` on every large
+  // file that hit this path.
+  const flatFields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) flatFields[k] = v.join(" ");
+  const eventType       = inferEventTypeFromForm(flatFields, adSbNumber, woNumber);
 
   // Confidence: average of value confidences for the fields we captured
   const usedFields = forms.filter((f) => matchFormField(f.key) && f.value.trim() && f.valueConfidence >= 40);
@@ -585,19 +614,11 @@ Rules:
 - If a page contains no events (blank, header, image-only with no data), return no events for it.
 - Return empty events array if no events found in batch.`;
 
-  const resp = await fetch(ANTHROPIC_URL, {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: "user", content: `Document: ${filename}\n\nOCR text (${narrativePages.length} pages):\n\n${pageText}` }],
-    }),
+  const resp = await haikuFetch({
+    model:      CLAUDE_MODEL,
+    max_tokens: 4096,
+    system:     systemPrompt,
+    messages:   [{ role: "user", content: `Document: ${filename}\n\nOCR text (${narrativePages.length} pages):\n\n${pageText}` }],
   });
 
   if (!resp.ok) {
@@ -699,7 +720,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   await supabase
     .from("rv_record_sources")
-    .update({ extraction_status: "extracting" })
+    .update({ extraction_status: "extracting", events_status: "pending" })
     .eq("id", record_source_id);
 
   try {
@@ -809,6 +830,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const narrativeCount = allRows.filter((r) => r.extraction_model === CLAUDE_MODEL).length;
 
     // ── 9. Update source record ───────────────────────────────────────────
+    // events_status: "extracted" if any events came through, "partial" if the
+    // pipeline ran clean but found zero events (often a cover page or image-only
+    // doc — still a valid outcome, but flag it so operators know to check).
+    const eventsStatus = allRows.length > 0 ? "extracted" : "partial";
     await supabase
       .from("rv_record_sources")
       .update({
@@ -816,6 +841,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         extraction_completed_at: new Date().toISOString(),
         extraction_error:        null,
         events_extracted:        allRows.length,
+        events_status:           eventsStatus,
       })
       .eq("id", record_source_id);
 
@@ -852,6 +878,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         extraction_status:       "failed",
         extraction_error:        message,
         extraction_completed_at: new Date().toISOString(),
+        events_status:           "failed",
       })
       .eq("id", record_source_id);
 

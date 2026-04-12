@@ -1,5 +1,10 @@
 // records-vault-s3-ingest — NO AUTH (SNS webhook)
 //
+// This file is one of only TWO places in the codebase that may import
+// @aws-sdk/client-s3. S3 is an ingest-staging area only — once the rasterizer
+// mirrors the PDF to Supabase Storage, every other retrieval path reads
+// exclusively from Supabase. Do not import S3 anywhere else.
+//
 // Receives S3 event notifications forwarded through SNS when a PDF is uploaded
 // to the records-vault S3 bucket. For each uploaded object:
 //
