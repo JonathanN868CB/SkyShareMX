@@ -93,6 +93,7 @@ export default function AiAssistant() {
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingStage, setLoadingStage] = useState(0)
   const [sessionTokens, setSessionTokens] = useState({ input: 0, output: 0 })
   const [mode, setMode] = useState<"schrute" | "corporate" | "troubleshooting">("schrute")
   const [contextSources, setContextSources] = useState<Set<ContextSource>>(new Set(["discrepancies"]))
@@ -102,7 +103,29 @@ export default function AiAssistant() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, loading])
+  }, [messages, loading, loadingStage])
+
+  const LOADING_STAGES = [
+    { label: "Classifying intent", quote: "Determining if this is worth my time..." },
+    { label: "Embedding query", quote: "Converting your words into something a machine can respect." },
+    { label: "Searching the beet field", quote: "Digging through 430 chunks of maintenance history. Manually. With my hands." },
+    { label: "Cross-referencing records", quote: "Every logbook entry is a witness. I am interrogating them all." },
+    { label: "Reasoning", quote: "Assembling the facts. Unlike some people, I do not guess." },
+    { label: "Formulating response", quote: "I have the answer. I am deciding how much of it you deserve." },
+  ]
+
+  useEffect(() => {
+    if (!loading) { setLoadingStage(0); return }
+    setLoadingStage(0)
+    const timers = [
+      setTimeout(() => setLoadingStage(1), 1200),
+      setTimeout(() => setLoadingStage(2), 3000),
+      setTimeout(() => setLoadingStage(3), 6000),
+      setTimeout(() => setLoadingStage(4), 10000),
+      setTimeout(() => setLoadingStage(5), 15000),
+    ]
+    return () => timers.forEach(clearTimeout)
+  }, [loading])
 
   if (showSchool && isManager) {
     return <DwightSchoolOfThought onBack={() => setShowSchool(false)} isSuperAdmin={isSuperAdmin} />
@@ -700,13 +723,40 @@ export default function AiAssistant() {
                   DW1GHT
                 </span>
                 <div
-                  className="rounded-xl px-4 py-2.5 bg-muted border border-border"
-                  style={{ borderBottomLeftRadius: "4px" }}
+                  className="rounded-xl px-4 py-3 bg-muted border border-border"
+                  style={{ borderBottomLeftRadius: "4px", minWidth: "280px" }}
                 >
-                  <div className="flex gap-1.5 items-center h-5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  <div className="flex flex-col gap-2">
+                    {/* Stage indicators */}
+                    <div className="flex gap-1 items-center">
+                      {LOADING_STAGES.map((_, i) => (
+                        <div
+                          key={i}
+                          className="h-1 rounded-full transition-all duration-500"
+                          style={{
+                            width: i <= loadingStage ? "20px" : "8px",
+                            background: i <= loadingStage
+                              ? "var(--skyshare-gold)"
+                              : "rgba(255,255,255,0.1)",
+                            opacity: i === loadingStage ? 1 : i < loadingStage ? 0.5 : 0.2,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    {/* Current stage label */}
+                    <span
+                      className="text-[10px] font-bold tracking-widest uppercase"
+                      style={{ fontFamily: "var(--font-heading)", color: "var(--skyshare-gold)" }}
+                    >
+                      {LOADING_STAGES[loadingStage]?.label}
+                    </span>
+                    {/* Dwight quote */}
+                    <span
+                      className="text-[12px] text-muted-foreground italic"
+                      style={{ fontFamily: "'DM Sans', system-ui, sans-serif", lineHeight: "1.4" }}
+                    >
+                      "{LOADING_STAGES[loadingStage]?.quote}"
+                    </span>
                   </div>
                 </div>
               </div>
