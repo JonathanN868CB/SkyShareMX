@@ -60,8 +60,8 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", user.id)
-    .single();
+    .eq("user_id", user.id)
+    .maybeSingle();
 
   if (!profile || !["Admin", "Super Admin"].includes(profile.role)) {
     return json(403, { error: "Admin access required" });
