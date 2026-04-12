@@ -147,7 +147,7 @@ function Tab({ label, isActive, onClick, onClose }: TabProps) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-0.5 my-auto transition-all group relative flex-shrink-0 rounded-full"
+      className="flex items-center gap-1.5 px-2 py-0.5 my-auto transition-all group relative flex-shrink-0 rounded-full"
       style={{
         fontFamily: "var(--font-heading)",
         fontSize: "11px",
@@ -182,10 +182,9 @@ function Tab({ label, isActive, onClick, onClose }: TabProps) {
         }
       }}
     >
-      <span>{label}</span>
       <span
         onClick={onClose}
-        className="flex items-center justify-center transition-colors"
+        className="flex items-center justify-center transition-colors flex-shrink-0"
         style={{
           width: "14px",
           height: "14px",
@@ -195,8 +194,9 @@ function Tab({ label, isActive, onClick, onClose }: TabProps) {
         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.8)" }}
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = isActive ? "rgba(216,180,254,0.35)" : "rgba(255,255,255,0.25)" }}
       >
-        <X className="w-2.5 h-2.5" />
+        <X className="w-5 h-5" strokeWidth={3} />
       </span>
+      <span>{label}</span>
     </button>
   )
 }

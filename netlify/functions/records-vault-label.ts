@@ -85,6 +85,8 @@ const LABEL_SYSTEM_PROMPT = `You label aviation maintenance logbook PDFs for a r
 
 IMPORTANT: Aviation logbooks stack newest entries on top. Page 1 is the MOST RECENT entry (date_end). The last pages contain the OLDEST entries (date_start). You are seeing both ends of the document specifically so you can determine the full date range.
 
+IMPORTANT: Aviation logbooks often have supporting documents appended at the back — packing slips, shipping invoices, parts orders, warranty certificates, work packages, borescope reports, or other maintenance paperwork. These are NOT logbook entries. When looking for date_start, ignore these appended documents entirely and look only for actual logbook maintenance entries (lines listing work performed, flight time, or inspection sign-offs). If the last pages you can see are all supporting documents with no actual logbook entries visible, return null for date_start rather than guessing from invoice or shipment dates.
+
 Return ONE JSON object with exactly these keys:
 
 {
@@ -136,7 +138,7 @@ async function generateLabel(args: {
     recordSourceId: args.recordSourceId,
     system:         LABEL_SYSTEM_PROMPT,
     user:           userContent,
-    maxTokens:      400,
+    maxTokens:      500,
     timeoutMs:      30_000,
   });
 
@@ -232,14 +234,17 @@ export const handler = async (event: HandlerEvent): Promise<HandlerResponse> => 
     .select("page_number, raw_ocr_text, forms_extracted")
     .eq("record_source_id", recordSourceId)
     .order("page_number", { ascending: true })
-    .limit(3);
+    .limit(5);
 
+  // Read more pages from the tail — logbooks frequently have 5-15 pages of
+  // appended supporting documents (packing slips, work packages, invoices)
+  // before the oldest actual logbook entry appears.
   const { data: lastPages } = await adminClient
     .from("rv_pages")
     .select("page_number, raw_ocr_text, forms_extracted")
     .eq("record_source_id", recordSourceId)
     .order("page_number", { ascending: false })
-    .limit(3);
+    .limit(15);
 
   // Merge and deduplicate (small docs where first/last overlap)
   const seenPages = new Set<number>();

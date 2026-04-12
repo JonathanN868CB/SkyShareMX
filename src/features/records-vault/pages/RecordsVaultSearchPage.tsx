@@ -1,10 +1,21 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import {
   Search, X, ArrowDownUp, Clock,
   AlertCircle, Loader2, FolderOpen, Globe, Plane, Pencil,
+  ChevronDown, ChevronRight,
 } from "lucide-react"
+import {
+  DndContext, closestCenter, PointerSensor,
+  useSensor, useSensors, type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext, rectSortingStrategy,
+  useSortable, arrayMove,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { cn } from "@/shared/lib/utils"
 import { Input } from "@/shared/ui/input"
+import { supabase } from "@/lib/supabase"
 import { useRecordsVaultCtx } from "../RecordsVaultApp"
 import { useRecordSources } from "../hooks/useRecordSources"
 import { useRecordsSearch } from "../hooks/useRecordsSearch"
@@ -13,6 +24,7 @@ import { RecordsVaultViewer } from "../components/RecordsVaultViewer"
 import { LabelEditModal } from "../components/LabelEditModal"
 import type { SourceCategory, SearchHit, RecordSource } from "../types"
 import type { SortBy } from "../hooks/useRecordsSearch"
+import type { AircraftBase } from "@/pages/aircraft/fleetData"
 
 const PAGE_SIZE = 25
 
@@ -44,6 +56,8 @@ const CATEGORY_SPINE: Record<string, string> = {
   major_repair: "#f97316",
   other:        "#6b7280",
 }
+
+// ─── Aircraft filter pane ────────────────────────────────────────────────────
 
 // ─── Stats strip ─────────────────────────────────────────────────────────────
 
@@ -269,28 +283,171 @@ function DocumentCard({
   )
 }
 
+// ─── Sortable card wrapper ────────────────────────────────────────────────────
+
+function SortableDocumentCard({
+  source, onOpen, onEdit,
+}: { source: RecordSource; onOpen: () => void; onEdit: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: source.id })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform:  CSS.Transform.toString(transform),
+        transition,
+        opacity:    isDragging ? 0.45 : 1,
+        zIndex:     isDragging ? 50 : undefined,
+        cursor:     isDragging ? "grabbing" : "grab",
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      <DocumentCard source={source} onOpen={onOpen} onEdit={onEdit} />
+    </div>
+  )
+}
+
 // ─── Document grid (idle state) ───────────────────────────────────────────────
+
+const GRID_COLS = "grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7"
+
+function TailSection({
+  tail,
+  sources,
+  categoryFilter,
+  onOpen,
+  onEdit,
+  onReorder,
+}: {
+  tail: string
+  sources: RecordSource[]
+  categoryFilter: SourceCategory | null
+  onOpen: (source: RecordSource) => void
+  onEdit: (source: RecordSource) => void
+  onReorder: (ordered: RecordSource[]) => void
+}) {
+  const [expanded, setExpanded] = useState(true)
+
+  const filtered = categoryFilter
+    ? sources.filter((s) => s.source_category === categoryFilter)
+    : sources
+
+  const [items, setItems] = useState<RecordSource[]>(filtered)
+  const filteredKey = filtered.map((s) => s.id).join(",")
+  useEffect(() => { setItems(filtered) }, [filteredKey]) // eslint-disable-line
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIdx = items.findIndex((s) => s.id === active.id)
+    const newIdx = items.findIndex((s) => s.id === over.id)
+    const reordered = arrayMove(items, oldIdx, newIdx)
+    setItems(reordered)
+    onReorder(reordered)
+  }
+
+  return (
+    <div className="rounded-md border border-border overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+      >
+        {expanded
+          ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+          : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+        <span
+          className="text-xs font-semibold tracking-wider uppercase text-foreground"
+          style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.15em" }}
+        >
+          {tail}
+        </span>
+        <span className="text-[10px] text-muted-foreground ml-1">
+          {filtered.length} {filtered.length === 1 ? "document" : "documents"}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="px-3 pb-3 pt-2 border-t border-border">
+          {categoryFilter ? (
+            <div className={`grid ${GRID_COLS} gap-3`}>
+              {filtered.map((source) => (
+                <DocumentCard
+                  key={source.id}
+                  source={source}
+                  onOpen={() => onOpen(source)}
+                  onEdit={() => onEdit(source)}
+                />
+              ))}
+            </div>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={items.map((s) => s.id)} strategy={rectSortingStrategy}>
+                <div className={`grid ${GRID_COLS} gap-3`}>
+                  {items.map((source) => (
+                    <SortableDocumentCard
+                      key={source.id}
+                      source={source}
+                      onOpen={() => onOpen(source)}
+                      onEdit={() => onEdit(source)}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function DocumentGrid({
   sources,
   isLoading,
   categoryFilter,
+  allAircraft,
   onOpen,
   onEdit,
+  onReorder,
 }: {
   sources: RecordSource[]
   isLoading: boolean
   categoryFilter: SourceCategory | null
+  allAircraft: { id: string; tailNumber: string }[]
   onOpen: (source: RecordSource) => void
   onEdit: (source: RecordSource) => void
+  onReorder: (ordered: RecordSource[]) => void
 }) {
   const filtered = categoryFilter
     ? sources.filter((s) => s.source_category === categoryFilter)
     : sources
 
+  // Local order state — initialise from filtered, reset if source set changes
+  const [items, setItems] = useState<RecordSource[]>(filtered)
+  const filteredKey = filtered.map((s) => s.id).join(",")
+  useEffect(() => { setItems(filtered) }, [filteredKey]) // eslint-disable-line
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIdx = items.findIndex((s) => s.id === active.id)
+    const newIdx = items.findIndex((s) => s.id === over.id)
+    const reordered = arrayMove(items, oldIdx, newIdx)
+    setItems(reordered)
+    onReorder(reordered)
+  }
+
   if (isLoading) {
     return (
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
+      <div className={`grid ${GRID_COLS} gap-3`}>
         {Array.from({ length: 12 }).map((_, i) => (
           <div key={i} className="aspect-square rounded-md bg-card animate-pulse" />
         ))}
@@ -314,24 +471,82 @@ function DocumentGrid({
     )
   }
 
+  // Group by aircraft with collapsible bars (always, even for a single tail)
+  const uniqueAircraftIds = Array.from(new Set(sources.map((s) => s.aircraft_id))).filter(Boolean)
+  if (uniqueAircraftIds.length >= 1) {
+    const byAircraft = new Map<string, RecordSource[]>()
+    for (const s of sources) {
+      if (!byAircraft.has(s.aircraft_id)) byAircraft.set(s.aircraft_id, [])
+      byAircraft.get(s.aircraft_id)!.push(s)
+    }
+    const sortedIds = Array.from(byAircraft.keys()).sort((a, b) => {
+      const ta = allAircraft.find((ac) => ac.id === a)?.tailNumber ?? a
+      const tb = allAircraft.find((ac) => ac.id === b)?.tailNumber ?? b
+      return ta.localeCompare(tb)
+    })
+    return (
+      <div className="space-y-3">
+        {sortedIds.map((aircraftId) => {
+          const tail = allAircraft.find((ac) => ac.id === aircraftId)?.tailNumber ?? aircraftId
+          const acSources = byAircraft.get(aircraftId) ?? []
+          return (
+            <TailSection
+              key={aircraftId}
+              tail={tail}
+              sources={acSources}
+              categoryFilter={categoryFilter}
+              onOpen={onOpen}
+              onEdit={onEdit}
+              onReorder={onReorder}
+            />
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Single-aircraft view: flat grid with drag-and-drop
+  if (categoryFilter) {
+    return (
+      <div className={`grid ${GRID_COLS} gap-3`}>
+        {filtered.map((source) => (
+          <DocumentCard
+            key={source.id}
+            source={source}
+            onOpen={() => onOpen(source)}
+            onEdit={() => onEdit(source)}
+          />
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
-      {filtered.map((source) => (
-        <DocumentCard
-          key={source.id}
-          source={source}
-          onOpen={() => onOpen(source)}
-          onEdit={() => onEdit(source)}
-        />
-      ))}
-    </div>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={items.map((s) => s.id)} strategy={rectSortingStrategy}>
+        <div className={`grid ${GRID_COLS} gap-3`}>
+          {items.map((source) => (
+            <SortableDocumentCard
+              key={source.id}
+              source={source}
+              onOpen={() => onOpen(source)}
+              onEdit={() => onEdit(source)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
   )
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function RecordsVaultSearchPage() {
-  const { selectedAircraftId, allAircraft } = useRecordsVaultCtx()
+  const {
+    selectedAircraftId, allAircraft,
+    setSearchAircraftGroups,
+    selectedAircraftFilter, setSelectedAircraftFilter,
+  } = useRecordsVaultCtx()
 
   const [query, setQuery]               = useState("")
   const [searchPage, setSearchPage]     = useState(1)
@@ -348,6 +563,9 @@ export default function RecordsVaultSearchPage() {
   const [viewerIndex, setViewerIndex]     = useState(0)
   const [viewerQuery, setViewerQuery]     = useState("")
   const [viewerTotalPages, setViewerTotalPages] = useState(1)
+
+  // Book filter (top pills) — null = all books; string = specific record_source_id
+  const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
 
   const [editingSource, setEditingSource] = useState<RecordSource | null>(null)
 
@@ -374,9 +592,72 @@ export default function RecordsVaultSearchPage() {
     [sources]
   )
 
+  // Aircraft filter pane — one row per aircraft that has search hits
+  const aircraftGroups = useMemo<Array<{ id: string; tailNumber: string; serialNumber: string; count: number }>>(() => {
+    if (!isSearchActive || hits.length === 0) return []
+    const seen = new Map<string, { tailNumber: string; serialNumber: string; count: number }>()
+    for (const hit of hits) {
+      if (!seen.has(hit.aircraft_id)) {
+        const ac = allAircraft.find((a) => a.id === hit.aircraft_id)
+        seen.set(hit.aircraft_id, {
+          tailNumber:   ac?.tailNumber   ?? hit.observed_registration ?? "Unknown",
+          serialNumber: ac?.serialNumber ?? "—",
+          count: 0,
+        })
+      }
+      seen.get(hit.aircraft_id)!.count++
+    }
+    return Array.from(seen.entries()).map(([id, v]) => ({ id, ...v }))
+  }, [hits, allAircraft, isSearchActive])
+
+  // Sync aircraft groups to context so the sidebar can display them.
+  useEffect(() => {
+    setSearchAircraftGroups(aircraftGroups)
+  }, [aircraftGroups]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear on unmount so the list doesn't linger on other pages (e.g. Pipeline).
+  useEffect(() => {
+    return () => { setSearchAircraftGroups([]) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset book filter when aircraft filter changes (sidebar-driven)
+  useEffect(() => {
+    setSelectedBookId(null)
+  }, [selectedAircraftFilter])
+
+  // Book filter pills — ordered list of docs found in search results, with hit counts.
+  // When an aircraft is selected in the left pane, only show that aircraft's books.
+  const bookGroups = useMemo<Array<{ id: string; label: string; category: string; count: number }>>(() => {
+    if (!isSearchActive || hits.length === 0) return []
+    const relevantHits = selectedAircraftFilter
+      ? hits.filter((h) => h.aircraft_id === selectedAircraftFilter)
+      : hits
+    const seen = new Map<string, { label: string; category: string; count: number }>()
+    for (const hit of relevantHits) {
+      if (!seen.has(hit.record_source_id)) {
+        const source = sources.find((s) => s.id === hit.record_source_id)
+        const dl = source?.display_label
+        let label = hit.original_filename
+        if (dl) {
+          const parts = [dl.registration, dl.logbook_number].filter(Boolean)
+          if (parts.length > 0) label = parts.join(" · ")
+        } else if (hit.observed_registration) {
+          label = hit.observed_registration
+        }
+        seen.set(hit.record_source_id, { label, category: hit.source_category, count: 0 })
+      }
+      seen.get(hit.record_source_id)!.count++
+    }
+    return Array.from(seen.entries()).map(([id, v]) => ({ id, ...v }))
+  }, [hits, sources, isSearchActive, selectedAircraftFilter])
+
+  const showBookPills = bookGroups.length >= 2
+
   function handleQueryChange(q: string) {
     setQuery(q)
     setSearchPage(1)
+    setSelectedAircraftFilter(null)
+    setSelectedBookId(null)
     // Close viewer so the user can see updated results and click one
     if (viewerOpen) setViewerOpen(false)
   }
@@ -384,18 +665,41 @@ export default function RecordsVaultSearchPage() {
   function handleSortChange(s: SortBy) {
     setSortBy(s)
     setSearchPage(1)
+    setSelectedAircraftFilter(null)
+    setSelectedBookId(null)
   }
 
-  // Open viewer from a search hit — passes all sibling hits for prev/next navigation
+  // Open viewer from a search hit.
+  // Scope the viewer's hit list based on the active aircraft/book filters:
+  //   - specific book selected → only that book's hits
+  //   - specific aircraft selected → all that aircraft's hits (cross-book within aircraft)
+  //   - nothing selected → full fleet result set (full cross-aircraft traversal)
   function handleViewHit(hit: SearchHit) {
-    const docHits  = hits.filter((h) => h.record_source_id === hit.record_source_id)
-    const index    = docHits.findIndex((h) => h.page_id === hit.page_id)
-    const source   = sources.find((s) => s.id === hit.record_source_id)
-    setViewerHits(docHits)
+    let filteredHits = hits
+    if (selectedBookId) {
+      filteredHits = hits.filter((h) => h.record_source_id === selectedBookId)
+    } else if (selectedAircraftFilter) {
+      filteredHits = hits.filter((h) => h.aircraft_id === selectedAircraftFilter)
+    }
+    const index     = filteredHits.findIndex((h) => h.page_id === hit.page_id)
+    const source    = sources.find((s) => s.id === hit.record_source_id)
+    const isSingleDoc = filteredHits.every((h) => h.record_source_id === filteredHits[0]?.record_source_id)
+    setViewerHits(filteredHits)
     setViewerIndex(Math.max(0, index))
     setViewerQuery(query)
-    setViewerTotalPages(source?.page_count ?? 1)
+    // For a single-book result pass exact page count; for multi-doc pass 0 so
+    // the viewer derives effectiveTotalPages from source.page_count per document.
+    setViewerTotalPages(isSingleDoc ? (source?.page_count ?? 1) : 0)
     setViewerOpen(true)
+  }
+
+  // Persist a reordered document grid to rv_record_sources.sort_order
+  async function handleReorder(ordered: RecordSource[]) {
+    await Promise.all(
+      ordered.map((s, i) =>
+        supabase.from("rv_record_sources").update({ sort_order: i }).eq("id", s.id)
+      )
+    )
   }
 
   // Open viewer from a document card (no search context — page 1)
@@ -445,13 +749,13 @@ export default function RecordsVaultSearchPage() {
           )}
         </div>
 
-        {/* Filter row — scope toggle + category pills + sort toggle */}
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
+        {/* Filter row — scope toggle + category pills + book pills + sort toggle (no wrap) */}
+        <div className="flex items-center gap-2 mt-3">
           {/* Fleet scope toggle */}
           {selectedAircraftId && (
-            <div className="flex items-center rounded-full bg-muted p-0.5 mr-1">
+            <div className="flex items-center rounded-full bg-muted p-0.5 mr-1 shrink-0">
               <button
-                onClick={() => { setFleetWide(false); setSearchPage(1) }}
+                onClick={() => { setFleetWide(false); setSearchPage(1); setSelectedAircraftFilter(null); setSelectedBookId(null) }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                   !fleetWide
                     ? "bg-background text-foreground shadow-sm"
@@ -463,7 +767,7 @@ export default function RecordsVaultSearchPage() {
                 {currentAircraft?.tailNumber ?? "Aircraft"}
               </button>
               <button
-                onClick={() => { setFleetWide(true); setSearchPage(1) }}
+                onClick={() => { setFleetWide(true); setSearchPage(1); setSelectedAircraftFilter(null); setSelectedBookId(null) }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                   fleetWide
                     ? "bg-background text-foreground shadow-sm"
@@ -480,8 +784,8 @@ export default function RecordsVaultSearchPage() {
           {activeCategories.map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => { setSelectedCategory(value === "all" ? null : value as SourceCategory); setSearchPage(1) }}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+              onClick={() => { setSelectedCategory(value === "all" ? null : value as SourceCategory); setSearchPage(1); setSelectedAircraftFilter(null); setSelectedBookId(null) }}
+              className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                 (value === "all" && !selectedCategory) || selectedCategory === value
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -491,9 +795,54 @@ export default function RecordsVaultSearchPage() {
             </button>
           ))}
 
+          {/* Book filter pills — scrollable strip, no wrapping */}
+          {showBookPills && (
+            <>
+              <span className="w-px h-4 bg-border self-center shrink-0" />
+
+              {/* Scrollable pill row — hides scrollbar but stays single-line */}
+              <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <button
+                  onClick={() => setSelectedBookId(null)}
+                  className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    !selectedBookId
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  All Books · {hits.length}
+                </button>
+
+                {bookGroups.map((book) => (
+                  <button
+                    key={book.id}
+                    onClick={() => setSelectedBookId(book.id)}
+                    className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                      selectedBookId === book.id
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                    title={book.label}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ background: CATEGORY_SPINE[book.category] ?? "#6b7280" }}
+                    />
+                    <span className="whitespace-nowrap">{book.label}</span>
+                    <span className={`shrink-0 tabular-nums ${selectedBookId === book.id ? "opacity-80" : "opacity-55"}`}>
+                      · {book.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <span className="w-px h-4 bg-border self-center shrink-0" />
+            </>
+          )}
+
           {/* Sort toggle — only shown in search mode with results */}
           {isSearchActive && hits.length > 0 && (
-            <div className="ml-auto flex items-center gap-1 rounded-full bg-muted p-0.5">
+            <div className={`shrink-0 flex items-center gap-1 rounded-full bg-muted p-0.5 ${!showBookPills ? "ml-auto" : ""}`}>
               <button
                 onClick={() => handleSortChange("relevance")}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
@@ -538,28 +887,37 @@ export default function RecordsVaultSearchPage() {
           {!isSearchActive && <StatsStrip sources={sources} />}
 
           <main className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
-            {/* Search mode — grouped results */}
-            {isSearchActive ? (
-              <RecordsResultsList
-                hits={hits}
-                isLoading={searchLoading}
-                isError={searchError}
-                query={query}
-                page={searchPage}
-                pageSize={PAGE_SIZE}
-                sortBy={sortBy}
-                onPageChange={setSearchPage}
-                onViewPage={handleViewHit}
-              />
-            ) : (
+            {isSearchActive ? (() => {
+              // Apply aircraft then book filter for the displayed list
+              let displayHits = hits
+              if (selectedAircraftFilter) displayHits = displayHits.filter((h) => h.aircraft_id === selectedAircraftFilter)
+              if (selectedBookId)         displayHits = displayHits.filter((h) => h.record_source_id === selectedBookId)
+              return (
+                <RecordsResultsList
+                  hits={displayHits}
+                  isLoading={searchLoading}
+                  isError={searchError}
+                  query={query}
+                  page={searchPage}
+                  pageSize={PAGE_SIZE}
+                  sortBy={sortBy}
+                  onPageChange={setSearchPage}
+                  onViewPage={handleViewHit}
+                />
+              )
+            })() : (
               /* Gallery mode — document cards */
-              <DocumentGrid
-                sources={sources}
-                isLoading={sourcesLoading}
-                categoryFilter={selectedCategory}
-                onOpen={handleOpenSource}
-                onEdit={setEditingSource}
-              />
+              <>
+                <DocumentGrid
+                  sources={sources}
+                  isLoading={sourcesLoading}
+                  categoryFilter={selectedCategory}
+                  allAircraft={allAircraft}
+                  onOpen={handleOpenSource}
+                  onEdit={setEditingSource}
+                  onReorder={handleReorder}
+                />
+              </>
             )}
           </main>
         </>

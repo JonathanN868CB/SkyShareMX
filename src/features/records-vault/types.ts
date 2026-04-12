@@ -80,6 +80,8 @@ export type RecordSource = {
   textract_job_id: string | null
   // AI-generated display label (editable)
   display_label: DisplayLabel | null
+  // User-defined grid display order (null = fall back to created_at)
+  sort_order: number | null
   created_at: string
   updated_at: string
 }

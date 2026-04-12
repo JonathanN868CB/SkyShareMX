@@ -29,6 +29,10 @@ export const DW1GHT_CONFIG = {
   ragChunkLimit: 8,
   ragThreshold: 0.25,
 
+  // Interview vector search settings
+  interviewChunkLimit: 6,
+  interviewThreshold: 0.25,
+
   // ── Identity ─────────────────────────────────────────────────
   // Who DW1GHT is. Shared by ALL modes. Never changes.
   identity: `You are DW1GHT -- AI Assistant to the DOM (Director of Maintenance) at SkyShare MX.
@@ -438,76 +442,69 @@ If the interview was too brief to extract meaningful data, still produce the bes
   reviewModel: "claude-sonnet-4-6" as const,
 
   // ── Self-Critique Prompt ──────────────────────────────────────
-  selfCritiquePrompt: `You are reviewing a DW1GHT interview transcript as a quality auditor. DW1GHT is an AI interviewer that talks to aviation mechanics about maintenance events. Your job is to identify specific, actionable lessons that will make future interviews better.
+  selfCritiquePrompt: `You are reviewing a DW1GHT interview transcript as a quality auditor. DW1GHT is an AI interviewer that talks to aviation mechanics about maintenance events.
 
 You have access to:
 1. The full interview transcript
-2. The discrepancy record that DW1GHT had in its context
-3. DW1GHT's own rules (interview system prompt)
+2. The discrepancy record DW1GHT had in context
+3. The current playbook rules DW1GHT was supposed to follow
 
-EVALUATE AGAINST THESE CRITERIA:
-- Did DW1GHT lead with the discrepancy ID, tail number, title, and date prominently?
-- Did DW1GHT confirm whether the mechanic worked the event directly before assuming?
-- Did DW1GHT validate stored record fields (corrective action, technician, AMM refs, location, ATA chapter) with the mechanic?
-- Did DW1GHT correctly triage the event as routine vs complex and scale the interview accordingly?
-- Did DW1GHT stay brief (2-3 sentences max per response)?
-- Did DW1GHT avoid parroting back what the mechanic just said?
-- Did DW1GHT avoid asking the mechanic to look things up?
-- Did DW1GHT avoid fishing for speculation?
-- Did DW1GHT catch and follow up on repeat discrepancy signals?
-- Were there questions that fell flat (mechanic gave confused or dismissive responses)?
-- Did DW1GHT miss something obvious in the record that should have been asked about?
-- Did the mechanic correct DW1GHT on any domain knowledge?
+YOUR ONLY JOB: determine whether the current written playbook rules need a new rule added. Not whether DW1GHT performed perfectly — whether the rules themselves are incomplete.
+
+THE BAR IS HIGH:
+- A suggestion is only warranted when the playbook is MISSING a rule that would have prevented a specific failure you observed. The gap must be in the written rules, not in DW1GHT's execution.
+- If DW1GHT made a mistake but the relevant rule already exists — that is a consistency/training issue, not a playbook gap. Return an empty array.
+- If the interview went well — return an empty array. That is the correct and expected output for a good interview, not a failure to analyze.
+- Do NOT suggest rephrasing existing rules, adding examples to rules that are already working, or making stylistic improvements.
+- Do NOT suggest a rule unless you can cite the specific moment in the transcript where its absence caused a problem.
+
+EVALUATE ONLY THESE QUESTIONS:
+- Did a failure occur that no existing rule covers?
+- Was there a pattern (not a one-off) that suggests a structural gap?
+- Would a new rule have changed the outcome?
 
 OUTPUT FORMAT — respond with valid JSON only, no markdown:
 {
   "overall_grade": "A | B | C | D | F",
-  "exchange_efficiency": "how many exchanges vs how much useful info extracted",
-  "learnings": [
+  "exchange_efficiency": "brief note on exchanges vs info extracted",
+  "playbook_suggestions": [
     {
-      "lesson": "specific, actionable lesson in imperative form — e.g. 'When a mechanic says they did not do the work, immediately switch to proxy mode without further confirmation questions'",
-      "category": "question_quality | record_validation | domain_knowledge | interview_flow | prompt_behavior",
-      "aircraft_type": "PC-12/45 or null if not fleet-specific",
-      "severity": "critical | important | minor"
+      "section_key": "allowed_context | instructions | decision_logic | output_definition | post_processing | tone_calibration",
+      "change_type": "append | replace_section",
+      "suggested_text": "exact text to add (for append) or full new section content (for replace_section)",
+      "reasoning": "cite the specific transcript moment and explain why no existing rule covers it"
     }
   ]
 }
 
 RULES:
-- Generate 2-6 learnings per interview. Quality over quantity.
-- Every learning must be SPECIFIC and ACTIONABLE. Not "ask better questions" but "when the corrective action is a simple ops check, ask whether the ops check procedure was the standard AMM reference or a modified approach."
-- Include POSITIVE learnings too — things DW1GHT did right that should be reinforced. Prefix with "KEEP:" e.g. "KEEP: When the mechanic declined to speculate, DW1GHT respected it immediately and moved on."
-- If DW1GHT made no significant mistakes, say so. Don't fabricate problems.
-- Category must be one of: question_quality, record_validation, domain_knowledge, interview_flow, prompt_behavior.
-- aircraft_type should only be set if the learning is specific to a particular aircraft model.`,
+- 0–1 suggestions per interview is normal. 2 is the absolute maximum.
+- "append" to add a new clause. "replace_section" only for fundamental direction changes — use sparingly.
+- An empty suggestions array is not a failure. As the playbook matures, most interviews should produce no suggestions. That means it is working.`,
 
   // ── DOM Review Learning Prompt ────────────────────────────────
-  domReviewLearningPrompt: `You are generating learnings for DW1GHT based on DOM (Director of Maintenance) feedback on a completed interview.
+  domReviewLearningPrompt: `You are analyzing DOM (Director of Maintenance) feedback on a DW1GHT interview to identify whether the written playbook rules need updating.
 
 The DOM has reviewed DW1GHT's interview and provided feedback in one or more forms:
 - Rejected suggested corrections (DW1GHT suggested a field change and the DOM said no)
 - Review notes (free-text feedback from the DOM)
 - Low rating (interview rated poorly)
 
-Your job: convert this feedback into specific, actionable lessons that DW1GHT should remember for future interviews.
-
 OUTPUT FORMAT — respond with valid JSON only, no markdown:
 {
-  "learnings": [
+  "playbook_suggestions": [
     {
-      "lesson": "specific lesson in imperative form",
-      "category": "question_quality | record_validation | domain_knowledge | interview_flow | prompt_behavior",
-      "aircraft_type": "or null",
-      "severity": "critical | important | minor"
+      "section_key": "allowed_context | instructions | decision_logic | output_definition | post_processing | tone_calibration",
+      "change_type": "append | replace_section",
+      "suggested_text": "exact text to add (for append) or full new section content (for replace_section)",
+      "reasoning": "what in this DOM feedback indicates a gap in the written playbook rules"
     }
   ]
 }
 
 RULES:
-- 1-3 learnings per review. Only generate learnings where there's a clear lesson.
-- Rejected corrections are strong signal: "DOM rejected ATA chapter suggestion of 12 — the correct chapter for de-ice boots is 30. Pilatus AMM section 12-A-30 refers to the manual section, not ATA chapter 12."
-- Low ratings without notes: generate a learning about reviewing the transcript for quality issues.
-- If the DOM approved everything and rated highly, generate ONE positive reinforcement learning.`,
+- playbook_suggestions: generate 0-1 per DOM review. Only suggest if the DOM feedback points to a systemic gap in the written rules, not just a one-off data error. Return an empty array if no systemic issue is evident.
+- Rejected corrections with a clear domain-knowledge pattern are the strongest signal for a suggestion.`,
 
   // Fields that DOM can approve corrections for
   correctableFields: [

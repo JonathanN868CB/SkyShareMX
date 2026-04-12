@@ -8,6 +8,7 @@ import { notifyProfileIds } from "../helpers"
 interface Approval {
   id: string
   approver_name: string
+  via_email: boolean
   decision: "approved" | "denied"
   comment: string | null
   created_at: string
@@ -42,21 +43,28 @@ export function PartsApprovalPanel({ requestId, requestStatus, requestedBy, jobL
 
     if (!data || data.length === 0) { setApprovals([]); return }
 
-    const approverIds = [...new Set(data.map((a: { approver_id: string }) => a.approver_id))]
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, display_name, full_name, first_name, last_name")
-      .in("id", approverIds)
+    const approverIds = [...new Set(
+      data
+        .filter((a: { approver_id: string | null }) => a.approver_id != null)
+        .map((a: { approver_id: string }) => a.approver_id)
+    )]
 
     const nameMap: Record<string, string> = {}
-    profiles?.forEach((p: { id: string; display_name: string | null; full_name: string | null; first_name: string | null; last_name: string | null }) => {
-      nameMap[p.id] = p.display_name || p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown"
-    })
+    if (approverIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, display_name, full_name, first_name, last_name")
+        .in("id", approverIds)
+      profiles?.forEach((p: { id: string; display_name: string | null; full_name: string | null; first_name: string | null; last_name: string | null }) => {
+        nameMap[p.id] = p.display_name || p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown"
+      })
+    }
 
     setApprovals(
-      data.map((a: { id: string; approver_id: string; decision: "approved" | "denied"; comment: string | null; created_at: string }) => ({
+      data.map((a: { id: string; approver_id: string | null; approver_email: string | null; decision: "approved" | "denied"; comment: string | null; created_at: string }) => ({
         id: a.id,
-        approver_name: nameMap[a.approver_id] ?? "Unknown",
+        approver_name: a.approver_id ? (nameMap[a.approver_id] ?? "Unknown") : (a.approver_email ?? "External"),
+        via_email: a.approver_id == null,
         decision: a.decision,
         comment: a.comment,
         created_at: a.created_at,
@@ -161,10 +169,26 @@ export function PartsApprovalPanel({ requestId, requestStatus, requestedBy, jobL
               <XCircle className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: "rgba(255,100,100,0.8)" }} />
             )}
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.8)" }}>
                   {a.approver_name}
                 </span>
+                {a.via_email && (
+                  <span
+                    className="text-xs px-1.5 py-0.5 rounded"
+                    style={{
+                      fontFamily: "var(--font-heading)",
+                      fontSize: "9px",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "rgba(212,160,23,0.7)",
+                      background: "rgba(212,160,23,0.08)",
+                      border: "1px solid rgba(212,160,23,0.18)",
+                    }}
+                  >
+                    via email
+                  </span>
+                )}
                 <span
                   className="text-xs font-semibold uppercase tracking-wider"
                   style={{

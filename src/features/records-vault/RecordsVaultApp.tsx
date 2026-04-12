@@ -7,12 +7,24 @@ import type { AircraftBase } from "@/pages/aircraft/fleetData"
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 
+export type SearchAircraftGroup = {
+  id:           string
+  tailNumber:   string
+  serialNumber: string
+  count:        number
+}
+
 type RecordsVaultCtx = {
   selectedAircraftId: string | null
   setSelectedAircraftId: (id: string | null) => void
   allAircraft: AircraftBase[]
   fleetLoading: boolean
   openUpload: () => void
+  // Search result aircraft groups — written by search page, read by sidebar
+  searchAircraftGroups: SearchAircraftGroup[]
+  setSearchAircraftGroups: (groups: SearchAircraftGroup[]) => void
+  selectedAircraftFilter: string | null
+  setSelectedAircraftFilter: (id: string | null) => void
 }
 
 const RecordsVaultContext = createContext<RecordsVaultCtx>({
@@ -21,6 +33,10 @@ const RecordsVaultContext = createContext<RecordsVaultCtx>({
   allAircraft: [],
   fleetLoading: false,
   openUpload: () => {},
+  searchAircraftGroups: [],
+  setSearchAircraftGroups: () => {},
+  selectedAircraftFilter: null,
+  setSelectedAircraftFilter: () => {},
 })
 
 export function useRecordsVaultCtx() {
@@ -32,6 +48,8 @@ export function useRecordsVaultCtx() {
 export function RecordsVaultApp() {
   const [selectedAircraftId, setSelectedAircraftId] = useState<string | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [searchAircraftGroups, setSearchAircraftGroups] = useState<SearchAircraftGroup[]>([])
+  const [selectedAircraftFilter, setSelectedAircraftFilter] = useState<string | null>(null)
 
   const { data: fleetGroups = [], isLoading: fleetLoading } = useFleet()
   const allAircraft = useMemo<AircraftBase[]>(
@@ -47,6 +65,10 @@ export function RecordsVaultApp() {
         allAircraft,
         fleetLoading,
         openUpload: () => setUploadOpen(true),
+        searchAircraftGroups,
+        setSearchAircraftGroups,
+        selectedAircraftFilter,
+        setSelectedAircraftFilter,
       }}
     >
       <div

@@ -15,6 +15,7 @@ import {
   ScanLine,
   Tag,
   Search,
+  AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/shared/ui/button"
 import { useToast } from "@/hooks/use-toast"
@@ -217,6 +218,7 @@ function SourceRow({
   deleting: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const ocrAlreadyDone = source.ingestion_status === "indexed"
   const failedStages = stages.filter((s) => s.state === "failed")
@@ -312,18 +314,38 @@ function SourceRow({
             <Search className="h-3.5 w-3.5" />
           </Button>
 
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-            onClick={() => onDelete(source.id, source.original_filename)}
-            disabled={busy || deleting || source.ingestion_status === "extracting"}
-            title="Delete record"
-          >
-            {deleting
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <Trash2 className="h-3.5 w-3.5" />}
-          </Button>
+          {/* Delete — first click shows inline confirm strip */}
+          {confirmingDelete ? (
+            <div className="flex items-center gap-1.5 rounded border border-destructive/40 bg-destructive/8 px-2 py-1">
+              <AlertTriangle className="h-3 w-3 text-destructive shrink-0" />
+              <span className="text-[11px] text-destructive whitespace-nowrap">Delete?</span>
+              <button
+                onClick={() => { setConfirmingDelete(false); onDelete(source.id, source.original_filename) }}
+                className="text-[11px] font-semibold text-destructive hover:text-destructive/80 px-1 transition-colors"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => setConfirmingDelete(false)}
+                className="text-[11px] text-muted-foreground hover:text-foreground px-1 transition-colors"
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+              onClick={() => setConfirmingDelete(true)}
+              disabled={busy || deleting || source.ingestion_status === "extracting"}
+              title="Delete record"
+            >
+              {deleting
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Trash2 className="h-3.5 w-3.5" />}
+            </Button>
+          )}
 
           {source.log.length > 0 && (
             <button
@@ -461,10 +483,11 @@ interface Props {
 
 export function RecordsPipelineView({ aircraftId }: Props) {
   const { sources, registrationByAircraftId, loading, reload } = useRecordsPipeline(aircraftId)
-  const [collapsedTails, setCollapsedTails] = useState<Set<string>>(new Set())
+  const [expandedTails, setExpandedTails] = useState<Set<string>>(new Set())
   const { toast } = useToast()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteModal, setDeleteModal] = useState<{ id: string; filename: string; pageCount: number | null } | null>(null)
   const [filter, setFilter] = useState<FilterMode>("all")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
@@ -575,21 +598,26 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     setInspectingName(filename)
   }
 
-  async function handleDelete(recordSourceId: string, filename: string) {
-    if (!window.confirm(`Delete "${filename}"? This will permanently remove the file and all indexed pages.`)) return
-    setDeletingId(recordSourceId)
+  // Step 1 of delete: inline row confirm — just opens the modal (step 2)
+  function handleDelete(recordSourceId: string, filename: string) {
+    const source = sources.find((s) => s.id === recordSourceId)
+    setDeleteModal({ id: recordSourceId, filename, pageCount: source?.page_count ?? null })
+  }
+
+  // Step 2 of delete: confirmed via modal — performs the actual deletion
+  async function handleDeleteConfirmed() {
+    if (!deleteModal) return
+    const { id, filename } = deleteModal
+    setDeleteModal(null)
+    setDeletingId(id)
     try {
       const { error } = await supabase
         .from("rv_record_sources")
         .delete()
-        .eq("id", recordSourceId)
+        .eq("id", id)
       if (error) throw error
       toast({ title: "Deleted", description: `${filename} removed.` })
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        next.delete(recordSourceId)
-        return next
-      })
+      setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next })
       reload()
     } catch (err) {
       toast({
@@ -645,10 +673,10 @@ export function RecordsPipelineView({ aircraftId }: Props) {
     tailGroups.get(tail)!.push(s)
   }
   const sortedTails = Array.from(tailGroups.keys()).sort((a, b) => a.localeCompare(b))
-  const showTailGrouping = sortedTails.length > 1
+  const showTailGrouping = sortedTails.length >= 1
 
   function toggleTail(tail: string) {
-    setCollapsedTails((prev) => {
+    setExpandedTails((prev) => {
       const next = new Set(prev)
       if (next.has(tail)) next.delete(tail)
       else next.add(tail)
@@ -786,7 +814,7 @@ export function RecordsPipelineView({ aircraftId }: Props) {
         <div className="space-y-4">
           {sortedTails.map((tail) => {
             const tailSources = tailGroups.get(tail) ?? []
-            const collapsed = collapsedTails.has(tail)
+            const collapsed = !expandedTails.has(tail)
             const greenN = tailSources.filter(isGreen).length
             const needsN = tailSources.filter(needsAttention).length
             const chunksN = tailSources.reduce((n, s) => n + (s.chunks_generated ?? 0), 0)
@@ -861,6 +889,64 @@ export function RecordsPipelineView({ aircraftId }: Props) {
               deletingId={deletingId}
             />
           ))}
+        </div>
+      )}
+
+      {/* ── Delete confirmation modal (step 2) ──────────────────────────── */}
+      {deleteModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.65)" }}
+          onClick={() => setDeleteModal(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-destructive/30 bg-card shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-destructive/15 flex items-center justify-center shrink-0 mt-0.5">
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </div>
+              <div>
+                <h3
+                  className="text-sm font-semibold text-foreground uppercase tracking-wide"
+                  style={{ fontFamily: "var(--font-heading)", letterSpacing: "0.1em" }}
+                >
+                  Permanently Delete
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                  <span className="font-medium text-foreground">{deleteModal.filename}</span>
+                  {deleteModal.pageCount != null && (
+                    <> — {deleteModal.pageCount.toLocaleString()} pages</>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground leading-relaxed border-l-2 border-destructive/30 pl-3">
+              This will permanently remove the file, all indexed pages, extracted events, vector embeddings, and the ingestion log. <span className="text-destructive font-medium">This cannot be undone.</span>
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => setDeleteModal(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-8 text-xs gap-1.5"
+                onClick={handleDeleteConfirmed}
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete Permanently
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -21,8 +21,9 @@ import type {
 import {
   getPurchaseOrderById, getReceivingRecords, getPOActivity, addPOActivity,
   getPOInvoices, addPOInvoice, getLinkedWorkOrders, updatePOStatus, updatePOLine,
-  receiveItems,
+  receiveItems, createPurchaseOrder,
 } from "../../services/purchaseOrders"
+import { buildPOPdf } from "./buildPOPdf"
 import { getSupplierById } from "../../services/suppliers"
 import { getMyProfile } from "../../services/workOrders"
 import ReceiveWorkflow from "./ReceiveWorkflow"
@@ -179,6 +180,9 @@ export default function PODetail() {
   // ─── Void confirmation ────────────────────────────────────────────────
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false)
   const [voidingPO, setVoidingPO] = useState(false)
+
+  // ─── Duplicate / PDF ──────────────────────────────────────────────────
+  const [duplicating, setDuplicating] = useState(false)
 
   // ─── Load all data ────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -363,6 +367,59 @@ export default function PODetail() {
     }
   }
 
+  // ─── Export PDF ───────────────────────────────────────────────────────
+  function handleExportPDF() {
+    if (!po) return
+    const doc = buildPOPdf({
+      poNumber: po.poNumber,
+      vendorName: po.vendorName,
+      vendorContact: po.vendorContact ?? null,
+      expectedDelivery: po.expectedDelivery ?? null,
+      createdAt: po.createdAt,
+      notes: po.notes ?? null,
+      lines: po.lines.map(l => ({
+        lineNumber: l.lineNumber,
+        partNumber: l.partNumber,
+        description: l.description ?? "",
+        woRef: l.woRef ?? null,
+        qtyOrdered: l.qtyOrdered,
+        unitCost: l.unitCost,
+      })),
+    })
+    doc.save(`${po.poNumber}.pdf`)
+  }
+
+  // ─── Duplicate ────────────────────────────────────────────────────────
+  async function handleDuplicate() {
+    if (!po || duplicating) return
+    setDuplicating(true)
+    try {
+      const profile = await getMyProfile()
+      if (!profile) throw new Error("Not authenticated")
+      const newPO = await createPurchaseOrder({
+        vendorName: po.vendorName,
+        vendorContact: po.vendorContact ?? undefined,
+        expectedDelivery: po.expectedDelivery ?? undefined,
+        notes: po.notes ? `[Duplicated from ${po.poNumber}] ${po.notes}` : `[Duplicated from ${po.poNumber}]`,
+        createdBy: profile.id,
+        lines: po.lines.map(l => ({
+          partNumber: l.partNumber,
+          description: l.description ?? "",
+          qtyOrdered: l.qtyOrdered,
+          unitCost: l.unitCost,
+          woRef: l.woRef ?? undefined,
+          partsRequestLineId: null,
+        })),
+      })
+      toast.success(`Duplicated as ${newPO.poNumber}`)
+      navigate(`/app/beet-box/purchase-orders/${newPO.id}`)
+    } catch {
+      toast.error("Failed to duplicate PO.")
+    } finally {
+      setDuplicating(false)
+    }
+  }
+
   // ─── Add note ─────────────────────────────────────────────────────────
   async function handleAddNote() {
     if (!newNote.trim() || !po) return
@@ -456,8 +513,8 @@ export default function PODetail() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ActionBtn variant="ghost" disabled title="PDF export coming soon"><Printer className="w-3.5 h-3.5" /> Export PDF</ActionBtn>
-            <ActionBtn variant="ghost" disabled title="Duplicate coming soon"><Copy className="w-3.5 h-3.5" /> Duplicate</ActionBtn>
+            <ActionBtn variant="ghost" onClick={handleExportPDF}><Printer className="w-3.5 h-3.5" /> Export PDF</ActionBtn>
+            <ActionBtn variant="ghost" disabled={duplicating} onClick={handleDuplicate}><Copy className="w-3.5 h-3.5" /> {duplicating ? "Duplicating…" : "Duplicate"}</ActionBtn>
             {po.status === "draft" && (
               <ActionBtn variant="gold" onClick={handleMarkSent}><Send className="w-3.5 h-3.5" /> Mark as Sent</ActionBtn>
             )}
@@ -667,9 +724,9 @@ export default function PODetail() {
               {/* Quick actions */}
               <div className="rounded-lg p-3 space-y-1.5" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
                 <p className="text-white/40 text-[10px] uppercase tracking-widest mb-1" style={{ fontFamily: "var(--font-heading)" }}>Quick Actions</p>
-                <ActionBtn variant="default" className="w-full justify-start text-[11px] py-1" disabled><Printer className="w-3 h-3" /> Print PO for vendor</ActionBtn>
+                <ActionBtn variant="default" className="w-full justify-start text-[11px] py-1" onClick={handleExportPDF}><Printer className="w-3 h-3" /> Print PO for vendor</ActionBtn>
                 <ActionBtn variant="default" className="w-full justify-start text-[11px] py-1" disabled><Mail className="w-3 h-3" /> Email PO to vendor</ActionBtn>
-                <ActionBtn variant="default" className="w-full justify-start text-[11px] py-1" disabled><Copy className="w-3 h-3" /> Duplicate as new PO</ActionBtn>
+                <ActionBtn variant="default" className="w-full justify-start text-[11px] py-1" disabled={duplicating} onClick={handleDuplicate}><Copy className="w-3 h-3" /> {duplicating ? "Duplicating…" : "Duplicate as new PO"}</ActionBtn>
                 <ActionBtn variant="default" className="w-full justify-start text-[11px] py-1"
                   onClick={() => setInvoiceModalOpen(true)}>
                   <Receipt className="w-3 h-3" /> Record Invoice
